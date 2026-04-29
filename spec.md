@@ -49,8 +49,8 @@
 系统应至少拆为以下模块：
 
 1. ConfigLoader
-2. WindowConnector
-3. ControlInspector
+2. MovieRuntimeProbe
+3. ScriptControlBridge
 4. ParameterRepository
 5. ParameterWriter
 6. MovieCapture
@@ -114,36 +114,34 @@
 
 ---
 
-## 4.3 ControlInspector
+## 4.3 ScriptControlBridge
 
 ### 职责
-- 枚举 Settings 窗口内可编辑控件
-- 输出控件索引、title、auto_id、class_name
-- 辅助建立参数与控件映射
+- 通过 DDE 向 CarMaker/IPG-MOVIE 发送 Script Control Tcl 脚本
+- 负责运行脚本、等待结果文件、解析返回值
+- 为参数写入、参数读回和运行时探针提供统一执行通道
 
 ### 输入
-- settings_window_handle
+- script_path
+- result_path
+- script_control_dde_service
+- script_control_dde_topic
 
 ### 输出
-- List[ControlDescriptor]
-
-### ControlDescriptor 字段
-- index: int
-- title: str
-- auto_id: str
-- class_name: str
-- control_type: str
+- rc: int
+- message: str
 
 ### 使用场景
-- 首次接入
-- UI 版本变化后重新映射
+- 参数写入
+- 参数读回
+- movie runtime probe
 
 ---
 
 ## 4.4 ParameterRepository
 
 ### 职责
-- 管理所有待优化参数的当前值、边界、步长与 locator
+- 管理所有待优化参数的当前值、边界、步长与精度
 - 提供参数快照与回滚能力
 
 ### 输入
@@ -161,8 +159,6 @@
 - max_value: float
 - min_step: float
 - decimals: int
-- locator_type: enum(auto_id/title/field_index)
-- locator_value: str | int
 - group: enum(position/orientation/other)
 
 ### 方法要求
@@ -178,14 +174,15 @@
 ## 4.5 ParameterWriter
 
 ### 职责
-- 根据 locator 找到 Edit 控件
-- 将参数写入控件并触发提交
+- 将参数映射到固定的 Tk widget 路径
+- 通过 Script Control 写入 widget 并触发提交
 - 支持写入结果确认
 
 ### 输入
-- settings_window_handle
 - ParameterSpec
 - value: float
+- widget_map
+- ScriptControlBridge
 
 ### 输出
 - WriteResult
@@ -552,11 +549,6 @@
 - min_step
 - decimals
 
-每个参数必须至少提供一种 locator：
-- field_index
-- auto_id
-- title
-
 建议增加：
 - group
 - unit
@@ -685,7 +677,7 @@
 ## 11.1 单元测试关注点
 
 1. 配置校验
-2. locator 解析
+2. Script Control widget 映射与参数裁剪
 3. 参数裁剪
 4. 单板检测结果评分
 5. 多板总分聚合
@@ -695,7 +687,7 @@
 ## 11.2 集成测试关注点
 
 1. 窗口连接正确性
-2. 写入后 UI 数值是否生效
+2. 写入后 Script Control readback 数值是否生效
 3. 截图区域是否正确
 4. 三种板检测稳定性
 5. 多板聚合评分是否合理
@@ -706,7 +698,7 @@
 1. 正常收敛用例
 2. 单板脱靶但其他板可见用例
 3. 某一板改善但另一板显著恶化用例
-4. Settings 控件映射错误用例
+4. Tk widget 缺失或 lens 页面未初始化用例
 5. 窗口关闭中断用例
 6. 检测失败惩罚用例
 
@@ -718,7 +710,7 @@
 - [Data/Script/CameraCalibration/camera_calibration.py](Data/Script/CameraCalibration/camera_calibration.py)
 
 建议重构方向：
-1. 保留 WindowConnector / ParameterWriter / MovieCapture 的基本思路
+1. 保留 ParameterWriter / MovieCapture 的基本思路，并以 ScriptControlBridge 取代旧的窗口连接层
 2. 将 ORB 评分逻辑替换为 BoardDetector + ScoreEvaluator
 3. 在其上增加 ScoreAggregator，统一处理多板总分与退化约束
 4. 引入状态机与 stop_reason 统一语义
@@ -730,7 +722,7 @@
 
 建议按以下顺序实施：
 
-1. 先完成配置 schema 与窗口连接层
+1. 先完成配置 schema 与 Script Control 运行桥接层
 2. 再完成 CheckerboardDetector 与 GroundMakerDetector
 3. 再完成单板评分器与多板聚合器
 4. 再将现有优化循环改造成模块化 Optimizer

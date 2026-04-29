@@ -161,14 +161,18 @@ BoardScore_i = a1 * RMSE_i + a2 * MaxError_i + a3 * MissRate_i
 - min/max：边界
 - min_step：最小步长
 - decimals：写入精度
-- locator：控件定位信息
+- widget_path：对应的 Script Control/Tk widget 路径说明，由主脚本内部统一维护
 
-### 5.2 定位优先级
+### 5.2 当前写参控制面
 
-建议定位优先级：
-1. auto_id（最稳定）
-2. title（中等稳定）
-3. field_index（最脆弱，受 UI 顺序影响）
+当前活动链路不再依赖 auto_id、title、field_index 这类 UI locator。
+
+当前有效控制面是 Script Control 可访问的 Tk widget 树：
+1. `.camera.presetFrame.*` 用于安装位姿参数
+2. `.camera.cammoddlg.*` 用于 lens 参数
+3. `.camera.btn.set` 用于提交写入
+
+因此活动配置只需要表达参数值、边界、步长与精度，不再需要在 JSON 中保留 UI 定位字段。
 
 ### 5.3 参数分组建议
 
@@ -199,7 +203,7 @@ B 组（非实时或弱相关，建议人工外环处理）：
 
 采用坐标下降 + 双向试探，原因：
 - 不依赖梯度，适合带检测噪声的几何特征误差评分。
-- 与 UI 驱动的高成本单点评估匹配。
+- 与 Script Control 写参 + FBO 抓图的高成本单点评估匹配。
 - 实现与调试成本低，便于快速落地。
 
 ### 6.2 单参数迭代逻辑
@@ -422,11 +426,11 @@ total_score_detail 至少包含：
 3. 切换并固定到目标 Camera 视角。
 4. 打开 Settings 面板并确保安装参数可编辑。
 
-### 9.2 首次标定映射
+### 9.2 首次运行准备
 
-1. 运行控件探测模式导出 Edit 列表。
-2. 将参数与控件 locator 建立映射。
-3. 在配置文件固化该映射。
+1. 打开 Camera Settings，并确认安装参数页可编辑。
+2. 至少打开一次 lens 页面，让 `.camera.cammoddlg` widget 树完成初始化。
+3. 验证 Script Control DDE 可连通，运行时探针能返回当前 view 尺寸。
 
 ### 9.3 标定板初始化
 
@@ -477,7 +481,7 @@ total_score_detail 至少包含：
 
 建议将以下内容纳入版本管理：
 - 配置文件模板
-- 窗口映射说明
+- Script Control widget 约定与前置条件说明
 - 阈值说明
 - 最优参数快照
 
@@ -487,7 +491,7 @@ total_score_detail 至少包含：
 
 ### 11.1 功能验收
 
-1. 能连接到目标窗口并写入参数。
+1. 能通过 Script Control DDE 写入并读回参数。
 2. 每轮能成功截图与评分。
 3. 能产出 result.json 与完整历史。
 4. 能在限制轮次内收敛或给出可解释停止原因。
@@ -503,14 +507,14 @@ total_score_detail 至少包含：
 ### 11.3 稳定性验收
 
 - 同一环境重复运行 3 次，结果差异在可接受区间。
-- UI 未变化时 locator 映射可复用。
+- 完成一次 lens 页面初始化后，窗口可最小化且参数写入与 FBO 抓图可复用。
 
 ---
 
 ## 12. 风险与对策
 
-1. UI 变更导致定位失效
-- 对策：优先 auto_id；保留探测模式快速重建映射。
+1. Tk widget 树未初始化或 widget 名称变化导致写参失败
+- 对策：首次运行前手动打开 lens 页面；写入前检查 `.camera` 与 `.camera.cammoddlg` 是否存在；将 widget 约定集中维护在 Script Control 主链中。
 
 2. 评分函数与视觉感知不一致
 - 对策：以多板几何误差替代通用纹理特征；增加分板 ROI；重标定阈值与板权重。

@@ -19,7 +19,17 @@ Files
 
 Dependencies
 - Python 3.9+
-- pip install pywinauto pillow opencv-python numpy
+- Install from the maintained local dependency file:
+  - from repository root: python -m pip install -r Data/Script/CameraCalibration/requirements.txt
+  - from Data/Script/CameraCalibration: python -m pip install -r requirements.txt
+
+Interpreter and environment
+- The maintained dependency file lives in Data/Script/CameraCalibration/requirements.txt.
+- The recommended interpreter for this workspace is the project-local .venv at .venv/Scripts/python.exe.
+- In VS Code, select the workspace interpreter once and keep it pinned to .venv.
+- If imports such as cv2/numpy/PIL suddenly show unresolved again, first verify the active interpreter rather than debugging the script.
+- When running commands manually, prefer the explicit interpreter path:
+  - c:/CM_Projects/CMO141_Calibration/.venv/Scripts/python.exe camera_calibration.py --config config.rear_tv.json
 
 Recommended run environment
 - Windows scaling 100%
@@ -30,12 +40,14 @@ Recommended run environment
 
 Quick start
 1) Edit the camera-specific config, for example config.rear_tv.json.
-2) Set real_image/output_dir.
-3) Configure boards[] for all visible marker boards.
-4) Verify the active Script Control command path points to Data/Script/CameraCalibration/script_control_apply.tcl.
-5) Optional: read current Script Control values back into config:
+2) Create or refresh the local virtual environment, then install dependencies from requirements.txt.
+3) In VS Code, confirm the selected interpreter is .venv/Scripts/python.exe.
+4) Set real_image/output_dir.
+5) Configure boards[] for all visible marker boards.
+6) Verify the active Script Control command path points to Data/Script/CameraCalibration/script_control_apply.tcl.
+7) Optional: read current Script Control values back into config:
   python camera_calibration.py --config config.rear_tv.json --capture-initials --write-initials-to-config
-6) Run optimization:
+8) Run optimization:
   python camera_calibration.py --config config.rear_tv.json --resume-from-result
 
 Optional override
@@ -62,6 +74,7 @@ Automatic view-specific board proposal
 
 Output
 - Screenshots: output_dir/*.png
+- Best score image: whenever a new global best is written, the script also writes a scored overlay image next to it as *_score.png
 - Optimization result: output_dir/result.json
 
 Scoring notes

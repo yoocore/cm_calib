@@ -314,6 +314,9 @@ class CameraCalibrator:
         self.real_img = cv2.imread(cfg["real_image"], cv2.IMREAD_GRAYSCALE)
         if self.real_img is None:
             raise FileNotFoundError(f"Cannot read real image: {cfg['real_image']}")
+        self.real_img_color = cv2.imread(cfg["real_image"], cv2.IMREAD_COLOR)
+        if self.real_img_color is None:
+            raise FileNotFoundError(f"Cannot read real image in color: {cfg['real_image']}")
 
         self.orb = cv2.ORB_create(nfeatures=3000)
         self.params = self._load_params(cfg["parameters"])
@@ -384,6 +387,14 @@ class CameraCalibrator:
         self.no_signal_penalty = float(cfg.get("no_signal_penalty", 1e5))
         self.progress_flush_every = max(1, int(cfg.get("progress_flush_every", 1)))
         self.keep_aspect_resize = bool(cfg.get("keep_aspect_resize", True))
+        self.auto_generate_best_score_image = bool(
+            cfg.get("auto_generate_best_score_image", True)
+        )
+        self.auto_generate_best_overlay_image = bool(
+            cfg.get("auto_generate_best_overlay_image", True)
+        )
+        self.overlay_visual_real_alpha = float(cfg.get("overlay_visual_real_alpha", 0.45))
+        self.overlay_visual_real_alpha = min(1.0, max(0.0, self.overlay_visual_real_alpha))
         joint_exploration_cfg = cfg.get("joint_exploration", {})
         self.joint_exploration_param_names = [
             str(name).strip()
@@ -414,6 +425,9 @@ class CameraCalibrator:
         self.live_log_path: Optional[Path] = None
         self.run_session_id = uuid.uuid4().hex
         self.run_started_at = datetime.now().astimezone().isoformat(timespec="seconds")
+        self.run_started_perf = time.perf_counter()
+        self._best_score_image_cache: Dict[str, Path] = {}
+        self._best_overlay_image_cache: Dict[str, Path] = {}
 
         self.boards = self._load_boards(cfg.get("boards", []))
         if not self.boards:
@@ -1615,7 +1629,12 @@ class CameraCalibrator:
                 new_w = max(1, int(round(w * scale)))
                 new_h = max(1, int(round(h * scale)))
                 resized = cv2.resize(image, (new_w, new_h))
-                canvas = np.zeros((target_h, target_w), dtype=resized.dtype)
+                if resized.ndim == 2:
+                    canvas = np.zeros((target_h, target_w), dtype=resized.dtype)
+                else:
+                    canvas = np.zeros(
+                        (target_h, target_w, resized.shape[2]), dtype=resized.dtype
+                    )
                 off_x = (target_w - new_w) // 2
                 off_y = (target_h - new_h) // 2
                 canvas[off_y : off_y + new_h, off_x : off_x + new_w] = resized
@@ -1726,6 +1745,7 @@ class CameraCalibrator:
         self,
         image_path: Path,
         output_path: Optional[Path] = None,
+        total_detail: Optional[TotalScoreDetail] = None,
     ) -> Tuple[Path, List[BoardScoreDetail]]:
         if self.real_detections is None:
             self.real_detections = self._detect_reference_boards()
@@ -1741,10 +1761,6 @@ class CameraCalibrator:
         palette = self._get_annotation_palette()
         board_scores: List[BoardScoreDetail] = []
 
-        header = f"{Path(self.cfg['real_image']).name} compare on {image_path.name}"
-        self._draw_annotated_label(sim_bgr, header, (12, 26), (245, 245, 245))
-
-        legend_y = 62
         for index, board in enumerate(self.boards):
             color = palette[index % len(palette)]
             detection_img = sim_prepared if board.board_type == "custom_groundmaker" else sim_score_img
@@ -1780,10 +1796,25 @@ class CameraCalibrator:
                     color,
                 )
 
+        total_detail = total_detail or self._aggregate_scores(board_scores, baseline_metrics=None)
+
+        header = f"{Path(self.cfg['real_image']).name} compare on {image_path.name}"
+        self._draw_annotated_label(sim_bgr, header, (12, 26), (245, 245, 245))
+        summary = (
+            f"total={total_detail.total_score:.6f} "
+            f"compared={total_detail.compared_board_count} "
+            f"degrade={total_detail.degrade_penalty:.3f}"
+        )
+        self._draw_annotated_label(sim_bgr, summary, (12, 58), (230, 235, 245))
+
+        legend_y = 96
+        for index, score in enumerate(board_scores):
+            color = palette[index % len(palette)]
+
             legend_text = (
-                f"{board.board_id}: {score.total_score:.3f}"
+                f"{score.board_id}: {score.total_score:.3f}"
                 if score.compared
-                else f"{board.board_id}: skipped"
+                else f"{score.board_id}: skipped"
             )
             self._draw_annotated_label(sim_bgr, legend_text, (12, legend_y), color)
             legend_y += 30
@@ -1792,6 +1823,97 @@ class CameraCalibrator:
         final_output.parent.mkdir(parents=True, exist_ok=True)
         cv2.imwrite(str(final_output), sim_bgr)
         return final_output, board_scores
+
+    @staticmethod
+    def _best_score_image_output_path(image_path: Path) -> Path:
+        return image_path.with_name(f"{image_path.stem}_score.png")
+
+    @staticmethod
+    def _best_overlay_image_output_path(image_path: Path) -> Path:
+        return image_path.with_name(f"{image_path.stem}_overlay.png")
+
+    def _ensure_best_score_image(
+        self,
+        image_path: Path,
+        total_detail: TotalScoreDetail,
+    ) -> Optional[Path]:
+        if not self.auto_generate_best_score_image:
+            return None
+
+        cache_key = str(image_path.resolve())
+        output_path = self._best_score_image_output_path(image_path)
+        cached = self._best_score_image_cache.get(cache_key)
+        if cached is not None and cached.exists():
+            return cached
+        if output_path.exists():
+            try:
+                if output_path.stat().st_mtime >= image_path.stat().st_mtime:
+                    self._best_score_image_cache[cache_key] = output_path
+                    return output_path
+            except OSError:
+                pass
+
+        annotated_path, _ = self.annotate_existing_image(
+            image_path,
+            output_path=output_path,
+            total_detail=total_detail,
+        )
+        self._best_score_image_cache[cache_key] = annotated_path
+        return annotated_path
+
+    def _ensure_best_overlay_image(self, image_path: Path) -> Optional[Path]:
+        if not self.auto_generate_best_overlay_image:
+            return None
+
+        cache_key = str(image_path.resolve())
+        output_path = self._best_overlay_image_output_path(image_path)
+        cached = self._best_overlay_image_cache.get(cache_key)
+        if cached is not None and cached.exists():
+            return cached
+        if output_path.exists():
+            try:
+                if output_path.stat().st_mtime >= image_path.stat().st_mtime:
+                    self._best_overlay_image_cache[cache_key] = output_path
+                    return output_path
+            except OSError:
+                pass
+
+        sim_bgr = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+        if sim_bgr is None:
+            raise RuntimeError(f"Failed reading best image for overlay: {image_path}")
+        sim_eval = self._prepare_eval_image(sim_bgr)
+        real_eval = self._prepare_eval_image(self.real_img_color.copy())
+        overlay = cv2.addWeighted(
+            sim_eval,
+            1.0 - self.overlay_visual_real_alpha,
+            real_eval,
+            self.overlay_visual_real_alpha,
+            0.0,
+        )
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(output_path), overlay)
+        self._best_overlay_image_cache[cache_key] = output_path
+        return output_path
+
+    @staticmethod
+    def _format_duration_stats(seconds: float) -> str:
+        total_ms = max(0, int(round(seconds * 1000.0)))
+        hours, rem_ms = divmod(total_ms, 3600 * 1000)
+        minutes, rem_ms = divmod(rem_ms, 60 * 1000)
+        secs, millis = divmod(rem_ms, 1000)
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}.{millis:03d}"
+
+    def _build_run_stats(self, history: List[dict]) -> dict:
+        calibration_count = len(history)
+        total_elapsed_sec = max(0.0, time.perf_counter() - self.run_started_perf)
+        average_elapsed_sec = total_elapsed_sec / max(1, calibration_count)
+        return {
+            "calibration_count": calibration_count,
+            "total_elapsed_sec": total_elapsed_sec,
+            "average_elapsed_sec": average_elapsed_sec,
+            "total_elapsed_text": self._format_duration_stats(total_elapsed_sec),
+            "average_elapsed_text": self._format_duration_stats(average_elapsed_sec),
+        }
 
     def _build_sim_eval_image(self, captured_gray: np.ndarray) -> np.ndarray:
         eval_image = self._prepare_eval_image(captured_gray)
@@ -2680,11 +2802,14 @@ class CameraCalibrator:
         best_values: Dict[str, float],
         best_total_detail: TotalScoreDetail,
         best_img: Path,
+        best_score_image: Optional[Path],
+        best_overlay_image: Optional[Path],
         stop_reason: str,
         history: List[dict],
         in_progress: bool,
     ) -> dict:
         updated_at = datetime.now().astimezone().isoformat(timespec="seconds")
+        run_stats = self._build_run_stats(history)
         return {
             "boards": [
                 {
@@ -2723,6 +2848,8 @@ class CameraCalibrator:
                 ],
             },
             "best_image": str(best_img),
+            "best_score_image": str(best_score_image) if best_score_image else None,
+            "best_overlay_image": str(best_overlay_image) if best_overlay_image else None,
             "live_log": str(self.live_log_path) if self.live_log_path else None,
             "run_session_id": self.run_session_id,
             "started_at": self.run_started_at,
@@ -2730,6 +2857,7 @@ class CameraCalibrator:
             "finished_at": None if in_progress else updated_at,
             "stop_reason": stop_reason,
             "history_count": len(history),
+            "run_stats": run_stats,
             "in_progress": in_progress,
             "history": history,
         }
@@ -2745,11 +2873,15 @@ class CameraCalibrator:
         history: List[dict],
         in_progress: bool,
     ) -> None:
+        best_score_image = self._ensure_best_score_image(best_img, best_total_detail)
+        best_overlay_image = None if in_progress else self._ensure_best_overlay_image(best_img)
         result = self._build_result_payload(
             best_score=best_score,
             best_values=best_values,
             best_total_detail=best_total_detail,
             best_img=best_img,
+            best_score_image=best_score_image,
+            best_overlay_image=best_overlay_image,
             stop_reason=stop_reason,
             history=history,
             in_progress=in_progress,
@@ -3392,6 +3524,18 @@ def main() -> None:
         print("Best score:", result["best_score"])
         print("Best values:", result["best_values"])
         print("Best image:", result["best_image"])
+        if result.get("best_score_image"):
+            print("Best score image:", result["best_score_image"])
+        if result.get("best_overlay_image"):
+            print("Best overlay image:", result["best_overlay_image"])
+        run_stats = result.get("run_stats") or {}
+        if run_stats:
+            print(
+                "Run stats: "
+                f"calibration_count={run_stats.get('calibration_count')} "
+                f"total_elapsed={run_stats.get('total_elapsed_text')} "
+                f"average_elapsed={run_stats.get('average_elapsed_text')}"
+            )
         print("Result JSON:", str(Path(cfg["output_dir"]) / "result.json"))
     except Exception as exc:
         if marker_path is not None and marker_payload is not None:

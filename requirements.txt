@@ -1,0 +1,5 @@
+numpy==2.4.4
+opencv-python==4.13.0.92
+pillow==12.2.0
+pywin32==311
+pywinauto==0.6.9

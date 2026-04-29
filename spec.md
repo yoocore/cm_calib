@@ -17,7 +17,8 @@
 当前仓库约定：
 - 版本化输入按摄像头分别命名为 [Data/Script/CameraCalibration/config.<camera>.json](Data/Script/CameraCalibration/config.rear_tv.json)，例如当前 rear_tv 使用 [Data/Script/CameraCalibration/config.rear_tv.json](Data/Script/CameraCalibration/config.rear_tv.json)
 - Script Control 命令脚本只保留一个活动入口：[Data/Script/CameraCalibration/script_control_apply.tcl](Data/Script/CameraCalibration/script_control_apply.tcl)
-- runtime wrapper `script_control_runtime.tcl` 由脚本运行时生成，不作为手工维护配置，也不作为版本化输入
+- 当前运行链路只保留 Script Control DDE 写参与 IPG-MOVIE DDE/FBO 抓图，不再依赖 UI 窗口连接
+- lens 参数仍依赖 `.camera.cammoddlg` widget 树在 IPG-MOVIE 中已创建；首次运行前需要手动打开一次 lens 页面
 
 ---
 
@@ -26,9 +27,9 @@
 ### 2.1 本阶段必须实现
 
 1. 手动预置 IPGMovie 到目标 Camera 视角。
-2. 手动打开 Settings 对话框。
-3. 脚本连接窗口并写入安装位置参数。
-4. 脚本截图 IPGMovie 画面。
+2. 手动打开 Camera Settings，并至少打开一次 lens 页面完成 widget 初始化。
+3. 脚本通过 Script Control DDE 写入安装位置参数。
+4. 脚本通过 IPG-MOVIE DDE/FBO 抓图。
 5. 脚本基于多板检测计算联合误差分数。
 6. 脚本迭代更新参数直至收敛或终止。
 7. 输出完整日志、截图和结果文件。
@@ -88,29 +89,28 @@
 
 ---
 
-## 4.2 WindowConnector
+## 4.2 MovieRuntimeProbe
 
 ### 职责
-- 连接 IPGMovie 主窗口
-- 连接 Settings 窗口
-- 校验窗口处于 visible + ready 状态
+- 通过 DDE 向 IPG-MOVIE 发送运行时探针
+- 校验当前视图存在且可返回宽高等基础信息
+- 为纯 DDE/FBO 抓图路径提供前置连通性确认
 
 ### 输入
-- movie_window_title_re: str
-- settings_window_title_re: str
-- backend: str，默认 uia
+- script_control_dde_service: str
+- script_control_dde_topic: str
 
 ### 输出
-- movie_window_handle
-- settings_window_handle
+- movie_view_width
+- movie_view_height
 
 ### 失败条件
-- 未找到窗口
-- 窗口存在但未 ready
-- 多个窗口匹配导致歧义
+- DDE 无法连接
+- IPG-MOVIE 当前视图未就绪
+- 运行时探针返回非法尺寸
 
 ### 错误语义
-- 抛出 WindowConnectError
+- 抛出 RuntimeError
 
 ---
 
@@ -500,9 +500,11 @@
 ## 6.1 顶层字段
 
 必须字段：
-- movie_window_title_re: string
-- settings_window_title_re: string
 - real_image: string
+- script_control_dde_service: string
+- script_control_dde_topic: string
+- script_control_script_path: string
+- script_control_result_path: string
 - output_dir: string
 - boards: array
 - parameters: object

@@ -453,9 +453,11 @@ total_score_detail 至少包含：
 ### 10.1 配置项
 
 关键配置项：
-- movie_window_title_re
-- settings_window_title_re
 - real_image
+- script_control_dde_service
+- script_control_dde_topic
+- script_control_script_path
+- script_control_result_path
 - boards
 - output_dir
 - settle_sec
@@ -562,8 +564,9 @@ total_score_detail 至少包含：
 
 说明：
 - 当前仓库不再保留 overnight/best/final/proposed 命名的版本化配置变体；配置文件统一采用 config.<camera>.json 命名，例如 rear_tv 使用 [Data/Script/CameraCalibration/config.rear_tv.json](Data/Script/CameraCalibration/config.rear_tv.json)。
-- `script_control_runtime.tcl` 仍会被脚本在运行时按需生成，但它不是版本化维护入口。
-- 当前脚本实现尚未完成“多板联合评分 + 自定义板检测”重构。
+- 当前主链已收敛为纯 DDE/FBO：参数写入通过 Script Control DDE 发送到 IPG-MOVIE，抓图通过 FBO + gl readpixels 完成，不再依赖 IPGMovie 窗口连接或前台激活。
+- 当前参数链仍依赖 `.camera` 与 `.camera.cammoddlg` widget 树；首次运行前需要手动打开一次 lens 页面，让对应控件完成初始化。
+- 在 lens 页面完成一次初始化后，Script Control、Camera Settings 和 IPGMovie 窗口可保持最小化，短链路 smoke 已验证参数读写和 FBO 抓图可用。
 - 本文档定义的是下一阶段应收敛的“多板联合标定板方案”目标设计。
 - 后续实现阶段应优先将评估模块重构为多检测器路由、单板评分与总分聚合三层结构。
 

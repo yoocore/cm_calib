@@ -7,7 +7,7 @@ set rc [catch {send IPG-MOVIE {
     if {![winfo exists .camera]} {error "missing widget .camera"}
     if {![winfo exists .camera.presetFrame.evptz]} {error "missing widget .camera.presetFrame.evptz"}
     .camera.presetFrame.evptz delete 0 end
-    .camera.presetFrame.evptz insert 0 0.6620
+    .camera.presetFrame.evptz insert 0 0.6700
     if {![winfo exists .camera.presetFrame.y]} {error "missing widget .camera.presetFrame.y"}
     .camera.presetFrame.y delete 0 end
     .camera.presetFrame.y insert 0 17.5810

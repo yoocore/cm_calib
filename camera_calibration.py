@@ -15,15 +15,6 @@ from typing import Dict, List, Optional, TextIO, Tuple
 import cv2
 import numpy as np
 from PIL import Image
-from PIL import ImageGrab
-from pywinauto import Application
-from pywinauto import Desktop
-from pywinauto import mouse
-from pywinauto.keyboard import send_keys
-from pywinauto.timings import TimeoutError as PywinautoTimeoutError
-
-
-BM_CLICK = 0x00F5
 
 
 class _TeeStream:
@@ -64,9 +55,28 @@ class _TeeStream:
             self._secondary.reconfigure(*args, **kwargs)
 
 
-def _cleanup_live_log(primary_stdout: TextIO, primary_stderr: TextIO, log_stream: TextIO) -> None:
-    sys.stdout = primary_stdout
-    sys.stderr = primary_stderr
+_LIVE_LOG_PRIMARY_STDOUT: Optional[TextIO] = None
+_LIVE_LOG_PRIMARY_STDERR: Optional[TextIO] = None
+_LIVE_LOG_STREAM: Optional[TextIO] = None
+_LIVE_LOG_PATH: Optional[Path] = None
+_LIVE_LOG_ATEXIT_REGISTERED = False
+
+
+def _cleanup_live_log() -> None:
+    global _LIVE_LOG_PRIMARY_STDOUT, _LIVE_LOG_PRIMARY_STDERR, _LIVE_LOG_STREAM, _LIVE_LOG_PATH
+
+    if _LIVE_LOG_PRIMARY_STDOUT is not None:
+        sys.stdout = _LIVE_LOG_PRIMARY_STDOUT
+    if _LIVE_LOG_PRIMARY_STDERR is not None:
+        sys.stderr = _LIVE_LOG_PRIMARY_STDERR
+
+    log_stream = _LIVE_LOG_STREAM
+    _LIVE_LOG_PRIMARY_STDOUT = None
+    _LIVE_LOG_PRIMARY_STDERR = None
+    _LIVE_LOG_STREAM = None
+    _LIVE_LOG_PATH = None
+    if log_stream is None:
+        return
     try:
         log_stream.flush()
     except Exception:
@@ -77,19 +87,45 @@ def _cleanup_live_log(primary_stdout: TextIO, primary_stderr: TextIO, log_stream
         pass
 
 
-def _configure_live_log(cfg: dict, resume_from_result: bool) -> Path:
-    output_dir = _resolve_config_output_dir(cfg)
-    cfg["output_dir"] = str(output_dir)
+def _configure_live_log_for_output_dir(output_dir: Path, resume_from_result: bool) -> Path:
+    global _LIVE_LOG_PRIMARY_STDOUT, _LIVE_LOG_PRIMARY_STDERR, _LIVE_LOG_STREAM, _LIVE_LOG_PATH
+    global _LIVE_LOG_ATEXIT_REGISTERED
+
     output_dir.mkdir(parents=True, exist_ok=True)
     log_name = "continue_resume.log" if resume_from_result else "run.log"
     log_path = output_dir / log_name
+    if _LIVE_LOG_STREAM is not None and _LIVE_LOG_PATH == log_path:
+        return log_path
+
+    if _LIVE_LOG_STREAM is not None:
+        _cleanup_live_log()
+
     log_stream = open(log_path, "w", encoding="utf-8", buffering=1)
     primary_stdout = sys.stdout
     primary_stderr = sys.stderr
-    atexit.register(_cleanup_live_log, primary_stdout, primary_stderr, log_stream)
+    if not _LIVE_LOG_ATEXIT_REGISTERED:
+        atexit.register(_cleanup_live_log)
+        _LIVE_LOG_ATEXIT_REGISTERED = True
+    _LIVE_LOG_PRIMARY_STDOUT = primary_stdout
+    _LIVE_LOG_PRIMARY_STDERR = primary_stderr
+    _LIVE_LOG_STREAM = log_stream
+    _LIVE_LOG_PATH = log_path
     sys.stdout = _TeeStream(primary_stdout, log_stream)
     sys.stderr = _TeeStream(primary_stderr, log_stream)
     return log_path
+
+
+def _configure_live_log(cfg: dict, resume_from_result: bool) -> Path:
+    output_dir = _resolve_config_output_dir(cfg)
+    cfg["output_dir"] = str(output_dir)
+    return _configure_live_log_for_output_dir(output_dir, resume_from_result)
+
+
+def _unlink_if_exists(path: Path) -> None:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
 
 
 def _default_sim_output_root() -> Path:
@@ -156,11 +192,6 @@ class ParameterSpec:
     max_value: float
     min_step: float
     decimals: int
-    field_index: Optional[int] = None
-    auto_id: Optional[str] = None
-    title: Optional[str] = None
-    click_x: Optional[int] = None
-    click_y: Optional[int] = None
 
 
 @dataclass
@@ -275,16 +306,6 @@ class CameraCalibrator:
 
     def __init__(self, cfg: dict):
         self.cfg = cfg
-        self.app = None
-        self.win32_app = None
-        self.script_control_app = None
-        self.movie_win = None
-        self.settings_win = None
-        self.script_control_win = None
-        self.settings_backend = "uia"
-        self._win32_handle_cache: Dict[str, int] = {}
-        self._auto_param_handle_cache: Optional[Dict[str, int]] = None
-        self._auto_param_handle_status_logged = False
         self.repo_root = Path(__file__).resolve().parents[3]
         self.output_dir = _resolve_config_output_dir(cfg)
         cfg["output_dir"] = str(self.output_dir)
@@ -306,77 +327,21 @@ class CameraCalibrator:
         self.settings_input_mode = str(cfg.get("settings_input_mode", "script_control")).lower()
         if self.settings_input_mode != "script_control":
             raise ValueError("Only settings_input_mode='script_control' is supported")
-        script_root = self.repo_root / "Data" / "Script"
         calibration_root = Path(__file__).resolve().parent
-        default_runtime_path = calibration_root / "script_control_runtime.tcl"
         default_command_path = calibration_root / "script_control_apply.tcl"
         default_result_path = self.repo_root / "SimOutput" / "script_control_camera_apply_result.txt"
-        self.script_control_window_title_re = str(
-            cfg.get("script_control_window_title_re", ".*Script Control.*")
-        )
         configured_script_path = Path(cfg.get("script_control_script_path", str(default_command_path)))
         if not configured_script_path.is_absolute():
             configured_script_path = (self.repo_root / configured_script_path).resolve()
         self.script_control_script_path = configured_script_path
-        configured_runtime_path = Path(
-            cfg.get("script_control_runtime_path", str(default_runtime_path))
-        )
-        if not configured_runtime_path.is_absolute():
-            configured_runtime_path = (self.repo_root / configured_runtime_path).resolve()
-        self.script_control_runtime_path = configured_runtime_path
-        if configured_runtime_path == script_root or script_root in configured_runtime_path.parents:
-            self.script_control_browser_path = configured_runtime_path.relative_to(
-                script_root
-            ).as_posix()
-        else:
-            self.script_control_browser_path = str(configured_runtime_path)
         self.script_control_result_path = Path(
             cfg.get("script_control_result_path", str(default_result_path))
         )
-        self.script_control_execute_mode = str(
-            cfg.get("script_control_execute_mode", "console")
-        ).lower()
-        self.script_control_prefer_dde = bool(cfg.get("script_control_prefer_dde", True))
         self.script_control_dde_service = str(cfg.get("script_control_dde_service", "TclEval"))
         self.script_control_dde_topic = str(cfg.get("script_control_dde_topic", "CarMaker"))
-        self.script_control_console_click_x = int(cfg.get("script_control_console_click_x", 22))
-        self.script_control_console_click_y_from_bottom = int(
-            cfg.get("script_control_console_click_y_from_bottom", 42)
-        )
-        self.script_control_start_click_x = cfg.get("script_control_start_click_x")
-        self.script_control_start_click_y = cfg.get("script_control_start_click_y")
-        self.script_control_start_click_x_from_right = cfg.get(
-            "script_control_start_click_x_from_right"
-        )
-        self.script_control_start_click_y_from_bottom = cfg.get(
-            "script_control_start_click_y_from_bottom"
-        )
         self.script_control_timeout_sec = float(cfg.get("script_control_timeout_sec", 5.0))
-        self.script_control_manual_start_timeout_sec = float(
-            cfg.get("script_control_manual_start_timeout_sec", 0.0)
-        )
         self.script_control_settle_sec = float(cfg.get("script_control_settle_sec", 0.2))
-        self.script_control_prefer_background_start = bool(
-            cfg.get("script_control_prefer_background_start", False)
-        )
-        self.script_control_allow_physical_fallback = bool(
-            cfg.get("script_control_allow_physical_fallback", True)
-        )
-        self._script_control_runtime_loaded = False
-        if self.settings_input_mode == "script_control":
-            if (
-                self.script_control_execute_mode != "dde"
-                and (self.script_control_start_click_x is None or self.script_control_start_click_y is None)
-            ):
-                raise ValueError(
-                    "script_control_start_click_x and script_control_start_click_y are required "
-                    "when settings_input_mode='script_control' and script_control_execute_mode != 'dde'"
-                )
-        self.field_settle_sec = float(cfg.get("field_settle_sec", 0.08))
         self.template_feature_max_dim = int(cfg.get("template_feature_max_dim", 2048))
-        self.movie_capture_mode = str(cfg.get("movie_capture_mode", "client")).lower()
-        if self.movie_capture_mode not in {"window", "client", "dde_fbo"}:
-            raise ValueError("movie_capture_mode must be 'window', 'client', or 'dde_fbo'")
         self.movie_auto_crop_content = bool(cfg.get("movie_auto_crop_content", True))
         self.movie_match_reference_aspect = bool(
             cfg.get("movie_match_reference_aspect", True)
@@ -418,8 +383,6 @@ class CameraCalibrator:
         )
         self.no_signal_penalty = float(cfg.get("no_signal_penalty", 1e5))
         self.progress_flush_every = max(1, int(cfg.get("progress_flush_every", 1)))
-        self.movie_content_crop = cfg.get("movie_content_crop")
-        self.movie_dde_content_crop = cfg.get("movie_dde_content_crop")
         self.keep_aspect_resize = bool(cfg.get("keep_aspect_resize", True))
         joint_exploration_cfg = cfg.get("joint_exploration", {})
         self.joint_exploration_param_names = [
@@ -868,173 +831,19 @@ class CameraCalibrator:
                     max_value=max_value,
                     min_step=float(p.get("min_step", 0.001)),
                     decimals=int(p.get("decimals", 4)),
-                    field_index=p.get("field_index"),
-                    auto_id=p.get("auto_id"),
-                    title=p.get("title"),
-                    click_x=p.get("click_x"),
-                    click_y=p.get("click_y"),
                 )
             )
         return params
 
-    @staticmethod
-    def _cursor_pos() -> Tuple[int, int]:
-        class POINT(ctypes.Structure):
-            _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
-
-        pt = POINT()
-        ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
-        return int(pt.x), int(pt.y)
-
-    def _resolve_click_coords(self, spec: ParameterSpec) -> Tuple[int, int]:
-        if spec.click_x is None or spec.click_y is None:
-            raise ValueError(
-                f"Parameter {spec.name} requires click_x and click_y in coordinate mode"
-            )
-
-        if self.settings_win is None:
-            raise RuntimeError("settings window is not connected")
-
-        rect = self.settings_win.rectangle()
-        width = int(rect.right - rect.left)
-        height = int(rect.bottom - rect.top)
-        if spec.click_x < 0 or spec.click_x >= width or spec.click_y < 0 or spec.click_y >= height:
-            raise ValueError(
-                f"{spec.name} click coordinates out of settings window bounds: "
-                f"click=({spec.click_x},{spec.click_y}), window_size=({width},{height})"
-            )
-        return int(rect.left + spec.click_x), int(rect.top + spec.click_y)
-
-    def _resolve_interaction_point(self, spec: ParameterSpec) -> Tuple[int, int]:
-        abs_x, abs_y = self._resolve_click_coords(spec)
-        if self.settings_backend != "win32":
-            return abs_x, abs_y
-
-        wrapper = None
-        try:
-            if self.win32_app is not None:
-                wrapper = self._resolve_win32_field_wrapper(spec)
-        except Exception:
-            wrapper = None
-        if wrapper is not None:
-            try:
-                rect = wrapper.rectangle()
-                if rect.right > rect.left and rect.bottom > rect.top:
-                    return int((rect.left + rect.right) / 2), int((rect.top + rect.bottom) / 2)
-            except Exception:
-                pass
-
-        try:
-            import win32gui  # type: ignore
-
-            hwnd = win32gui.WindowFromPoint((abs_x, abs_y))
-            if hwnd:
-                left, top, right, bottom = win32gui.GetWindowRect(hwnd)
-                if right > left and bottom > top:
-                    return int((left + right) / 2), int((top + bottom) / 2)
-        except Exception:
-            pass
-        return abs_x, abs_y
-
-    def _resolve_win32_field_wrapper(self, spec: ParameterSpec):
-        if self.settings_backend != "win32" or self.win32_app is None:
-            return None
-
-        try:
-            import win32gui  # type: ignore
-        except Exception:
-            return None
-
-        hwnd = self._win32_handle_cache.get(spec.name)
-        if hwnd and not win32gui.IsWindow(int(hwnd)):
-            self._win32_handle_cache.pop(spec.name, None)
-            hwnd = None
-
-        if hwnd is None:
-            auto_handles = self._auto_locate_camera_parameter_handles()
-            fresh_hwnd = int(auto_handles.get(spec.name, 0))
-
-            if not fresh_hwnd:
-                if self.forbid_interactive_coordinate_fallback:
-                    raise RuntimeError(
-                        f"Auto locator could not resolve a win32 handle for {spec.name}; "
-                        "interactive coordinate fallback is disabled."
-                    )
-                abs_x, abs_y = self._resolve_click_coords(spec)
-                try:
-                    fresh_hwnd = int(win32gui.WindowFromPoint((abs_x, abs_y)))
-                except Exception:
-                    fresh_hwnd = 0
-
-            if not fresh_hwnd or not win32gui.IsWindow(fresh_hwnd):
-                return None
-
-            hwnd = fresh_hwnd
-            self._win32_handle_cache[spec.name] = hwnd
-
-        try:
-            return self.win32_app.window(handle=int(hwnd))
-        except Exception:
-            self._win32_handle_cache.pop(spec.name, None)
-            return None
-
-    def _log_auto_param_handle_status(self, resolved: Dict[str, int]) -> None:
-        if self._auto_param_handle_status_logged:
-            return
-
-        camera_param_names = ["roll", "pitch", "yaw", "pos_x", "pos_y", "pos_z"]
-        relevant_specs = [spec for spec in self.params if spec.name in camera_param_names]
-        if not relevant_specs:
-            self._auto_param_handle_status_logged = True
-            return
-
-        try:
-            import win32gui  # type: ignore
-        except Exception:
-            self._auto_param_handle_status_logged = True
-            return
-
-        print("Auto-locator status for Camera Settings:")
-        for name in camera_param_names:
-            spec = next((item for item in relevant_specs if item.name == name), None)
-            if spec is None:
-                continue
-
-            hwnd = int(resolved.get(name, 0) or 0)
-            if hwnd and win32gui.IsWindow(hwnd):
-                left, top, right, bottom = win32gui.GetWindowRect(hwnd)
-                print(
-                    f"  {name}: auto handle={hwnd} rect=({left},{top},{right},{bottom})"
-                )
-                continue
-
-            has_click = spec.click_x is not None and spec.click_y is not None
-            if has_click:
-                print(
-                    f"  {name}: auto locate failed, fallback to click_x={spec.click_x}, click_y={spec.click_y}"
-                )
-            else:
-                print(f"  {name}: auto locate failed, no click fallback configured")
-
-        self._auto_param_handle_status_logged = True
-
     def preflight_script_control(self) -> None:
-        self.script_control_runtime_path.parent.mkdir(parents=True, exist_ok=True)
         self.script_control_script_path.parent.mkdir(parents=True, exist_ok=True)
         self.script_control_result_path.parent.mkdir(parents=True, exist_ok=True)
-        start_point_desc = "n/a"
-        if self.script_control_execute_mode != "dde":
-            self._connect_script_control_window()
-            start_x, start_y = self._resolve_script_control_start_point()
-            start_point_desc = f"({start_x},{start_y})"
         print(
             "Script Control preflight: "
-            f"title_re={self.script_control_window_title_re}, "
-            f"execute_mode={self.script_control_execute_mode}, "
-            f"runtime_path={self.script_control_runtime_path}, "
             f"command_path={self.script_control_script_path}, "
             f"result_path={self.script_control_result_path}, "
-            f"start_point={start_point_desc}"
+            f"dde_service={self.script_control_dde_service}, "
+            f"dde_topic={self.script_control_dde_topic}"
         )
 
     @staticmethod
@@ -1093,6 +902,15 @@ class CameraCalibrator:
             )
             print(f"Resume source: {self.resume_result_path}{score_info}")
 
+    def _ensure_live_log(self) -> None:
+        if self.live_log_path is not None:
+            return
+        self.live_log_path = _configure_live_log_for_output_dir(
+            self.output_dir,
+            self.resume_result_path is not None,
+        )
+        print("Live log:", str(self.live_log_path))
+
     def load_best_values_from_result(self, result_path: Path) -> Optional[Dict[str, float]]:
         if not result_path.exists():
             print(f"Resume skipped: result file not found at {result_path}")
@@ -1144,548 +962,7 @@ class CameraCalibrator:
         )
         return applied
 
-    def _connect_script_control_window(self) -> None:
-        if self.script_control_win is not None:
-            try:
-                self.script_control_win.wait("visible enabled", timeout=1)
-                return
-            except Exception:
-                self.script_control_win = None
-                self.script_control_app = None
-                self._script_control_runtime_loaded = False
-
-        self.script_control_app = Application(backend="win32").connect(
-            title_re=self.script_control_window_title_re,
-            timeout=10,
-        )
-        self.script_control_win = self.script_control_app.window(
-            title_re=self.script_control_window_title_re
-        )
-        self.script_control_win.wait("visible enabled", timeout=10)
-
-    def _get_script_control_side_buttons(self) -> Dict[str, Tuple[int, int, int, int]]:
-        if self.script_control_win is None:
-            raise RuntimeError("Script Control window is not connected")
-
-        rect = self.script_control_win.rectangle()
-        small_buttons: List[Tuple[int, Tuple[int, int, int, int]]] = []
-        for ctrl in self.script_control_win.descendants():
-            try:
-                if getattr(ctrl.element_info, "class_name", "") != "Button":
-                    continue
-                button_rect = ctrl.rectangle()
-                width = int(button_rect.right - button_rect.left)
-                height = int(button_rect.bottom - button_rect.top)
-                if button_rect.left <= rect.right - 140:
-                    continue
-                if 68 <= width <= 75 and 20 <= height <= 26:
-                    small_buttons.append(
-                        (
-                            int(button_rect.top),
-                            (
-                                int(button_rect.left),
-                                int(button_rect.top),
-                                int(button_rect.right),
-                                int(button_rect.bottom),
-                            ),
-                        )
-                    )
-            except Exception:
-                continue
-
-        small_buttons.sort(key=lambda item: item[0])
-        if len(small_buttons) < 5:
-            raise RuntimeError(
-                f"Unable to resolve Script Control side buttons; found {len(small_buttons)} small buttons"
-            )
-
-        return {
-            "close": small_buttons[0][1],
-            "new": small_buttons[1][1],
-            "open": small_buttons[2][1],
-            "edit": small_buttons[3][1],
-            "clear": small_buttons[4][1],
-        }
-
-    def _get_script_control_side_button_handles(self) -> Dict[str, int]:
-        if self.script_control_win is None:
-            raise RuntimeError("Script Control window is not connected")
-
-        rect = self.script_control_win.rectangle()
-        small_buttons: List[Tuple[int, int]] = []
-        for ctrl in self.script_control_win.descendants():
-            try:
-                if getattr(ctrl.element_info, "class_name", "") != "Button":
-                    continue
-                button_rect = ctrl.rectangle()
-                width = int(button_rect.right - button_rect.left)
-                height = int(button_rect.bottom - button_rect.top)
-                hwnd = int(getattr(ctrl, "handle", 0))
-                if not hwnd:
-                    continue
-                if button_rect.left <= rect.right - 140:
-                    continue
-                if 68 <= width <= 75 and 20 <= height <= 26:
-                    small_buttons.append((int(button_rect.top), hwnd))
-            except Exception:
-                continue
-
-        small_buttons.sort(key=lambda item: item[0])
-        if len(small_buttons) < 5:
-            raise RuntimeError(
-                f"Unable to resolve Script Control side button handles; found {len(small_buttons)} small buttons"
-            )
-
-        return {
-            "close": small_buttons[0][1],
-            "new": small_buttons[1][1],
-            "open": small_buttons[2][1],
-            "edit": small_buttons[3][1],
-            "clear": small_buttons[4][1],
-        }
-
-    @staticmethod
-    def _rect_center(rect: Tuple[int, int, int, int]) -> Tuple[int, int]:
-        left, top, right, bottom = rect
-        return int((left + right) / 2), int((top + bottom) / 2)
-
-    def _click_screen_rect(self, rect: Tuple[int, int, int, int]) -> None:
-        original_cursor = self._cursor_pos()
-        try:
-            mouse.click(button="left", coords=self._rect_center(rect))
-        finally:
-            try:
-                mouse.move(coords=original_cursor)
-            except Exception:
-                pass
-
-    def _click_button_handle(self, hwnd: int) -> bool:
-        if not hwnd:
-            return False
-        self._send_window_message(hwnd, BM_CLICK, 0, 0)
-        return True
-
-    def _click_script_control_button(
-        self,
-        hwnd: int,
-        rect: Tuple[int, int, int, int],
-        *,
-        description: str,
-    ) -> bool:
-        if self._click_button_handle(hwnd):
-            return True
-        if not self.script_control_allow_physical_fallback:
-            raise RuntimeError(
-                f"Script Control {description} requires a physical click, but "
-                "script_control_allow_physical_fallback is disabled"
-            )
-        self._click_screen_rect(rect)
-        return False
-
-    @staticmethod
-    def _is_inactive_desktop_click_error(exc: Exception) -> bool:
-        text = str(exc)
-        return "There is no active desktop" in text or "SetCursorPos" in text
-
-    def _resolve_script_control_start_button_handle(self) -> Optional[int]:
-        if self.script_control_win is None:
-            return None
-
-        rect = self.script_control_win.rectangle()
-        preferred_right_margin = 50
-        preferred_bottom_margin = 75
-        candidates: List[Tuple[float, int]] = []
-        try:
-            for ctrl in self.script_control_win.descendants():
-                if getattr(ctrl.element_info, "class_name", "") != "Button":
-                    continue
-                button_rect = ctrl.rectangle()
-                width = int(button_rect.right - button_rect.left)
-                height = int(button_rect.bottom - button_rect.top)
-                if width < 60 or height < 30:
-                    continue
-                center_x = int((button_rect.left + button_rect.right) / 2)
-                center_y = int((button_rect.top + button_rect.bottom) / 2)
-                right_margin = int(rect.right - center_x)
-                bottom_margin = int(rect.bottom - center_y)
-                if right_margin < 0 or right_margin > 120 or bottom_margin < 0 or bottom_margin > 160:
-                    continue
-                hwnd = int(getattr(ctrl, "handle", 0))
-                if not hwnd:
-                    continue
-                score = abs(right_margin - preferred_right_margin) + abs(
-                    bottom_margin - preferred_bottom_margin
-                )
-                candidates.append((float(score), hwnd))
-        except Exception:
-            return None
-
-        if not candidates:
-            return None
-        _, hwnd = min(candidates, key=lambda item: item[0])
-        return hwnd
-
-    def _trigger_script_control_start(
-        self,
-        start_x: int,
-        start_y: int,
-        prefer_background: bool = True,
-        allow_physical_fallback: bool = True,
-    ) -> bool:
-        if prefer_background:
-            hwnd = self._resolve_script_control_start_button_handle()
-            if hwnd:
-                try:
-                    self._send_window_message(hwnd, BM_CLICK, 0, 0)
-                    return False
-                except Exception:
-                    pass
-            if not allow_physical_fallback:
-                raise RuntimeError("Script Control background Start trigger did not execute")
-
-        if not allow_physical_fallback:
-            raise RuntimeError("Script Control physical Start fallback is disabled")
-
-        click_deadline = time.time() + max(5.0, self.script_control_timeout_sec * 6.0)
-        while True:
-            original_cursor = self._cursor_pos()
-            try:
-                mouse.click(button="left", coords=(start_x, start_y))
-                return False
-            except Exception as exc:
-                if self._is_inactive_desktop_click_error(exc):
-                    if self.script_control_manual_start_timeout_sec > 0:
-                        print(
-                            "Script Control Start requires manual click; waiting up to "
-                            f"{self.script_control_manual_start_timeout_sec:.1f}s for user Start"
-                        )
-                        return True
-                    if time.time() < click_deadline:
-                        time.sleep(1.0)
-                        continue
-                if time.time() >= click_deadline or not self._is_inactive_desktop_click_error(exc):
-                    raise
-            finally:
-                try:
-                    mouse.move(coords=original_cursor)
-                except Exception:
-                    pass
-
-    def _get_script_control_browser_window(self):
-        try:
-            browser = Desktop(backend="win32").window(title_re="CarMaker Office - Browser")
-            browser.wait("visible enabled", timeout=0.5)
-            return browser
-        except Exception:
-            return None
-
-    def _get_script_control_warning_window(self):
-        try:
-            warning = Desktop(backend="win32").window(title_re="CarMaker Office - Warning")
-            warning.wait("visible enabled", timeout=0.5)
-            return warning
-        except Exception:
-            return None
-
-    def _dismiss_script_control_popups(self) -> None:
-        warning = self._get_script_control_warning_window()
-        if warning is not None:
-            rightmost_handle = 0
-            rightmost = None
-            for ctrl in warning.descendants():
-                try:
-                    if getattr(ctrl.element_info, "class_name", "") != "Button":
-                        continue
-                    rect = ctrl.rectangle()
-                    width = int(rect.right - rect.left)
-                    height = int(rect.bottom - rect.top)
-                    if 45 <= width <= 80 and 20 <= height <= 30:
-                        candidate = (int(rect.left), int(rect.top), int(rect.right), int(rect.bottom))
-                        if rightmost is None or candidate[0] > rightmost[0]:
-                            rightmost = candidate
-                            rightmost_handle = int(getattr(ctrl, "handle", 0))
-                except Exception:
-                    continue
-            if rightmost is not None:
-                self._click_script_control_button(
-                    rightmost_handle,
-                    rightmost,
-                    description="warning confirmation",
-                )
-                time.sleep(0.2)
-
-        browser = self._get_script_control_browser_window()
-        if browser is not None:
-            browser_rect = browser.rectangle()
-            cancel_handle = 0
-            cancel_rect = None
-            for ctrl in browser.descendants():
-                try:
-                    if getattr(ctrl.element_info, "class_name", "") != "Button":
-                        continue
-                    rect = ctrl.rectangle()
-                    width = int(rect.right - rect.left)
-                    height = int(rect.bottom - rect.top)
-                    if (
-                        70 <= width <= 80
-                        and 20 <= height <= 24
-                        and rect.left > browser_rect.right - 110
-                        and rect.top < browser_rect.top + 220
-                    ):
-                        candidate = (int(rect.left), int(rect.top), int(rect.right), int(rect.bottom))
-                        if cancel_rect is None or candidate[1] > cancel_rect[1]:
-                            cancel_rect = candidate
-                            cancel_handle = int(getattr(ctrl, "handle", 0))
-                except Exception:
-                    continue
-            if cancel_rect is not None:
-                self._click_script_control_button(
-                    cancel_handle,
-                    cancel_rect,
-                    description="browser cancel",
-                )
-                time.sleep(0.2)
-
-    def _resolve_script_control_browser_path_rect(self, browser) -> Tuple[int, int, int, int]:
-        browser_rect = browser.rectangle()
-        candidate_rect = None
-        for ctrl in browser.descendants():
-            try:
-                if getattr(ctrl.element_info, "class_name", "") != "TkChild":
-                    continue
-                rect = ctrl.rectangle()
-                width = int(rect.right - rect.left)
-                height = int(rect.bottom - rect.top)
-                if width > 300 and 18 <= height <= 30 and rect.top < browser_rect.top + 130:
-                    candidate_rect = (int(rect.left), int(rect.top), int(rect.right), int(rect.bottom))
-            except Exception:
-                continue
-        if candidate_rect is None:
-            raise RuntimeError("Unable to resolve Script Control Browser path entry")
-        return candidate_rect
-
-    def _resolve_script_control_browser_path_handle(self, browser) -> int:
-        browser_rect = browser.rectangle()
-        candidate_handle = 0
-        for ctrl in browser.descendants():
-            try:
-                if getattr(ctrl.element_info, "class_name", "") != "TkChild":
-                    continue
-                rect = ctrl.rectangle()
-                width = int(rect.right - rect.left)
-                height = int(rect.bottom - rect.top)
-                if width > 300 and 18 <= height <= 30 and rect.top < browser_rect.top + 130:
-                    candidate_handle = int(getattr(ctrl, "handle", 0))
-            except Exception:
-                continue
-        if not candidate_handle:
-            raise RuntimeError("Unable to resolve Script Control Browser path entry handle")
-        return candidate_handle
-
-    def _resolve_script_control_browser_ok_rect(self, browser) -> Tuple[int, int, int, int]:
-        browser_rect = browser.rectangle()
-        ok_rect = None
-        for ctrl in browser.descendants():
-            try:
-                if getattr(ctrl.element_info, "class_name", "") != "Button":
-                    continue
-                rect = ctrl.rectangle()
-                width = int(rect.right - rect.left)
-                height = int(rect.bottom - rect.top)
-                if (
-                    70 <= width <= 80
-                    and 20 <= height <= 24
-                    and rect.left > browser_rect.right - 110
-                    and rect.top < browser_rect.top + 170
-                ):
-                    candidate = (int(rect.left), int(rect.top), int(rect.right), int(rect.bottom))
-                    if ok_rect is None or candidate[1] < ok_rect[1]:
-                        ok_rect = candidate
-            except Exception:
-                continue
-        if ok_rect is None:
-            raise RuntimeError("Unable to resolve Script Control Browser OK button")
-        return ok_rect
-
-    def _resolve_script_control_browser_ok_handle(self, browser) -> int:
-        browser_rect = browser.rectangle()
-        ok_handle = 0
-        best_top = None
-        for ctrl in browser.descendants():
-            try:
-                if getattr(ctrl.element_info, "class_name", "") != "Button":
-                    continue
-                rect = ctrl.rectangle()
-                width = int(rect.right - rect.left)
-                height = int(rect.bottom - rect.top)
-                hwnd = int(getattr(ctrl, "handle", 0))
-                if not hwnd:
-                    continue
-                if (
-                    70 <= width <= 80
-                    and 20 <= height <= 24
-                    and rect.left > browser_rect.right - 110
-                    and rect.top < browser_rect.top + 170
-                ):
-                    if best_top is None or int(rect.top) < best_top:
-                        best_top = int(rect.top)
-                        ok_handle = hwnd
-            except Exception:
-                continue
-        if not ok_handle:
-            raise RuntimeError("Unable to resolve Script Control Browser OK button handle")
-        return ok_handle
-
-    def _ensure_script_control_script_loaded(self) -> None:
-        self._connect_script_control_window()
-        if self._script_control_runtime_loaded:
-            return
-
-        self.script_control_runtime_path.parent.mkdir(parents=True, exist_ok=True)
-        self._write_script_control_runtime_wrapper()
-        self._dismiss_script_control_popups()
-
-        browser = None
-        for _ in range(3):
-            side_buttons = self._get_script_control_side_buttons()
-            side_button_handles = self._get_script_control_side_button_handles()
-            clicked_in_background = self._click_script_control_button(
-                side_button_handles.get("open", 0),
-                side_buttons["open"],
-                description="Browser Open",
-            )
-
-            browser_deadline = time.time() + self.script_control_timeout_sec
-            while time.time() < browser_deadline:
-                browser = self._get_script_control_browser_window()
-                if browser is not None:
-                    break
-                time.sleep(0.1)
-            if (
-                browser is None
-                and clicked_in_background
-                and self.script_control_allow_physical_fallback
-            ):
-                self._click_screen_rect(side_buttons["open"])
-                browser_deadline = time.time() + self.script_control_timeout_sec
-                while time.time() < browser_deadline:
-                    browser = self._get_script_control_browser_window()
-                    if browser is not None:
-                        break
-                    time.sleep(0.1)
-            if browser is not None:
-                break
-            self._dismiss_script_control_popups()
-            time.sleep(0.2)
-
-        if browser is None:
-            raise RuntimeError("Timed out waiting for Script Control Browser window")
-
-        entry_handle = self._resolve_script_control_browser_path_handle(browser)
-        ok_rect = self._resolve_script_control_browser_ok_rect(browser)
-        ok_handle = self._resolve_script_control_browser_ok_handle(browser)
-        self._send_window_message(entry_handle, 0x000C, 0, self.script_control_browser_path)
-        clicked_ok_in_background = self._click_script_control_button(
-            ok_handle,
-            ok_rect,
-            description="Browser OK",
-        )
-
-        loaded_deadline = time.time() + self.script_control_timeout_sec
-        ok_fallback_attempted = not clicked_ok_in_background
-        while time.time() < loaded_deadline:
-            warning = self._get_script_control_warning_window()
-            browser = self._get_script_control_browser_window()
-            if (
-                browser is not None
-                and warning is None
-                and clicked_ok_in_background
-                and not ok_fallback_attempted
-                and self.script_control_allow_physical_fallback
-            ):
-                self._click_screen_rect(ok_rect)
-                ok_fallback_attempted = True
-                time.sleep(0.2)
-                warning = self._get_script_control_warning_window()
-                browser = self._get_script_control_browser_window()
-            if warning is not None:
-                leftmost_handle = 0
-                leftmost = None
-                for ctrl in warning.descendants():
-                    try:
-                        if getattr(ctrl.element_info, "class_name", "") != "Button":
-                            continue
-                        rect = ctrl.rectangle()
-                        width = int(rect.right - rect.left)
-                        height = int(rect.bottom - rect.top)
-                        if 45 <= width <= 80 and 20 <= height <= 30:
-                            candidate = (
-                                int(rect.left),
-                                int(rect.top),
-                                int(rect.right),
-                                int(rect.bottom),
-                            )
-                            if leftmost is None or candidate[0] < leftmost[0]:
-                                leftmost = candidate
-                                leftmost_handle = int(getattr(ctrl, "handle", 0))
-                    except Exception:
-                        continue
-                if leftmost is not None:
-                    self._click_script_control_button(
-                        leftmost_handle,
-                        leftmost,
-                        description="runtime load confirmation",
-                    )
-                    time.sleep(0.2)
-
-            warning = self._get_script_control_warning_window()
-            if browser is None and warning is None:
-                self._script_control_runtime_loaded = True
-                return
-            time.sleep(0.1)
-
-        raise RuntimeError(
-            "Timed out loading the runtime Tcl into Script Control via Browser"
-        )
-
-    def _write_script_control_runtime_wrapper(self) -> None:
-        command_path = self.script_control_script_path.as_posix()
-        result_path = self.script_control_result_path.as_posix()
-        wrapper_lines = [
-            f'set __copilot_command_script "{command_path}"',
-            f'set __copilot_result_path "{result_path}"',
-            'set __copilot_rc [catch {uplevel #0 [list RunScript $__copilot_command_script]} __copilot_msg]',
-            'if {$__copilot_rc != 0} {',
-            '    set out [open $__copilot_result_path w]',
-            '    puts $out "rc=$__copilot_rc"',
-            '    puts $out "msg_begin"',
-            '    puts $out $__copilot_msg',
-            '    puts $out "msg_end"',
-            '    close $out',
-            '}',
-        ]
-        self.script_control_runtime_path.write_text(
-            "\n".join(wrapper_lines) + "\n",
-            encoding="utf-8",
-        )
-
-    def _run_script_control_console_command(self, command: str) -> None:
-        if self.script_control_win is None:
-            raise RuntimeError("Script Control window is not connected")
-
-        rect = self.script_control_win.rectangle()
-        click_x = int(rect.left + self.script_control_console_click_x)
-        click_y = int(rect.bottom - self.script_control_console_click_y_from_bottom)
-        self._set_clipboard_text(command)
-        self._click_screen_rect((click_x - 1, click_y - 1, click_x + 1, click_y + 1))
-        time.sleep(0.1)
-        send_keys("^v", pause=0.01)
-        send_keys("{ENTER}", pause=0.01)
-
     def _run_script_control_dde_runscript(self, script_path: Path) -> bool:
-        if not self.script_control_prefer_dde:
-            return False
-
         try:
             import win32ui  # noqa: F401
             import dde  # type: ignore
@@ -1713,84 +990,6 @@ class CameraCalibrator:
                     server.Shutdown()
                 except Exception:
                     pass
-
-    def _resolve_script_control_start_point(self) -> Tuple[int, int]:
-        if self.script_control_win is None:
-            raise RuntimeError("Script Control window is not connected")
-
-        rect = self.script_control_win.rectangle()
-        preferred_right_margin = 50
-        preferred_bottom_margin = 75
-        rel_x = int(self.script_control_start_click_x)
-        rel_y = int(self.script_control_start_click_y)
-        width = int(rect.right - rect.left)
-        height = int(rect.bottom - rect.top)
-        resolved_x = rel_x
-        resolved_y = rel_y
-        fallback_used = False
-
-        if rel_x < 0 or rel_x >= width:
-            right_margin = self.script_control_start_click_x_from_right
-            if right_margin is None:
-                right_margin = preferred_right_margin
-            resolved_x = max(0, min(width - 1, width - int(right_margin)))
-            fallback_used = True
-
-        if rel_y < 0 or rel_y >= height:
-            bottom_margin = self.script_control_start_click_y_from_bottom
-            if bottom_margin is None:
-                bottom_margin = preferred_bottom_margin
-            resolved_y = max(0, min(height - 1, height - int(bottom_margin)))
-            fallback_used = True
-
-        if fallback_used and 0 <= resolved_x < width and 0 <= resolved_y < height:
-            print(
-                "Script Control start click fallback: "
-                f"configured=({rel_x},{rel_y}), resolved=({resolved_x},{resolved_y}), "
-                f"window_size=({width},{height})"
-            )
-            return int(rect.left + resolved_x), int(rect.top + resolved_y)
-
-        if 0 <= resolved_x < width and 0 <= resolved_y < height:
-            return int(rect.left + resolved_x), int(rect.top + resolved_y)
-
-        candidates: List[Tuple[float, int, int]] = []
-        try:
-            for ctrl in self.script_control_win.descendants():
-                if getattr(ctrl.element_info, "class_name", "") != "Button":
-                    continue
-                button_rect = ctrl.rectangle()
-                button_width = int(button_rect.right - button_rect.left)
-                button_height = int(button_rect.bottom - button_rect.top)
-                if button_width < 60 or button_height < 30:
-                    continue
-                center_x = int((button_rect.left + button_rect.right) / 2)
-                center_y = int((button_rect.top + button_rect.bottom) / 2)
-                right_margin = int(rect.right - center_x)
-                bottom_margin = int(rect.bottom - center_y)
-                if right_margin < 0 or right_margin > 120 or bottom_margin < 0 or bottom_margin > 160:
-                    continue
-                score = abs(right_margin - preferred_right_margin) + abs(
-                    bottom_margin - preferred_bottom_margin
-                )
-                candidates.append((float(score), center_x, center_y))
-        except Exception:
-            candidates = []
-
-        if candidates:
-            _, center_x, center_y = min(candidates, key=lambda item: item[0])
-            print(
-                "Script Control start click auto-located: "
-                f"configured=({rel_x},{rel_y}), resolved=({center_x - rect.left},{center_y - rect.top}), "
-                f"window_size=({width},{height})"
-            )
-            return center_x, center_y
-
-        raise ValueError(
-            "Script Control start click is outside the window bounds: "
-            f"click=({rel_x},{rel_y}), resolved=({resolved_x},{resolved_y}), "
-            f"window_size=({width},{height})"
-        )
 
     def _render_script_control_apply_script(self, params: List[ParameterSpec]) -> str:
         unsupported = [p.name for p in params if p.name not in self.SCRIPT_CONTROL_WRITE_WIDGETS]
@@ -1922,8 +1121,6 @@ class CameraCalibrator:
         return True
 
     def _run_script_control_script(self, script_text: str) -> str:
-        if self.script_control_execute_mode != "dde":
-            self._connect_script_control_window()
         self.script_control_script_path.parent.mkdir(parents=True, exist_ok=True)
         self.script_control_result_path.parent.mkdir(parents=True, exist_ok=True)
         self.script_control_script_path.write_text(script_text, encoding="utf-8")
@@ -1933,30 +1130,9 @@ class CameraCalibrator:
             pass
 
         for attempt in range(3):
-            manual_start_required = False
-            if self.script_control_execute_mode == "console":
-                self._run_script_control_console_command(
-                    f"RunScript {self.script_control_script_path.as_posix()}"
-                )
-            elif self.script_control_execute_mode == "dde":
-                if not self._run_script_control_dde_runscript(self.script_control_script_path):
-                    raise RuntimeError(
-                        "Script Control DDE RunScript did not execute"
-                    )
-            else:
-                if not self._run_script_control_dde_runscript(self.script_control_script_path):
-                    start_x, start_y = self._resolve_script_control_start_point()
-                    if attempt > 0 or self._script_control_runtime_loaded:
-                        self._ensure_script_control_script_loaded()
-                    manual_start_required = self._trigger_script_control_start(
-                        start_x,
-                        start_y,
-                        prefer_background=self.script_control_prefer_background_start,
-                        allow_physical_fallback=self.script_control_allow_physical_fallback,
-                    )
+            if not self._run_script_control_dde_runscript(self.script_control_script_path):
+                raise RuntimeError("Script Control DDE RunScript did not execute")
             deadline = time.time() + self.script_control_timeout_sec
-            if manual_start_required:
-                deadline += self.script_control_manual_start_timeout_sec
             while time.time() < deadline:
                 if self.script_control_result_path.exists():
                     text = self.script_control_result_path.read_text(encoding="utf-8", errors="replace")
@@ -1964,31 +1140,23 @@ class CameraCalibrator:
                         rc, msg = self._parse_script_control_result_text(text)
                         if rc != 0:
                             raise RuntimeError(f"Script Control apply failed: {msg}")
-                        self._script_control_runtime_loaded = True
                         return msg
                 time.sleep(0.1)
 
         raise RuntimeError(
             "Timed out waiting for Script Control result file. "
-            f"Script Control did not execute the runtime script {self.script_control_runtime_path}."
+            f"Script Control did not execute {self.script_control_script_path}."
         )
-
-    def _reset_script_control_runtime_state(self) -> None:
-        self.script_control_win = None
-        self.script_control_app = None
-        self._script_control_runtime_loaded = False
 
     def _recover_after_runtime_error(self, expected_values: Dict[str, float]) -> bool:
         for param in self.params:
             if param.name in expected_values:
                 param.value = self._quantize_param_value(param, float(expected_values[param.name]))
 
-        self._reset_script_control_runtime_state()
         try:
             self._apply_value_map(expected_values)
             return True
         except RuntimeError:
-            self._reset_script_control_runtime_state()
             return False
 
     def _apply_value_map_or_recover(self, values: Dict[str, float], context: str) -> None:
@@ -2065,317 +1233,9 @@ class CameraCalibrator:
 
         time.sleep(self.script_control_settle_sec)
 
-    def _auto_locate_camera_parameter_handles(self) -> Dict[str, int]:
-        if self._auto_param_handle_cache is not None:
-            return dict(self._auto_param_handle_cache)
-
-        if self.settings_backend != "win32" or self.settings_win is None:
-            self._auto_param_handle_cache = {}
-            return {}
-
-        camera_param_names = {"roll", "pitch", "yaw", "pos_x", "pos_y", "pos_z"}
-        if not any(spec.name in camera_param_names for spec in self.params):
-            self._auto_param_handle_cache = {}
-            return {}
-
-        try:
-            import win32gui  # type: ignore
-        except Exception:
-            self._auto_param_handle_cache = {}
-            return {}
-
-        root_handle = int(getattr(self.settings_win, "handle", 0) or 0)
-        if not root_handle:
-            self._auto_param_handle_cache = {}
-            return {}
-
-        handles: List[int] = []
-        win32gui.EnumChildWindows(root_handle, lambda h, acc: acc.append(int(h)), handles)
-
-        candidates = []
-        for hwnd in handles:
-            if not win32gui.IsWindowVisible(hwnd):
-                continue
-            if win32gui.GetClassName(hwnd) != "TkChild":
-                continue
-
-            left, top, right, bottom = win32gui.GetWindowRect(hwnd)
-            width = int(right - left)
-            height = int(bottom - top)
-            if not (40 <= width <= 60 and 18 <= height <= 21):
-                continue
-
-            candidates.append(
-                {
-                    "handle": int(hwnd),
-                    "left": int(left),
-                    "top": int(top),
-                    "right": int(right),
-                    "bottom": int(bottom),
-                    "parent": int(win32gui.GetParent(hwnd) or 0),
-                }
-            )
-
-        if not candidates:
-            self._auto_param_handle_cache = {}
-            self._log_auto_param_handle_status({})
-            return {}
-
-        parent_counts: Dict[int, int] = {}
-        for candidate in candidates:
-            parent_counts[candidate["parent"]] = parent_counts.get(candidate["parent"], 0) + 1
-        dominant_parent = max(parent_counts.items(), key=lambda item: item[1])[0]
-        candidates = [candidate for candidate in candidates if candidate["parent"] == dominant_parent]
-
-        row_clusters: Dict[int, List[dict]] = {}
-        for candidate in candidates:
-            matched_row = None
-            for row_top in row_clusters:
-                if abs(candidate["top"] - row_top) <= 2:
-                    matched_row = row_top
-                    break
-            if matched_row is None:
-                row_clusters[candidate["top"]] = [candidate]
-            else:
-                row_clusters[matched_row].append(candidate)
-
-        horizontal_row: List[dict] = []
-        for row_top in sorted(row_clusters):
-            row_items = sorted(row_clusters[row_top], key=lambda candidate: candidate["left"])
-            if len(row_items) >= 3:
-                horizontal_row = row_items[:3]
-                break
-
-        vertical_column: List[dict] = []
-        if horizontal_row:
-            base_left = horizontal_row[0]["left"]
-            base_top = horizontal_row[0]["top"]
-            vertical_column = [
-                candidate
-                for candidate in candidates
-                if abs(candidate["left"] - base_left) <= 2 and candidate["top"] > base_top + 40
-            ]
-            vertical_column.sort(key=lambda candidate: candidate["top"])
-
-        resolved: Dict[str, int] = {}
-        if len(horizontal_row) >= 3:
-            resolved["roll"] = horizontal_row[0]["handle"]
-            resolved["pitch"] = horizontal_row[1]["handle"]
-            resolved["yaw"] = horizontal_row[2]["handle"]
-        if len(vertical_column) >= 3:
-            resolved["pos_x"] = vertical_column[0]["handle"]
-            resolved["pos_y"] = vertical_column[1]["handle"]
-            resolved["pos_z"] = vertical_column[2]["handle"]
-
-        self._auto_param_handle_cache = dict(resolved)
-        self._log_auto_param_handle_status(resolved)
-        return resolved
-
-    def _resolve_coordinate_interaction(self, spec: ParameterSpec):
-        wrapper = None
-        if self.coordinate_input_mode != "mouse":
-            wrapper = self._resolve_win32_field_wrapper(spec)
-
-        mode = self.coordinate_input_mode
-        if mode == "auto":
-            mode = "mouse"
-
-        if mode == "mouse" and self.forbid_interactive_coordinate_fallback:
-            raise RuntimeError(
-                f"Interactive coordinate fallback is disabled and no non-interactive handle was resolved for {spec.name}."
-            )
-
-        if mode in {"message", "focus"}:
-            if wrapper is None:
-                raise RuntimeError(
-                    f"coordinate_input_mode={mode} requires a win32 field handle for {spec.name}"
-                )
-            return mode, wrapper, None
-
-        abs_x, abs_y = self._resolve_interaction_point(spec)
-        return mode, None, (abs_x, abs_y)
-
-    @staticmethod
-    def _send_window_message(hwnd: int, msg: int, wparam=0, lparam=0):
-        user32 = ctypes.windll.user32
-        return user32.SendMessageW(int(hwnd), msg, wparam, lparam)
-
-    def _read_window_text(self, wrapper) -> str:
-        hwnd = int(getattr(wrapper, "handle", 0))
-        if not hwnd:
-            raise RuntimeError("Cannot read control text without a valid window handle")
-
-        length = int(self._send_window_message(hwnd, 0x000E, 0, 0))
-        buffer = ctypes.create_unicode_buffer(max(32, length + 2))
-        self._send_window_message(
-            hwnd,
-            0x000D,
-            len(buffer),
-            ctypes.cast(buffer, ctypes.c_wchar_p),
-        )
-        return buffer.value.strip()
-
-    def _write_window_text(self, wrapper, text: str) -> None:
-        hwnd = int(getattr(wrapper, "handle", 0))
-        if not hwnd:
-            raise RuntimeError("Cannot write control text without a valid window handle")
-
-        try:
-            import win32con  # type: ignore
-        except Exception as exc:
-            raise RuntimeError("win32con is required for coordinate_input_mode=message") from exc
-
-        self._send_window_message(hwnd, 0x000C, 0, text)
-        self._send_window_message(hwnd, win32con.WM_KEYDOWN, win32con.VK_RETURN, 0)
-        self._send_window_message(hwnd, win32con.WM_KEYUP, win32con.VK_RETURN, 0)
-
-    @staticmethod
-    def _focus_handle(hwnd: int) -> bool:
-        try:
-            user32 = ctypes.windll.user32
-            user32.SetForegroundWindow(int(hwnd))
-            user32.SetFocus(int(hwnd))
-            return True
-        except Exception:
-            return False
-
-    def _activate_coordinate_field(self, interaction_mode: str, wrapper, point) -> None:
-        if interaction_mode == "message":
-            return
-
-        if interaction_mode == "focus":
-            settings_handle = getattr(self.settings_win, "handle", 0)
-            wrapper_handle = getattr(wrapper, "handle", 0)
-            if settings_handle:
-                self._focus_handle(int(settings_handle))
-            if wrapper_handle and self._focus_handle(int(wrapper_handle)):
-                return
-            self._safe_focus(self.settings_win)
-            self._safe_focus(wrapper)
-            return
-
-        self._safe_focus(self.settings_win)
-        abs_x, abs_y = point
-        mouse.click(button="left", coords=(abs_x, abs_y))
-        time.sleep(0.02)
-        mouse.double_click(button="left", coords=(abs_x, abs_y))
-
-    def _set_coordinate_value(self, spec: ParameterSpec, value: float, decimals: int) -> None:
-        value = self._quantize_param_value(spec, value)
-        text = f"{value:.{decimals}f}"
-        unit = 10 ** (-decimals)
-        tolerance = max(unit * 0.5, 1e-6)
-        last_read = None
-        interaction_mode, wrapper, point = self._resolve_coordinate_interaction(spec)
-
-        for _ in range(3):
-            try:
-                if interaction_mode == "message":
-                    self._write_window_text(wrapper, text)
-                else:
-                    self._activate_coordinate_field(interaction_mode, wrapper, point)
-                    send_keys("^a{BACKSPACE}", pause=0.01)
-                    send_keys(text, with_spaces=True, pause=0.01)
-                    send_keys("{ENTER}", pause=0.01)
-            except RuntimeError:
-                time.sleep(self.field_settle_sec)
-                continue
-            time.sleep(self.field_settle_sec)
-
-            last_read = self._read_coordinate_value(spec)
-            if math.isclose(last_read, value, rel_tol=0.0, abs_tol=tolerance):
-                return
-
-        raise RuntimeError(
-            f"Failed to set {spec.name} reliably: expected {value}, read back {last_read}. "
-            "Check coordinate_input_mode and click coordinates for this field."
-        )
-
-    def _read_coordinate_value(self, spec: ParameterSpec) -> float:
-        last_raw = ""
-        interaction_mode, wrapper, point = self._resolve_coordinate_interaction(spec)
-
-        for _ in range(3):
-            try:
-                if interaction_mode == "message":
-                    raw = self._read_window_text(wrapper)
-                else:
-                    self._clear_clipboard_text()
-                    self._activate_coordinate_field(interaction_mode, wrapper, point)
-                    send_keys("^a^c", pause=0.01)
-                    time.sleep(self.field_settle_sec)
-                    raw = self._read_clipboard_text()
-            except RuntimeError:
-                time.sleep(self.field_settle_sec)
-                continue
-            if raw:
-                normalized = raw.replace(",", ".").strip()
-                return float(normalized)
-            last_raw = raw
-        raise RuntimeError(f"Failed reading clipboard text for {spec.name}: {last_raw!r}")
-
-    def _verify_expected_values(self, params: List[ParameterSpec]) -> None:
-        mismatches = []
-        for spec in params:
-            expected = self._quantize_param_value(
-                spec, float(np.clip(spec.value, spec.min_value, spec.max_value))
-            )
-            actual = self._read_coordinate_value(spec)
-            unit = 10 ** (-spec.decimals)
-            tolerance = max(unit * 0.5, 1e-6)
-            if not math.isclose(actual, expected, rel_tol=0.0, abs_tol=tolerance):
-                mismatches.append((spec.name, expected, actual))
-
-        if mismatches:
-            details = "; ".join(
-                f"{name}: expected {expected}, actual {actual}"
-                for name, expected, actual in mismatches
-            )
-            raise RuntimeError(
-                "Coordinate field state mismatch after write. "
-                f"This usually means clicks hit the wrong input box. {details}"
-            )
-
-    def capture_click_positions(self, only_param: Optional[str] = None) -> None:
-        if self.settings_win is None:
-            raise RuntimeError("settings window is not connected")
-
-        rect = self.settings_win.rectangle()
-        width = int(rect.right - rect.left)
-        height = int(rect.bottom - rect.top)
-        print(
-            f"settings_window_rect: left={rect.left}, top={rect.top}, "
-            f"right={rect.right}, bottom={rect.bottom}"
-        )
-        print("Move mouse to each parameter input field and press Enter.")
-        print("Generated values are relative to settings window top-left.")
-
-        target_params = self.params
-        if only_param:
-            target_params = [p for p in self.params if p.name == only_param]
-            if not target_params:
-                raise ValueError(f"Unknown parameter for --capture-click: {only_param}")
-
-        snippets = []
-        for param in target_params:
-            input(f"[{param.name}] place mouse over input field, then press Enter...")
-            abs_x, abs_y = self._cursor_pos()
-            rel_x = abs_x - rect.left
-            rel_y = abs_y - rect.top
-            in_bounds = (0 <= rel_x < width) and (0 <= rel_y < height)
-            snippets.append((param.name, rel_x, rel_y, abs_x, abs_y, in_bounds))
-
-        print("\nSuggested JSON updates:")
-        for name, rel_x, rel_y, abs_x, abs_y, in_bounds in snippets:
-            suffix = "" if in_bounds else " [OUT_OF_BOUNDS]"
-            print(
-                f"{name}: click_x={rel_x}, click_y={rel_y} "
-                f"(abs_x={abs_x}, abs_y={abs_y}){suffix}"
-            )
-
     def capture_initial_values(self) -> Dict[str, float]:
         captured = self._read_script_control_values(self.params)
-        print("Reading current values from settings fields...")
+        print("Reading current values through Script Control...")
         for param in self.params:
             if param.name not in captured:
                 raise RuntimeError(f"Script Control did not return a value for {param.name}")
@@ -2398,107 +1258,9 @@ class CameraCalibrator:
             json.dump(cfg, f, ensure_ascii=False, indent=4)
         print(f"Updated initial values in config: {path}")
 
-    def connect_windows(self, allow_missing_settings: bool = False) -> None:
-        self.app = Application(backend="uia").connect(
-            title_re=self.cfg["movie_window_title_re"], timeout=15
-        )
-        self.movie_win = self.app.window(title_re=self.cfg["movie_window_title_re"])
-        try:
-            self.movie_win.wait("visible ready", timeout=15)
-        except PywinautoTimeoutError:
-            if self.movie_capture_mode != "dde_fbo":
-                raise
-        self.settings_win = None
-        self.settings_backend = "uia"
-        self.win32_app = None
-
-    def list_edit_controls(self) -> None:
-        if self.settings_win is not None:
-            if self.settings_backend == "win32":
-                edits = self.settings_win.descendants(class_name="Edit")
-            else:
-                edits = self.settings_win.descendants(control_type="Edit")
-
-            print(
-                f"Edit controls found in settings window ({self.settings_backend}): {len(edits)}"
-            )
-            for i, ctrl in enumerate(edits):
-                info = ctrl.element_info
-                print(
-                    f"[{i}] title={info.name!r}, auto_id={info.automation_id!r}, class={info.class_name!r}"
-                )
-            if edits:
-                return
-
-        print("Settings window not found or has no Edit controls. Scanning desktop candidates...")
-        candidates = []
-        for win in Desktop(backend="uia").windows():
-            title = (win.window_text() or "").strip()
-            if not title:
-                continue
-            lower = title.lower()
-            if not any(k in lower for k in ("ipg", "movie", "camera", "setting", "sensor")):
-                continue
-            try:
-                edits = win.descendants(control_type="Edit")
-                candidates.append((title, len(edits), win.is_visible(), win.is_enabled()))
-            except Exception:
-                continue
-
-        for win in Desktop(backend="win32").windows():
-            title = (win.window_text() or "").strip()
-            if not title:
-                continue
-            lower = title.lower()
-            if not any(k in lower for k in ("ipg", "movie", "camera", "setting", "sensor")):
-                continue
-            try:
-                edits = win.descendants(class_name="Edit")
-                candidates.append(
-                    (f"{title} [win32]", len(edits), win.is_visible(), win.is_enabled())
-                )
-            except Exception:
-                continue
-
-        for title, edit_count, visible, enabled in sorted(candidates, key=lambda x: -x[1]):
-            print(
-                f"candidate title={title!r}, edits={edit_count}, visible={visible}, enabled={enabled}"
-            )
-
-    def _resolve_edit_control(self, spec: ParameterSpec):
-        if spec.auto_id:
-            return self.settings_win.child_window(auto_id=spec.auto_id, control_type="Edit")
-        if spec.title:
-            return self.settings_win.child_window(title=spec.title, control_type="Edit")
-        if spec.field_index is not None:
-            edits = self.settings_win.descendants(control_type="Edit")
-            if spec.field_index < 0 or spec.field_index >= len(edits):
-                raise IndexError(
-                    f"field_index out of range for {spec.name}: {spec.field_index}, edits={len(edits)}"
-                )
-            return edits[spec.field_index]
-        raise ValueError(
-            f"Parameter {spec.name} requires one locator: auto_id/title/field_index"
-        )
-
-    def _set_edit_value(self, ctrl, value: float, decimals: int) -> None:
-        text = f"{value:.{decimals}f}"
-        ctrl.wait("visible enabled ready", timeout=10)
-        self._safe_focus(ctrl)
-        send_keys("^a{BACKSPACE}", pause=0.01)
-        ctrl.type_keys(text, with_spaces=True, set_foreground=False)
-        send_keys("{ENTER}", pause=0.01)
-
     @staticmethod
     def _quantize_value(value: float, decimals: int) -> float:
         return float(f"{float(value):.{decimals}f}")
-
-    @staticmethod
-    def _safe_focus(ctrl) -> None:
-        try:
-            ctrl.set_focus()
-        except Exception:
-            return
 
     def _quantize_param_value(self, spec: ParameterSpec, value: float) -> float:
         clipped = float(np.clip(value, spec.min_value, spec.max_value))
@@ -2510,37 +1272,6 @@ class CameraCalibrator:
 
     def apply_params(self, params: List[ParameterSpec]) -> None:
         self._apply_script_control_params(params)
-
-    def _get_movie_capture_bbox(self) -> Tuple[int, int, int, int]:
-        rect = self.movie_win.rectangle()
-        if self.movie_capture_mode != "client":
-            return rect.left, rect.top, rect.right, rect.bottom
-
-        try:
-            import win32gui  # type: ignore
-
-            hwnd = int(self.movie_win.handle)
-            client_left, client_top, client_right, client_bottom = win32gui.GetClientRect(hwnd)
-            origin_x, origin_y = win32gui.ClientToScreen(hwnd, (0, 0))
-            return (
-                int(origin_x + client_left),
-                int(origin_y + client_top),
-                int(origin_x + client_right),
-                int(origin_y + client_bottom),
-            )
-        except Exception:
-            return rect.left, rect.top, rect.right, rect.bottom
-
-    def _get_movie_capture_size(self) -> Tuple[int, int]:
-        if self.movie_capture_mode == "dde_fbo":
-            return self._get_movie_dde_view_size()
-
-        left, top, right, bottom = self._get_movie_capture_bbox()
-        width = int(right - left)
-        height = int(bottom - top)
-        if width <= 0 or height <= 0:
-            raise RuntimeError(f"Invalid movie capture size: {width}x{height}")
-        return width, height
 
     def _get_movie_dde_view_size(self) -> Tuple[int, int]:
         script_path = self.output_dir / "movie_size_probe_dde.tcl"
@@ -2609,50 +1340,12 @@ class CameraCalibrator:
                     height = int(parts[1])
                     if width <= 0 or height <= 0:
                         raise RuntimeError(f"movie size probe returned invalid size: {width}x{height}")
+                    _unlink_if_exists(script_path)
+                    _unlink_if_exists(result_path)
                     return width, height
             time.sleep(0.05)
 
         raise RuntimeError("Timed out waiting for movie size probe result")
-
-    def _prepare_movie_window_for_capture(self) -> None:
-        if self.movie_win is None:
-            raise RuntimeError("movie window is not connected")
-
-        try:
-            self.movie_win.set_focus()
-        except Exception:
-            pass
-
-        try:
-            import win32con  # type: ignore
-            import win32gui  # type: ignore
-
-            hwnd = int(self.movie_win.handle)
-            if hwnd:
-                win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-                win32gui.SetWindowPos(
-                    hwnd,
-                    win32con.HWND_TOPMOST,
-                    0,
-                    0,
-                    0,
-                    0,
-                    win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_SHOWWINDOW,
-                )
-                win32gui.SetForegroundWindow(hwnd)
-                win32gui.SetWindowPos(
-                    hwnd,
-                    win32con.HWND_NOTOPMOST,
-                    0,
-                    0,
-                    0,
-                    0,
-                    win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_SHOWWINDOW,
-                )
-        except Exception:
-            pass
-
-        time.sleep(0.15)
 
     def _crop_to_reference_aspect(self, image):
         if not self.movie_match_reference_aspect:
@@ -2704,22 +1397,6 @@ class CameraCalibrator:
         return 0
 
     def _crop_movie_content(self, image):
-        active_crop = (
-            self.movie_dde_content_crop if self.movie_capture_mode == "dde_fbo" else self.movie_content_crop
-        )
-        if active_crop is not None:
-            if not isinstance(active_crop, list) or len(active_crop) != 4:
-                raise ValueError("movie_content_crop must be [left, top, right, bottom]")
-            l, t, r, b = [int(v) for v in active_crop]
-            img_w, img_h = image.size
-            if r <= 0:
-                r = img_w + r
-            if b <= 0:
-                b = img_h + b
-            if l < 0 or t < 0 or r <= l or b <= t or r > img_w or b > img_h:
-                raise ValueError("movie_content_crop is invalid")
-            return image.crop((l, t, r, b))
-
         if not self.movie_auto_crop_content:
             return image
 
@@ -2732,36 +1409,8 @@ class CameraCalibrator:
         return self._crop_to_reference_aspect(cropped)
 
     def _preflight_capture_aspect_ratio(self) -> None:
-        raw_w, raw_h = self._get_movie_capture_size()
+        raw_w, raw_h = self._get_movie_dde_view_size()
         ref_h, ref_w = self.real_img.shape[:2]
-
-        active_crop = (
-            self.movie_dde_content_crop if self.movie_capture_mode == "dde_fbo" else self.movie_content_crop
-        )
-
-        if active_crop is not None:
-            l, t, r, b = [int(v) for v in active_crop]
-            if r <= 0:
-                r = raw_w + r
-            if b <= 0:
-                b = raw_h + b
-            crop_w = int(r - l)
-            crop_h = int(b - t)
-            if l < 0 or t < 0 or crop_w <= 0 or crop_h <= 0 or r > raw_w or b > raw_h:
-                raise RuntimeError(
-                    "movie_content_crop is invalid for current capture size: "
-                    f"crop={active_crop}, capture={raw_w}x{raw_h}"
-                )
-            if crop_w * ref_h != ref_w * crop_h:
-                raise RuntimeError(
-                    "Configured movie_content_crop aspect ratio does not match real_image: "
-                    f"cropped={crop_w}x{crop_h}, real={ref_w}x{ref_h}"
-                )
-            print(
-                "Capture aspect preflight: "
-                f"raw={raw_w}x{raw_h}, cropped={crop_w}x{crop_h}, real={ref_w}x{ref_h}"
-            )
-            return
 
         if self.movie_auto_crop_content and self.movie_match_reference_aspect:
             print(
@@ -2862,32 +1511,15 @@ class CameraCalibrator:
                     with Image.open(out_path) as raw_img:
                         img = self._crop_movie_content(raw_img.copy())
                     img.save(out_path)
+                    _unlink_if_exists(script_path)
+                    _unlink_if_exists(result_path)
                     return out_path
             time.sleep(0.05)
 
         raise RuntimeError("Timed out waiting for movie dde_fbo capture result")
 
     def capture_movie(self, tag: str) -> Path:
-        if self.movie_capture_mode == "dde_fbo":
-            return self._capture_movie_via_dde_fbo(tag)
-
-        self._prepare_movie_window_for_capture()
-        left, top, right, bottom = self._get_movie_capture_bbox()
-        last_error = None
-        img = None
-        for _ in range(3):
-            try:
-                img = ImageGrab.grab(bbox=(left, top, right, bottom))
-                break
-            except OSError as exc:
-                last_error = exc
-                time.sleep(0.2)
-        if img is None:
-            raise last_error
-        img = self._crop_movie_content(img)
-        out = self.output_dir / f"{tag}.png"
-        img.save(out)
-        return out
+        return self._capture_movie_via_dde_fbo(tag)
 
     def _snapshot_values(self) -> Dict[str, float]:
         return {p.name: p.value for p in self.params}
@@ -4148,6 +2780,7 @@ class CameraCalibrator:
         )
 
     def optimize(self) -> dict:
+        self._ensure_live_log()
         if self.real_detections is None:
             self.real_detections = self._detect_reference_boards()
 
@@ -4618,24 +3251,9 @@ def parse_args() -> argparse.Namespace:
         help="Path to JSON config, for example config.rear_tv.json",
     )
     parser.add_argument(
-        "--inspect-controls",
-        action="store_true",
-        help="Only print editable controls in settings window",
-    )
-    parser.add_argument(
-        "--capture-clicks",
-        action="store_true",
-        help="Interactively capture parameter click coordinates in settings window",
-    )
-    parser.add_argument(
-        "--capture-click",
-        default=None,
-        help="Capture click coordinate for only one parameter name (e.g. pos_x)",
-    )
-    parser.add_argument(
         "--capture-initials",
         action="store_true",
-        help="Read current settings values and print initial values",
+        help="Read current Script Control values and print initial values",
     )
     parser.add_argument(
         "--write-initials-to-config",
@@ -4693,9 +3311,6 @@ def main() -> None:
         [
             args.propose_boards,
             bool(args.annotate_image),
-            args.inspect_controls,
-            args.capture_clicks,
-            bool(args.capture_click),
             args.capture_initials,
         ]
     )
@@ -4748,16 +3363,6 @@ def main() -> None:
                     f"{score.board_id}: score={score.total_score:.6f} compared={score.compared} "
                     f"failed_reason={score.failed_reason}"
                 )
-            return
-
-        calib.connect_windows(allow_missing_settings=args.inspect_controls)
-
-        if args.inspect_controls:
-            calib.list_edit_controls()
-            return
-
-        if args.capture_clicks or args.capture_click:
-            calib.capture_click_positions(only_param=args.capture_click)
             return
 
         if args.capture_initials:

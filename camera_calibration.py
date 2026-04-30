@@ -1255,6 +1255,19 @@ class CameraCalibrator:
             ordered.append(f"{name}={values[name]:.4f}")
         return ", ".join(ordered)
 
+    @staticmethod
+    def _format_value_lines(
+        values: Dict[str, float], items_per_line: int = 3
+    ) -> List[str]:
+        if not values:
+            return ["params=none"]
+
+        items = [f"{name}={values[name]:.4f}" for name in sorted(values.keys())]
+        return [
+            ", ".join(items[index : index + items_per_line])
+            for index in range(0, len(items), items_per_line)
+        ]
+
     def _comparison_mode_explainer(self) -> str:
         if self.comparison_mode == "direct":
             return "direct; real_image is used only for scoring, not as movie background"
@@ -2123,6 +2136,7 @@ class CameraCalibrator:
         image_path: Path,
         output_path: Optional[Path] = None,
         total_detail: Optional[TotalScoreDetail] = None,
+        values: Optional[Dict[str, float]] = None,
     ) -> Tuple[Path, List[BoardScoreDetail]]:
         if self.real_detections is None:
             self.real_detections = self._detect_reference_boards()
@@ -2184,7 +2198,13 @@ class CameraCalibrator:
         )
         self._draw_annotated_label(sim_bgr, summary, (12, 58), (230, 235, 245))
 
-        legend_y = 96
+        param_values = values or self._snapshot_values()
+        param_y = 90
+        for line in self._format_value_lines(param_values):
+            self._draw_annotated_label(sim_bgr, line, (12, param_y), (220, 245, 220))
+            param_y += 32
+
+        legend_y = max(96, param_y + 10)
         for index, score in enumerate(board_scores):
             color = palette[index % len(palette)]
 
@@ -2213,6 +2233,7 @@ class CameraCalibrator:
         self,
         image_path: Path,
         total_detail: TotalScoreDetail,
+        values: Optional[Dict[str, float]] = None,
     ) -> Optional[Path]:
         if not self.auto_generate_best_score_image:
             return None
@@ -2234,8 +2255,28 @@ class CameraCalibrator:
             image_path,
             output_path=output_path,
             total_detail=total_detail,
+            values=values,
         )
         self._best_score_image_cache[cache_key] = annotated_path
+        return annotated_path
+
+    def _build_score_image_for_snapshot(
+        self,
+        image_path: Path,
+        total_detail: TotalScoreDetail,
+        values: Dict[str, float],
+        output_path: Optional[Path] = None,
+    ) -> Optional[Path]:
+        if not self.auto_generate_best_score_image:
+            return None
+
+        final_output = output_path or self._best_score_image_output_path(image_path)
+        annotated_path, _ = self.annotate_existing_image(
+            image_path,
+            output_path=final_output,
+            total_detail=total_detail,
+            values=values,
+        )
         return annotated_path
 
     def _ensure_best_overlay_image(self, image_path: Path) -> Optional[Path]:
@@ -3250,7 +3291,11 @@ class CameraCalibrator:
         history: List[dict],
         in_progress: bool,
     ) -> None:
-        best_score_image = self._ensure_best_score_image(best_img, best_total_detail)
+        best_score_image = self._ensure_best_score_image(
+            best_img,
+            best_total_detail,
+            values=best_values,
+        )
         best_overlay_image = None if in_progress else self._ensure_best_overlay_image(best_img)
         result = self._build_result_payload(
             best_score=best_score,
@@ -3302,6 +3347,12 @@ class CameraCalibrator:
         best_baseline = self._as_baseline_metrics(best_total_detail)
         best_values = {p.name: p.value for p in self.params}
         stop_reason = "max_iters_reached"
+        initial_score_image = self._build_score_image_for_snapshot(
+            best_img,
+            best_total_detail,
+            best_values,
+            output_path=best_img.with_name(f"{best_img.stem}_initial_score.png"),
+        )
 
         history = [
             {
@@ -3330,6 +3381,7 @@ class CameraCalibrator:
                 ],
                 "accepted": True,
                 "image": str(best_img),
+                "score_image": str(initial_score_image) if initial_score_image else None,
                 "values": best_values.copy(),
             }
         ]
@@ -3357,6 +3409,36 @@ class CameraCalibrator:
             base_values = self._snapshot_values()
             base_score = best_score
             candidate_moves: List[Dict[str, object]] = []
+            round_start_score_image = self._build_score_image_for_snapshot(
+                best_img,
+                best_total_detail,
+                base_values,
+                output_path=best_img.with_name(f"iter_{it:04d}_initial_score.png"),
+            )
+            history.append(
+                self._make_history_entry(
+                    it,
+                    best_total_detail,
+                    best_img,
+                    True,
+                    meta={
+                        "phase": "round_start",
+                        "score_image": (
+                            str(round_start_score_image)
+                            if round_start_score_image is not None
+                            else None
+                        ),
+                    },
+                )
+            )
+            self._flush_progress_if_needed(
+                best_score=best_score,
+                best_values=best_values,
+                best_total_detail=best_total_detail,
+                best_img=best_img,
+                stop_reason="running",
+                history=history,
+            )
 
             for p in self.params:
                 preferred_direction = self.preferred_directions.get(p.name, 1.0)
@@ -3734,7 +3816,11 @@ class CameraCalibrator:
             best_values=best_values,
             best_total_detail=best_total_detail,
             best_img=best_img,
-            best_score_image=self._ensure_best_score_image(best_img, best_total_detail),
+            best_score_image=self._ensure_best_score_image(
+                best_img,
+                best_total_detail,
+                values=best_values,
+            ),
             best_overlay_image=self._ensure_best_overlay_image(best_img),
             stop_reason=stop_reason,
             history=history,

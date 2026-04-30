@@ -3010,6 +3010,11 @@ class CameraCalibrator:
         compared_board_count = 0
         board_map = {b.board_id: b for b in self.boards}
 
+        # 新增用于通过标准的统计
+        max_board_score = float('-inf')
+        sum_board_score = 0.0
+        count_board_score = 0
+
         for score in board_scores:
             board = board_map[score.board_id]
             if not score.compared:
@@ -3018,6 +3023,11 @@ class CameraCalibrator:
             compared_board_count += 1
             weighted = board.weight * score.total_score
             total_score += weighted
+
+            # 统计单板最大值和均值
+            max_board_score = max(max_board_score, score.total_score)
+            sum_board_score += score.total_score
+            count_board_score += 1
 
             if baseline_metrics is None:
                 continue
@@ -3066,15 +3076,31 @@ class CameraCalibrator:
 
         total_score += self.degrade_lambda * degrade_penalty
 
+        # 标定通过标准：
+        # 1. 没有瓶颈（has_critical_degrade==False）时，结果越小越好，直接 success=True
+        # 2. 有瓶颈（has_critical_degrade==True）时，所有单板最大值<4 且均值<2.5 才 success，否则 fail
+        pass_reason = None
+        if not has_critical_degrade:
+            success = True
+            pass_reason = "no_bottleneck"
+        else:
+            avg_board_score = sum_board_score / max(1, count_board_score)
+            if max_board_score < 4.0 and avg_board_score < 2.5:
+                success = True
+                pass_reason = f"bottleneck_pass(max={max_board_score:.3f},avg={avg_board_score:.3f})"
+            else:
+                success = False
+                pass_reason = f"bottleneck_fail(max={max_board_score:.3f},avg={avg_board_score:.3f})"
+
         return TotalScoreDetail(
-            success=not has_critical_degrade,
+            success=success,
             total_score=total_score,
             degrade_penalty=degrade_penalty,
             has_critical_degrade=has_critical_degrade,
             degraded_boards=degraded_boards,
             compared_board_count=compared_board_count,
             board_scores=board_scores,
-            failed_reason="critical board degraded" if has_critical_degrade else None,
+            failed_reason=pass_reason,
         )
 
     def _as_baseline_metrics(

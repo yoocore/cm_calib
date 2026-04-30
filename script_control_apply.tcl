@@ -7,25 +7,25 @@ set rc [catch {send IPG-MOVIE {
     if {![winfo exists .camera]} {error "missing widget .camera"}
     if {![winfo exists .camera.presetFrame.evptz]} {error "missing widget .camera.presetFrame.evptz"}
     .camera.presetFrame.evptz delete 0 end
-    .camera.presetFrame.evptz insert 0 0.6700
+    .camera.presetFrame.evptz insert 0 0.6762
     if {![winfo exists .camera.presetFrame.y]} {error "missing widget .camera.presetFrame.y"}
     .camera.presetFrame.y delete 0 end
-    .camera.presetFrame.y insert 0 17.5810
+    .camera.presetFrame.y insert 0 17.5418
     if {![winfo exists .camera.presetFrame.z]} {error "missing widget .camera.presetFrame.z"}
     .camera.presetFrame.z delete 0 end
-    .camera.presetFrame.z insert 0 180.1789
+    .camera.presetFrame.z insert 0 180.2311
     if {![winfo exists .camera.presetFrame.evptx]} {error "missing widget .camera.presetFrame.evptx"}
     .camera.presetFrame.evptx delete 0 end
-    .camera.presetFrame.evptx insert 0 0.2880
+    .camera.presetFrame.evptx insert 0 0.3016
     if {![winfo exists .camera.presetFrame.x]} {error "missing widget .camera.presetFrame.x"}
     .camera.presetFrame.x delete 0 end
-    .camera.presetFrame.x insert 0 -0.0200
+    .camera.presetFrame.x insert 0 -0.0544
     if {![winfo exists .camera.presetFrame.evpty]} {error "missing widget .camera.presetFrame.evpty"}
     .camera.presetFrame.evpty delete 0 end
-    .camera.presetFrame.evpty insert 0 0.0400
+    .camera.presetFrame.evpty insert 0 0.0438
     if {![winfo exists .camera.cammoddlg.fov.e]} {error "missing widget .camera.cammoddlg.fov.e"}
     .camera.cammoddlg.fov.e delete 0 end
-    .camera.cammoddlg.fov.e insert 0 195.8
+    .camera.cammoddlg.fov.e insert 0 195.2
     if {![winfo exists .camera.cammoddlg.fisheye.ctrl.e1]} {error "missing widget .camera.cammoddlg.fisheye.ctrl.e1"}
     .camera.cammoddlg.fisheye.ctrl.e1 delete 0 end
     .camera.cammoddlg.fisheye.ctrl.e1 insert 0 1.000

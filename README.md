@@ -47,12 +47,22 @@ Quick start
 6) Verify the active Script Control command path points to Data/Script/CameraCalibration/script_control_apply.tcl.
 7) Optional: read current Script Control values back into config:
   python camera_calibration.py --config config.rear_tv.json --capture-initials --write-initials-to-config
-8) Run optimization:
-  python camera_calibration.py --config config.rear_tv.json --resume-from-result
+8) Default optimization run from config initial values:
+  python camera_calibration.py --config config.rear_tv.json
+9) Optional multi-start short sprint when you want to test for another nearby basin:
+  python camera_calibration.py --config config.rear_tv.json --multi-start-count 4 --multi-start-iters 24 --multi-start-jitter-steps 2.0
+10) Optional one-command campaign when you want short exploration first and then long refinement from the best explored start:
+  python camera_calibration.py --config config.rear_tv.json --explore-then-refine --multi-start-count 4 --multi-start-iters 24 --refine-iters 180
+  11) Successful optimization runs now auto-write best_values back into the config initial fields for the next run.
 
 Optional override
 - Always pass --config explicitly, for example --config config.rear_tv.json.
 - When you add more viewpoints later, keep using config.<camera>.json naming, for example config.front_tv.json.
+- --resume-from-result is still available as a legacy/manual recovery mode, but it is no longer the recommended default workflow.
+- --explore-then-refine uses --multi-start-* as the exploration phase controls and then starts one refinement run from the best short-run result.
+- In --explore-then-refine mode, omitting --multi-start-count defaults to 4 starts and omitting --multi-start-iters defaults to min(config max_iters, 24).
+- The default single run, multi-start mode, and explore-then-refine mode all persist their final best_values back into the input config as the next initial values.
+- --capture-initials --write-initials-to-config is still useful when you want to sync the config from the currently loaded IPG-MOVIE values before any optimization run.
 
 Simplified repository layout
 - The repository now keeps one camera-specific JSON config per viewpoint, named config.<camera>.json.
@@ -86,6 +96,12 @@ Scoring notes
 - Final score is weighted sum across boards plus degradation penalty.
 - If a critical board degrades too much, the trial is rejected.
 - target_score in config controls stop threshold.
+
+Optimization notes
+- Every parameter already goes through single-parameter bidirectional probing in the main loop.
+- joint_exploration is narrower by default and only applies to joint_exploration.param_names.
+- If a camera is better served by joint exploration on every parameter, set joint_exploration.apply_to_all_params to true.
+- apply_to_all_params keeps the existing selected-param behavior as the default, so view-specific configs like rear_tv can stay conservative.
 
 boards[] config notes
 - Every board entry requires:

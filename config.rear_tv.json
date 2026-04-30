@@ -252,13 +252,7 @@
         "min_board_count": 1
     },
     "joint_exploration": {
-        "param_names": [
-            "pos_z",
-            "pitch",
-            "yaw",
-            "pos_x",
-            "lens_fov"
-        ],
+        "apply_to_all_params": true,
         "max_single_score_worsen": 2.5,
         "trial_multipliers": [
             1.0,
@@ -280,7 +274,7 @@
     ],
     "parameters": {
         "pos_x": {
-            "initial": 0.288,
+            "initial": 0.3016,
             "step": 0.002,
             "min_offset": -0.020,
             "max_offset": 0.020,
@@ -288,7 +282,7 @@
             "decimals": 4
         },
         "pos_y": {
-            "initial": 0.041,
+            "initial": 0.0438,
             "step": 0.001,
             "min_offset": -0.010,
             "max_offset": 0.010,
@@ -296,7 +290,7 @@
             "decimals": 4
         },
         "pos_z": {
-            "initial": 0.672,
+            "initial": 0.6762,
             "step": 0.002,
             "min_offset": -0.030,
             "max_offset": 0.030,
@@ -304,7 +298,7 @@
             "decimals": 4
         },
         "yaw": {
-            "initial": 180.2289,
+            "initial": 180.2311,
             "step": 0.01,
             "min_offset": -0.250,
             "max_offset": 0.250,
@@ -312,7 +306,7 @@
             "decimals": 4
         },
         "pitch": {
-            "initial": 17.561,
+            "initial": 17.5418,
             "step": 0.02,
             "min_offset": -0.450,
             "max_offset": 0.450,
@@ -320,7 +314,7 @@
             "decimals": 4
         },
         "roll": {
-            "initial": -0.02,
+            "initial": -0.0544,
             "step": 0.01,
             "min_offset": -0.200,
             "max_offset": 0.200,
@@ -328,7 +322,7 @@
             "decimals": 4
         },
         "lens_fov": {
-            "initial": 195.8,
+            "initial": 195.2,
             "step": 0.2,
             "min_offset": -6.0,
             "max_offset": 6.0,

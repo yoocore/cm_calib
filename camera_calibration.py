@@ -1,8 +1,10 @@
 import argparse
 import atexit
+import copy
 import ctypes
 import json
 import math
+import random
 import sys
 import time
 import warnings
@@ -172,15 +174,391 @@ def _write_run_marker(marker_path: Path, payload: dict) -> None:
     )
 
 
+def _find_latest_result_path(fallback_output_dir: Path) -> Path:
+    direct_result_path = fallback_output_dir / "result.json"
+    if direct_result_path.exists():
+        return direct_result_path
+
+    prefix = f"{fallback_output_dir.name}_"
+    latest_result: Optional[Path] = None
+    latest_mtime = float("-inf")
+    try:
+        for child in fallback_output_dir.parent.iterdir():
+            if not child.is_dir() or not child.name.startswith(prefix):
+                continue
+            candidate = child / "result.json"
+            if not candidate.exists():
+                continue
+            try:
+                mtime = candidate.stat().st_mtime
+            except OSError:
+                continue
+            if mtime > latest_mtime:
+                latest_result = candidate
+                latest_mtime = mtime
+    except OSError:
+        return direct_result_path
+
+    return latest_result or direct_result_path
+
+
 def _read_latest_result_path(marker_path: Path, fallback_output_dir: Path) -> Path:
     try:
         marker = json.loads(marker_path.read_text(encoding="utf-8"))
     except Exception:
-        return fallback_output_dir / "result.json"
+        return _find_latest_result_path(fallback_output_dir)
     result_json = marker.get("result_json")
     if isinstance(result_json, str) and result_json.strip():
         return Path(result_json)
-    return fallback_output_dir / "result.json"
+
+    output_dir = marker.get("output_dir")
+    if isinstance(output_dir, str) and output_dir.strip():
+        marker_output_result = Path(output_dir) / "result.json"
+        if marker_output_result.exists():
+            return marker_output_result
+
+    return _find_latest_result_path(fallback_output_dir)
+
+
+def _write_initial_values_to_config(config_path: Path, values: Dict[str, float]) -> None:
+    with open(config_path, "r", encoding="utf-8-sig") as f:
+        cfg = json.load(f)
+
+    parameters = cfg.get("parameters", {})
+    updated_names: List[str] = []
+    for name, value in values.items():
+        if name not in parameters:
+            continue
+        parameters[name]["initial"] = float(value)
+        updated_names.append(name)
+
+    if not updated_names:
+        raise ValueError(f"No matching parameters found in config: {config_path}")
+
+    with open(config_path, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=4)
+
+    print(
+        "Updated config initial values: "
+        f"path={config_path}, names={', '.join(sorted(updated_names))}"
+    )
+
+
+def _quantize_float(value: float, decimals: int) -> float:
+    return float(f"{float(value):.{decimals}f}")
+
+
+def _format_scalar_value_map(values: Dict[str, float]) -> str:
+    ordered = []
+    for name in sorted(values.keys()):
+        ordered.append(f"{name}={values[name]}")
+    return ", ".join(ordered)
+
+
+def _resolve_parameter_bounds(param_cfg: dict) -> Tuple[float, float]:
+    initial_value = float(param_cfg["initial"])
+    if "min_offset" in param_cfg or "max_offset" in param_cfg:
+        min_value = initial_value + float(param_cfg.get("min_offset", 0.0))
+        max_value = initial_value + float(param_cfg.get("max_offset", 0.0))
+    else:
+        min_value = float(param_cfg["min"])
+        max_value = float(param_cfg["max"])
+    return min_value, max_value
+
+
+def _build_explicit_parameter_config(param_cfg: dict, initial_value: float) -> dict:
+    min_value, max_value = _resolve_parameter_bounds(param_cfg)
+    decimals = int(param_cfg.get("decimals", 4))
+    quantized_initial = _quantize_float(initial_value, decimals)
+    if quantized_initial < min_value or quantized_initial > max_value:
+        raise ValueError(
+            f"initial value {quantized_initial} is outside range [{min_value}, {max_value}]"
+        )
+
+    explicit_param_cfg = copy.deepcopy(param_cfg)
+    explicit_param_cfg["initial"] = quantized_initial
+    explicit_param_cfg["min"] = min_value
+    explicit_param_cfg["max"] = max_value
+    explicit_param_cfg.pop("min_offset", None)
+    explicit_param_cfg.pop("max_offset", None)
+    return explicit_param_cfg
+
+
+def _build_multi_start_run_configs(
+    cfg: dict,
+    base_output_dir: Path,
+    start_count: int,
+    jitter_steps: float,
+    seed: int,
+    max_iters_override: Optional[int],
+    output_root_dir: Optional[Path] = None,
+) -> Tuple[Path, List[dict]]:
+    if start_count <= 0:
+        raise ValueError("multi-start count must be positive")
+
+    base_parameters = cfg.get("parameters")
+    if not isinstance(base_parameters, dict) or not base_parameters:
+        raise ValueError("parameters must be a non-empty object for multi-start mode")
+
+    root_output_dir = output_root_dir or _build_isolated_output_dir(
+        f"{base_output_dir.name}_multistart"
+    )
+    rng = random.Random(seed)
+    run_cfgs: List[dict] = []
+
+    for start_index in range(start_count):
+        run_cfg = copy.deepcopy(cfg)
+        run_cfg["output_dir"] = str(root_output_dir / f"start_{start_index:02d}")
+        if max_iters_override is not None:
+            run_cfg["max_iters"] = int(max_iters_override)
+
+        run_parameters: Dict[str, dict] = {}
+        initial_values: Dict[str, float] = {}
+
+        for name, base_param in base_parameters.items():
+            initial_value = float(base_param["initial"])
+            min_value, max_value = _resolve_parameter_bounds(base_param)
+
+            step = abs(float(base_param.get("step", 0.0)))
+            decimals = int(base_param.get("decimals", 4))
+            start_value = initial_value
+            unlocked = not math.isclose(min_value, max_value, rel_tol=0.0, abs_tol=1e-12)
+            if start_index > 0 and unlocked and step > 0.0 and jitter_steps > 0.0:
+                delta = rng.uniform(-jitter_steps, jitter_steps) * step
+                start_value = float(np.clip(initial_value + delta, min_value, max_value))
+            start_value = _quantize_float(start_value, decimals)
+
+            run_param = _build_explicit_parameter_config(base_param, start_value)
+            run_parameters[name] = run_param
+            initial_values[name] = start_value
+
+        run_cfg["parameters"] = run_parameters
+        run_cfg["multi_start"] = {
+            "index": start_index,
+            "seed": seed,
+            "jitter_steps": jitter_steps,
+            "initial_values": initial_values,
+        }
+        run_cfgs.append(run_cfg)
+
+    return root_output_dir, run_cfgs
+
+
+def _run_multi_start_campaign(
+    config_path: Path,
+    cfg: dict,
+    base_output_dir: Path,
+    start_count: int,
+    jitter_steps: float,
+    seed: int,
+    max_iters_override: Optional[int],
+    output_root_dir: Optional[Path] = None,
+) -> dict:
+    root_output_dir, run_cfgs = _build_multi_start_run_configs(
+        cfg,
+        base_output_dir=base_output_dir,
+        start_count=start_count,
+        jitter_steps=jitter_steps,
+        seed=seed,
+        max_iters_override=max_iters_override,
+        output_root_dir=output_root_dir,
+    )
+    root_output_dir.mkdir(parents=True, exist_ok=True)
+
+    print(
+        "Multi-start campaign: "
+        f"runs={start_count}, "
+        f"max_iters={run_cfgs[0].get('max_iters')}, "
+        f"jitter_steps={jitter_steps}, "
+        f"seed={seed}, "
+        f"output_dir={root_output_dir}"
+    )
+
+    run_summaries: List[dict] = []
+    for run_cfg in run_cfgs:
+        multi_cfg = run_cfg.get("multi_start", {})
+        start_index = int(multi_cfg.get("index", 0))
+        output_dir = Path(run_cfg["output_dir"])
+        live_log_path = _configure_live_log(run_cfg, False)
+        initial_values = multi_cfg.get("initial_values", {})
+        print(
+            f"Multi-start run {start_index + 1}/{start_count}: "
+            f"output_dir={output_dir} "
+            f"initials={_format_scalar_value_map(initial_values)}"
+        )
+
+        calib = CameraCalibrator(run_cfg)
+        calib.live_log_path = live_log_path
+        try:
+            result = calib.optimize()
+            run_summaries.append(
+                {
+                    "start_index": start_index,
+                    "status": "finished",
+                    "output_dir": str(output_dir),
+                    "live_log": str(live_log_path),
+                    "initial_values": initial_values,
+                    "best_score": result["best_score"],
+                    "best_values": result["best_values"],
+                    "best_image": result["best_image"],
+                    "best_score_image": result.get("best_score_image"),
+                    "best_overlay_image": result.get("best_overlay_image"),
+                    "result_json": str(output_dir / "result.json"),
+                }
+            )
+            print(
+                f"Multi-start run {start_index + 1} finished: "
+                f"best_score={result['best_score']:.6f}"
+            )
+        except Exception as exc:
+            run_summaries.append(
+                {
+                    "start_index": start_index,
+                    "status": "failed",
+                    "output_dir": str(output_dir),
+                    "live_log": str(live_log_path),
+                    "initial_values": initial_values,
+                    "error": str(exc),
+                }
+            )
+            print(f"Multi-start run {start_index + 1} failed: {exc}")
+
+    successful_runs = [entry for entry in run_summaries if entry.get("status") == "finished"]
+    successful_runs.sort(key=lambda item: float(item["best_score"]))
+    best_run = successful_runs[0] if successful_runs else None
+    summary = {
+        "config": str(config_path),
+        "output_dir": str(root_output_dir),
+        "start_count": start_count,
+        "max_iters": run_cfgs[0].get("max_iters"),
+        "jitter_steps": jitter_steps,
+        "seed": seed,
+        "best_run": best_run,
+        "runs": run_summaries,
+    }
+    summary_path = root_output_dir / "multistart_summary.json"
+    summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    if best_run is None:
+        raise RuntimeError(f"All multi-start runs failed. See {summary_path}")
+
+    print(f"Multi-start summary: {summary_path}")
+    print(
+        "Multi-start best: "
+        f"start_index={best_run['start_index']} "
+        f"best_score={float(best_run['best_score']):.6f} "
+        f"output_dir={best_run['output_dir']}"
+    )
+    return summary
+
+
+def _cfg_with_initial_values(cfg: dict, initial_values: Dict[str, float]) -> dict:
+    run_cfg = copy.deepcopy(cfg)
+    parameters = run_cfg.get("parameters")
+    if not isinstance(parameters, dict) or not parameters:
+        raise ValueError("parameters must be a non-empty object")
+
+    for name, param_cfg in list(parameters.items()):
+        if not isinstance(param_cfg, dict):
+            continue
+        next_initial = float(initial_values.get(name, param_cfg["initial"]))
+        parameters[name] = _build_explicit_parameter_config(param_cfg, next_initial)
+    return run_cfg
+
+
+def _run_explore_then_refine_campaign(
+    config_path: Path,
+    cfg: dict,
+    base_output_dir: Path,
+    start_count: int,
+    jitter_steps: float,
+    seed: int,
+    explore_max_iters: int,
+    refine_max_iters: Optional[int],
+) -> dict:
+    if start_count <= 0:
+        raise ValueError("explore-then-refine mode requires a positive start count")
+    if explore_max_iters <= 0:
+        raise ValueError("explore-then-refine mode requires positive explore iterations")
+
+    campaign_root = _build_isolated_output_dir(f"{base_output_dir.name}_campaign")
+    campaign_root.mkdir(parents=True, exist_ok=True)
+
+    print(
+        "Explore-then-refine campaign: "
+        f"explore_runs={start_count}, "
+        f"explore_iters={explore_max_iters}, "
+        f"refine_iters={refine_max_iters or int(cfg.get('max_iters', 0))}, "
+        f"jitter_steps={jitter_steps}, "
+        f"seed={seed}, "
+        f"campaign_dir={campaign_root}"
+    )
+
+    explore_summary = _run_multi_start_campaign(
+        config_path=config_path,
+        cfg=cfg,
+        base_output_dir=base_output_dir,
+        start_count=start_count,
+        jitter_steps=jitter_steps,
+        seed=seed,
+        max_iters_override=explore_max_iters,
+        output_root_dir=campaign_root / "explore",
+    )
+    best_run = explore_summary["best_run"]
+    best_values = dict(best_run["best_values"])
+
+    refine_cfg = _cfg_with_initial_values(cfg, best_values)
+    refine_output_dir = campaign_root / "refine"
+    refine_cfg["output_dir"] = str(refine_output_dir)
+    if refine_max_iters is not None:
+        refine_cfg["max_iters"] = int(refine_max_iters)
+
+    live_log_path = _configure_live_log(refine_cfg, False)
+    print(
+        "Refine run: "
+        f"source_start_index={best_run['start_index']}, "
+        f"output_dir={refine_output_dir}, "
+        f"initials={_format_scalar_value_map(best_values)}"
+    )
+
+    calib = CameraCalibrator(refine_cfg)
+    calib.live_log_path = live_log_path
+    result = calib.optimize()
+
+    summary = {
+        "config": str(config_path),
+        "campaign_output_dir": str(campaign_root),
+        "explore": {
+            "output_dir": str(explore_summary["output_dir"]),
+            "summary_json": str(Path(explore_summary["output_dir"]) / "multistart_summary.json"),
+            "start_count": start_count,
+            "max_iters": explore_max_iters,
+            "jitter_steps": jitter_steps,
+            "seed": seed,
+            "best_run": best_run,
+        },
+        "refine": {
+            "output_dir": str(refine_output_dir),
+            "live_log": str(live_log_path),
+            "max_iters": int(refine_cfg.get("max_iters", 0)),
+            "seed_values": best_values,
+            "source_start_index": best_run["start_index"],
+            "best_score": result["best_score"],
+            "best_values": result["best_values"],
+            "best_image": result["best_image"],
+            "best_score_image": result.get("best_score_image"),
+            "best_overlay_image": result.get("best_overlay_image"),
+            "result_json": str(refine_output_dir / "result.json"),
+        },
+    }
+    summary_path = campaign_root / "campaign_summary.json"
+    summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    print("Campaign summary:", summary_path)
+    print("Campaign best score:", result["best_score"])
+    print("Campaign best image:", result["best_image"])
+    print("Campaign best result JSON:", str(refine_output_dir / "result.json"))
+    return summary
 
 
 @dataclass
@@ -396,11 +774,21 @@ class CameraCalibrator:
         self.overlay_visual_real_alpha = float(cfg.get("overlay_visual_real_alpha", 0.45))
         self.overlay_visual_real_alpha = min(1.0, max(0.0, self.overlay_visual_real_alpha))
         joint_exploration_cfg = cfg.get("joint_exploration", {})
-        self.joint_exploration_param_names = [
+        configured_joint_param_names = [
             str(name).strip()
             for name in joint_exploration_cfg.get("param_names", [])
             if str(name).strip()
         ]
+        self.joint_exploration_apply_to_all_params = bool(
+            joint_exploration_cfg.get(
+                "apply_to_all_params",
+                joint_exploration_cfg.get("all_params", False),
+            )
+        )
+        if self.joint_exploration_apply_to_all_params:
+            self.joint_exploration_param_names = [param.name for param in self.params]
+        else:
+            self.joint_exploration_param_names = configured_joint_param_names
         self.joint_exploration_param_set = set(self.joint_exploration_param_names)
         self.joint_exploration_max_single_worsen = float(
             joint_exploration_cfg.get("max_single_score_worsen", 0.0)
@@ -1259,18 +1647,7 @@ class CameraCalibrator:
         return captured
 
     def write_initial_values_to_config(self, config_path: str, values: Dict[str, float]) -> None:
-        path = Path(config_path)
-        with open(path, "r", encoding="utf-8") as f:
-            cfg = json.load(f)
-
-        parameters = cfg.get("parameters", {})
-        for name, value in values.items():
-            if name in parameters:
-                parameters[name]["initial"] = float(value)
-
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, ensure_ascii=False, indent=4)
-        print(f"Updated initial values in config: {path}")
+        _write_initial_values_to_config(Path(config_path), values)
 
     @staticmethod
     def _quantize_value(value: float, decimals: int) -> float:
@@ -2767,7 +3144,7 @@ class CameraCalibrator:
     def _candidate_move_sort_key(self, move: Dict[str, object]) -> Tuple[int, int, float]:
         name = str(move["name"])
         return (
-            0 if name in self.joint_exploration_param_set else 1,
+            0 if self._is_joint_exploration_param(name) else 1,
             self.param_order_index.get(name, len(self.param_order_index)),
             float(move["score"]),
         )
@@ -3357,6 +3734,8 @@ class CameraCalibrator:
             best_values=best_values,
             best_total_detail=best_total_detail,
             best_img=best_img,
+            best_score_image=self._ensure_best_score_image(best_img, best_total_detail),
+            best_overlay_image=self._ensure_best_overlay_image(best_img),
             stop_reason=stop_reason,
             history=history,
             in_progress=False,
@@ -3418,9 +3797,44 @@ def parse_args() -> argparse.Namespace:
         help="Optional output path for --annotate-image",
     )
     parser.add_argument(
+        "--multi-start-count",
+        type=int,
+        default=0,
+        help="Run multiple optimizations from perturbed config initial values; 0 disables this mode",
+    )
+    parser.add_argument(
+        "--multi-start-iters",
+        type=int,
+        default=None,
+        help="Optional max_iters override for each multi-start run",
+    )
+    parser.add_argument(
+        "--multi-start-jitter-steps",
+        type=float,
+        default=2.0,
+        help="Perturb each unlocked parameter by up to N * step around config initial values",
+    )
+    parser.add_argument(
+        "--multi-start-seed",
+        type=int,
+        default=20260429,
+        help="Random seed for deterministic multi-start initial value generation",
+    )
+    parser.add_argument(
+        "--explore-then-refine",
+        action="store_true",
+        help="Run a short multi-start exploration first, then launch one refinement run from the best explored start",
+    )
+    parser.add_argument(
+        "--refine-iters",
+        type=int,
+        default=None,
+        help="Optional max_iters override for the refinement phase of --explore-then-refine",
+    )
+    parser.add_argument(
         "--resume-from-result",
         action="store_true",
-        help="Resume parameter values from output_dir/result.json before optimize",
+        help="Optional legacy mode: resume parameter values from the last result before optimize",
     )
     return parser.parse_args()
 
@@ -3437,6 +3851,15 @@ def main() -> None:
     with open(config_path, "r", encoding="utf-8-sig") as f:
         cfg = json.load(f)
 
+    if args.multi_start_count < 0:
+        raise ValueError("--multi-start-count must be >= 0")
+    if args.multi_start_iters is not None and args.multi_start_iters <= 0:
+        raise ValueError("--multi-start-iters must be > 0")
+    if args.multi_start_jitter_steps < 0.0:
+        raise ValueError("--multi-start-jitter-steps must be >= 0")
+    if args.refine_iters is not None and args.refine_iters <= 0:
+        raise ValueError("--refine-iters must be > 0")
+
     base_output_dir = _resolve_config_output_dir(cfg, config_path)
     cfg["output_dir"] = str(base_output_dir)
     should_optimize = not any(
@@ -3447,11 +3870,62 @@ def main() -> None:
         ]
     )
 
+    if args.explore_then_refine:
+        if not should_optimize:
+            raise ValueError("explore-then-refine mode cannot be combined with capture/propose/annotate commands")
+        if args.resume_from_result:
+            print("Explore-then-refine mode ignores --resume-from-result and always starts from config initial values.")
+        campaign_start_count = args.multi_start_count or 4
+        campaign_explore_iters = args.multi_start_iters or min(int(cfg.get("max_iters", 100)), 24)
+        summary = _run_explore_then_refine_campaign(
+            config_path=config_path,
+            cfg=cfg,
+            base_output_dir=base_output_dir,
+            start_count=campaign_start_count,
+            jitter_steps=float(args.multi_start_jitter_steps),
+            seed=int(args.multi_start_seed),
+            explore_max_iters=int(campaign_explore_iters),
+            refine_max_iters=args.refine_iters,
+        )
+        refine = summary["refine"]
+        _write_initial_values_to_config(config_path, refine["best_values"])
+        print("Explore summary JSON:", summary["explore"]["summary_json"])
+        print("Refine output dir:", refine["output_dir"])
+        print("Refine best score:", refine["best_score"])
+        print("Refine best image:", refine["best_image"])
+        print("Refine best result JSON:", refine["result_json"])
+        return
+
+    if args.multi_start_count > 0:
+        if not should_optimize:
+            raise ValueError("multi-start mode cannot be combined with capture/propose/annotate commands")
+        if args.resume_from_result:
+            print("Multi-start mode ignores --resume-from-result and always starts from config initial values.")
+        summary = _run_multi_start_campaign(
+            config_path=config_path,
+            cfg=cfg,
+            base_output_dir=base_output_dir,
+            start_count=args.multi_start_count,
+            jitter_steps=float(args.multi_start_jitter_steps),
+            seed=int(args.multi_start_seed),
+            max_iters_override=args.multi_start_iters,
+        )
+        best_run = summary["best_run"]
+        _write_initial_values_to_config(config_path, best_run["best_values"])
+        print("Multi-start output dir:", summary["output_dir"])
+        print("Multi-start best score:", best_run["best_score"])
+        print("Multi-start best image:", best_run["best_image"])
+        print("Multi-start best result JSON:", best_run["result_json"])
+        return
+
     marker_path: Optional[Path] = None
     marker_payload: Optional[dict] = None
+    resume_result_path: Optional[Path] = None
     if should_optimize:
-        cfg["output_dir"] = str(_build_isolated_output_dir(base_output_dir.name))
         marker_path = _marker_path_for_output_dir(base_output_dir)
+        if args.resume_from_result:
+            resume_result_path = _read_latest_result_path(marker_path, base_output_dir)
+        cfg["output_dir"] = str(_build_isolated_output_dir(base_output_dir.name))
         marker_payload = {
             "started_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "config": str(config_path),
@@ -3504,10 +3978,12 @@ def main() -> None:
             return
 
         if args.resume_from_result:
-            resume_result_path = _read_latest_result_path(marker_path, base_output_dir)
-            calib.load_best_values_from_result(resume_result_path)
+            calib.load_best_values_from_result(
+                resume_result_path or (base_output_dir / "result.json")
+            )
 
         result = calib.optimize()
+        _write_initial_values_to_config(config_path, result["best_values"])
         if marker_path is not None and marker_payload is not None:
             marker_payload.update(
                 {

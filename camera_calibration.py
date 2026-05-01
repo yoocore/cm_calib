@@ -166,6 +166,240 @@ def _build_isolated_output_dir(prefix: str, camera_parent: Optional[str] = None)
     return _default_sim_output_root() / f"{prefix}_{ts}"
 
 
+def _camera_name_from_config_path(config_path: Optional[Path]) -> str:
+    return _default_output_name_from_config(config_path)
+
+
+def _camera_history_summary_path(camera_name: str) -> Path:
+    return _default_sim_output_root() / camera_name / "camera_summary.json"
+
+
+def _camera_history_summary_compact_path(camera_name: str) -> Path:
+    return _default_sim_output_root() / camera_name / "camera_summary_compact.json"
+
+
+def _iter_camera_history_dirs(camera_name: str) -> List[Path]:
+    root = _default_sim_output_root()
+    camera_root = root / camera_name
+    if not camera_root.exists() or not camera_root.is_dir():
+        return []
+    return [camera_root]
+
+
+def _camera_name_from_output_dir(output_dir: Path) -> str:
+    root = _default_sim_output_root()
+    try:
+        relative_parts = output_dir.resolve().relative_to(root.resolve()).parts
+    except Exception:
+        return output_dir.name
+    if relative_parts:
+        return relative_parts[0]
+    return output_dir.name
+
+
+def _load_json_if_exists(path: Path) -> Optional[dict]:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _build_run_digest_from_result_payload(payload: dict, result_path: Path) -> Optional[dict]:
+    if payload.get("in_progress"):
+        return None
+
+    summary = payload.get("summary")
+    if isinstance(summary, dict):
+        digest = dict(summary)
+    else:
+        history = payload.get("history") or []
+        initial_entry = history[0] if history else {}
+        initial_score = float(initial_entry.get("total_score", payload.get("best_score", 0.0)))
+        final_score = float(payload.get("best_score", initial_score))
+        start_values = dict(initial_entry.get("values") or payload.get("best_values") or {})
+        final_values = dict(payload.get("best_values") or {})
+        iteration_round_count = sum(
+            1 for entry in history if entry.get("phase") == "iteration_start"
+        )
+        run_stats = payload.get("run_stats") or {}
+        acceptance = payload.get("acceptance") or {}
+        digest = {
+            "camera": Path(payload.get("output_dir", result_path.parent)).name,
+            "in_progress": False,
+            "start_score": initial_score,
+            "final_score": final_score,
+            "score_improvement": initial_score - final_score,
+            "start_values": start_values,
+            "final_values": final_values,
+            "iteration_round_count": iteration_round_count,
+            "history_event_count": payload.get("history_count", len(history)),
+            "total_elapsed_sec": run_stats.get("total_elapsed_sec"),
+            "total_elapsed_text": run_stats.get("total_elapsed_text"),
+            "average_elapsed_sec": run_stats.get("average_elapsed_sec"),
+            "average_elapsed_text": run_stats.get("average_elapsed_text"),
+            "stop_reason": payload.get("stop_reason"),
+            "passed": acceptance.get("passed"),
+            "acceptance_mode": acceptance.get("mode"),
+            "compared_board_count": (payload.get("best_metrics") or {}).get("compared_board_count"),
+            "best_image": payload.get("best_image"),
+            "best_score_image": payload.get("best_score_image"),
+        }
+
+    digest["result_json"] = str(result_path)
+    digest["output_dir"] = payload.get("output_dir", str(result_path.parent))
+    digest["started_at"] = payload.get("started_at")
+    digest["finished_at"] = payload.get("finished_at")
+    digest["camera"] = _camera_name_from_output_dir(Path(digest["output_dir"]))
+    return digest
+
+
+def _build_campaign_digest(campaign_payload: dict, campaign_summary_path: Path) -> dict:
+    best_run = campaign_payload.get("best_run") or {}
+    refine = campaign_payload.get("refine") or {}
+    explore = campaign_payload.get("explore") or {}
+    return {
+        "campaign_summary_json": str(campaign_summary_path),
+        "campaign_output_dir": campaign_payload.get("campaign_output_dir"),
+        "best_stage": best_run.get("stage"),
+        "best_score": best_run.get("best_score"),
+        "best_result_json": best_run.get("result_json"),
+        "explore_start_count": explore.get("start_count"),
+        "explore_max_iters": explore.get("max_iters"),
+        "refine_max_iters": refine.get("max_iters"),
+    }
+
+
+def _build_camera_history_summary(camera_name: str) -> dict:
+    history_dirs = _iter_camera_history_dirs(camera_name)
+    run_digests: List[dict] = []
+    campaign_digests: List[dict] = []
+
+    for history_dir in history_dirs:
+        for result_path in sorted(history_dir.rglob("result.json")):
+            payload = _load_json_if_exists(result_path)
+            if not isinstance(payload, dict):
+                continue
+            digest = _build_run_digest_from_result_payload(payload, result_path)
+            if digest is not None:
+                run_digests.append(digest)
+
+        for campaign_summary_path in sorted(history_dir.rglob("campaign_summary.json")):
+            payload = _load_json_if_exists(campaign_summary_path)
+            if isinstance(payload, dict):
+                campaign_digests.append(
+                    _build_campaign_digest(payload, campaign_summary_path)
+                )
+
+    run_digests.sort(
+        key=lambda item: (
+            str(item.get("started_at") or ""),
+            str(item.get("finished_at") or ""),
+            str(item.get("result_json") or ""),
+        )
+    )
+
+    best_run = None
+    if run_digests:
+        best_run = min(run_digests, key=lambda item: float(item.get("final_score", float("inf"))))
+    latest_run = run_digests[-1] if run_digests else None
+    best_improvement_run = None
+    if run_digests:
+        best_improvement_run = max(
+            run_digests,
+            key=lambda item: float(item.get("score_improvement", float("-inf"))),
+        )
+
+    return {
+        "camera": camera_name,
+        "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "run_count": len(run_digests),
+        "passed_run_count": sum(1 for item in run_digests if bool(item.get("passed"))),
+        "campaign_count": len(campaign_digests),
+        "best_run": best_run,
+        "latest_run": latest_run,
+        "best_improvement_run": best_improvement_run,
+        "campaigns": campaign_digests,
+        "runs": run_digests,
+    }
+
+
+def _write_camera_history_summary(camera_name: str) -> Tuple[Path, dict]:
+    summary = _build_camera_history_summary(camera_name)
+    summary_path = _camera_history_summary_path(camera_name)
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    summary_path.write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return summary_path, summary
+
+
+def _build_camera_history_summary_compact(summary: dict) -> dict:
+    return {
+        "camera": summary.get("camera"),
+        "generated_at": summary.get("generated_at"),
+        "run_count": summary.get("run_count"),
+        "passed_run_count": summary.get("passed_run_count"),
+        "campaign_count": summary.get("campaign_count"),
+        "first_run": (summary.get("runs") or [None])[0],
+        "best_run": summary.get("best_run"),
+        "latest_run": summary.get("latest_run"),
+        "best_improvement_run": summary.get("best_improvement_run"),
+        "latest_campaign": (summary.get("campaigns") or [None])[-1],
+    }
+
+
+def _write_camera_history_summary_compact(camera_name: str, summary: dict) -> Path:
+    compact_summary = _build_camera_history_summary_compact(summary)
+    compact_summary_path = _camera_history_summary_compact_path(camera_name)
+    compact_summary_path.parent.mkdir(parents=True, exist_ok=True)
+    compact_summary_path.write_text(
+        json.dumps(compact_summary, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return compact_summary_path
+
+
+def _print_camera_history_summary(summary: dict, summary_path: Path) -> None:
+    print(
+        "Camera history summary: "
+        f"camera={summary['camera']} "
+        f"runs={summary['run_count']} "
+        f"passed_runs={summary['passed_run_count']} "
+        f"campaigns={summary['campaign_count']}"
+    )
+
+    best_run = summary.get("best_run")
+    if isinstance(best_run, dict):
+        print(
+            "Camera best run: "
+            f"start_score={float(best_run.get('start_score', 0.0)):.6f} "
+            f"final_score={float(best_run.get('final_score', 0.0)):.6f} "
+            f"rounds={int(best_run.get('iteration_round_count', 0))} "
+            f"elapsed={best_run.get('total_elapsed_text')} "
+            f"stop_reason={best_run.get('stop_reason')}"
+        )
+        print("Camera best start values:", _format_scalar_value_map(dict(best_run.get("start_values") or {})))
+        print("Camera best final values:", _format_scalar_value_map(dict(best_run.get("final_values") or {})))
+
+    latest_run = summary.get("latest_run")
+    if isinstance(latest_run, dict):
+        print(
+            "Camera latest run: "
+            f"start_score={float(latest_run.get('start_score', 0.0)):.6f} "
+            f"final_score={float(latest_run.get('final_score', 0.0)):.6f} "
+            f"rounds={int(latest_run.get('iteration_round_count', 0))} "
+            f"elapsed={latest_run.get('total_elapsed_text')} "
+            f"stop_reason={latest_run.get('stop_reason')}"
+        )
+
+    print("Camera summary JSON:", str(summary_path))
+
+
+def _print_camera_history_summary_compact(compact_summary_path: Path) -> None:
+    print("Camera compact summary JSON:", str(compact_summary_path))
+
+
 def _marker_name_for_output_dir(output_dir: Path) -> str:
     return f"{output_dir.name}_last.json"
 
@@ -2552,6 +2786,72 @@ class CameraCalibrator:
             "average_elapsed_text": self._format_duration_stats(average_elapsed_sec),
         }
 
+    def _camera_summary_name(self) -> str:
+        return _camera_name_from_output_dir(self.output_dir)
+
+    def _build_calibration_summary(
+        self,
+        *,
+        best_score: float,
+        best_values: Dict[str, float],
+        best_total_detail: TotalScoreDetail,
+        best_img: Path,
+        best_score_image: Optional[Path],
+        stop_reason: str,
+        history: List[dict],
+        run_stats: Dict[str, object],
+        acceptance: Dict[str, object],
+        in_progress: bool,
+    ) -> Dict[str, object]:
+        initial_entry = history[0] if history else {}
+        initial_score = float(initial_entry.get("total_score", best_score))
+        initial_values = dict(initial_entry.get("values", best_values))
+        iteration_round_count = sum(
+            1 for entry in history if entry.get("phase") == "iteration_start"
+        )
+        return {
+            "camera": self._camera_summary_name(),
+            "in_progress": in_progress,
+            "start_score": initial_score,
+            "final_score": best_score,
+            "score_improvement": initial_score - best_score,
+            "start_values": initial_values,
+            "final_values": best_values,
+            "iteration_round_count": iteration_round_count,
+            "history_event_count": len(history),
+            "total_elapsed_sec": run_stats["total_elapsed_sec"],
+            "total_elapsed_text": run_stats["total_elapsed_text"],
+            "average_elapsed_sec": run_stats["average_elapsed_sec"],
+            "average_elapsed_text": run_stats["average_elapsed_text"],
+            "stop_reason": stop_reason,
+            "passed": acceptance["passed"],
+            "acceptance_mode": acceptance["mode"],
+            "compared_board_count": best_total_detail.compared_board_count,
+            "best_image": str(best_img),
+            "best_score_image": str(best_score_image) if best_score_image else None,
+        }
+
+    def _print_calibration_summary(self, summary: Dict[str, object]) -> None:
+        print(
+            "Calibration summary: "
+            f"camera={summary['camera']} "
+            f"start_score={float(summary['start_score']):.6f} "
+            f"final_score={float(summary['final_score']):.6f} "
+            f"improvement={float(summary['score_improvement']):.6f} "
+            f"rounds={int(summary['iteration_round_count'])} "
+            f"elapsed={summary['total_elapsed_text']} "
+            f"stop_reason={summary['stop_reason']} "
+            f"passed={summary['passed']}"
+        )
+        print(
+            "Start values:",
+            _format_scalar_value_map(dict(summary["start_values"])),
+        )
+        print(
+            "Final values:",
+            _format_scalar_value_map(dict(summary["final_values"])),
+        )
+
     def _build_sim_eval_image(self, captured_gray: np.ndarray) -> np.ndarray:
         eval_image = self._prepare_eval_image(captured_gray)
         if self.comparison_mode == "direct":
@@ -3448,6 +3748,18 @@ class CameraCalibrator:
         updated_at = datetime.now().astimezone().isoformat(timespec="seconds")
         run_stats = self._build_run_stats(history)
         acceptance = self._acceptance_payload(best_total_detail)
+        summary = self._build_calibration_summary(
+            best_score=best_score,
+            best_values=best_values,
+            best_total_detail=best_total_detail,
+            best_img=best_img,
+            best_score_image=best_score_image,
+            stop_reason=stop_reason,
+            history=history,
+            run_stats=run_stats,
+            acceptance=acceptance,
+            in_progress=in_progress,
+        )
         return {
             "boards": [
                 {
@@ -3497,6 +3809,7 @@ class CameraCalibrator:
             "stop_reason": stop_reason,
             "history_count": len(history),
             "run_stats": run_stats,
+            "summary": summary,
             "in_progress": in_progress,
             "history": history,
         }
@@ -4037,6 +4350,7 @@ class CameraCalibrator:
             in_progress=False,
         )
         self._print_acceptance_summary(best_total_detail)
+        self._print_calibration_summary(result["summary"])
         self._write_progress_result(
             best_score=best_score,
             best_values=best_values,
@@ -4145,6 +4459,7 @@ def main() -> None:
 
     args = parse_args()
     config_path = Path(args.config).resolve()
+    camera_name = _camera_name_from_config_path(config_path)
     with open(config_path, "r", encoding="utf-8-sig") as f:
         cfg = json.load(f)
 
@@ -4193,6 +4508,13 @@ def main() -> None:
         print("Campaign best score:", best_run["best_score"])
         print("Campaign best image:", best_run["best_image"])
         print("Campaign best result JSON:", best_run["result_json"])
+        camera_history_summary_path, camera_history_summary = _write_camera_history_summary(camera_name)
+        camera_history_summary_compact_path = _write_camera_history_summary_compact(
+            camera_name,
+            camera_history_summary,
+        )
+        _print_camera_history_summary(camera_history_summary, camera_history_summary_path)
+        _print_camera_history_summary_compact(camera_history_summary_compact_path)
         return
 
     if args.multi_start_count > 0:
@@ -4215,6 +4537,13 @@ def main() -> None:
         print("Multi-start best score:", best_run["best_score"])
         print("Multi-start best image:", best_run["best_image"])
         print("Multi-start best result JSON:", best_run["result_json"])
+        camera_history_summary_path, camera_history_summary = _write_camera_history_summary(camera_name)
+        camera_history_summary_compact_path = _write_camera_history_summary_compact(
+            camera_name,
+            camera_history_summary,
+        )
+        _print_camera_history_summary(camera_history_summary, camera_history_summary_path)
+        _print_camera_history_summary_compact(camera_history_summary_compact_path)
         return
 
     marker_path: Optional[Path] = None
@@ -4314,6 +4643,13 @@ def main() -> None:
                 f"average_elapsed={run_stats.get('average_elapsed_text')}"
             )
         print("Result JSON:", str(Path(cfg["output_dir"]) / "result.json"))
+        camera_history_summary_path, camera_history_summary = _write_camera_history_summary(camera_name)
+        camera_history_summary_compact_path = _write_camera_history_summary_compact(
+            camera_name,
+            camera_history_summary,
+        )
+        _print_camera_history_summary(camera_history_summary, camera_history_summary_path)
+        _print_camera_history_summary_compact(camera_history_summary_compact_path)
     except Exception as exc:
         if marker_path is not None and marker_payload is not None:
             marker_payload.update(

@@ -82,6 +82,26 @@ Automatic view-specific board proposal
   - checkerboards are proposed as repeated visible 7x3 candidates for the current view
   - if multiple logical board families share the same checkerboard size, the proposal currently emits generic checkerboard instances and still expects a quick human confirmation
 
+Bootstrap a new camera config from a manual annotation image
+- When a new camera viewpoint already has:
+  - the real image, for example Movie/ngxpro/8_left_tv_origin.jpg
+  - a manually marked image with red rectangles around visible boards
+- You can generate a new config by reusing the current --config as a template:
+  python camera_calibration.py --config config.rear_tv.json --bootstrap-config-from-annotation --bootstrap-real-image C:/CM_Projects/CMO141_Calibration/Movie/ngxpro/8_left_tv_origin.jpg --bootstrap-annotated-image C:/CM_Projects/CMO141_Calibration/Movie/ngxpro/8_left_tv.jpg
+- Default behavior:
+  - copies non-board settings from the template config
+  - replaces real_image with --bootstrap-real-image
+  - extracts red rectangles from --bootstrap-annotated-image as board ROI
+  - groups rectangles by size into B, S, and G1 families
+  - reads the current active IPG-MOVIE camera window values through Script Control and writes them into parameters.*.initial
+  - writes a new config next to the template, for example config.left_tv.json
+  - writes a verification preview image to SimOutput/<camera>/annotation_bootstrap_preview.png
+- Optional overrides:
+  - --bootstrap-output for the generated JSON path
+  - --bootstrap-preview for the preview image path
+  - --bootstrap-camera-name when the target camera name should not be derived from the image filename
+  - --bootstrap-skip-current-params when you only want ROI/template bootstrap and do not want to read current window values
+
 Output
 - Screenshots: output_dir/*.png
 - Best score image: whenever a new global best is written, the script also writes a scored overlay image next to it as *_score.png

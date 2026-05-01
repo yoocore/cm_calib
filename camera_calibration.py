@@ -5,6 +5,7 @@ import ctypes
 import json
 import math
 import random
+import re
 import sys
 import time
 import warnings
@@ -168,6 +169,333 @@ def _build_isolated_output_dir(prefix: str, camera_parent: Optional[str] = None)
 
 def _camera_name_from_config_path(config_path: Optional[Path]) -> str:
     return _default_output_name_from_config(config_path)
+
+
+def _path_to_json_string(path: Path) -> str:
+    return path.resolve().as_posix()
+
+
+def _derive_camera_name_from_image_path(image_path: Path) -> str:
+    stem = image_path.stem
+    stem = re.sub(r"_origin$", "", stem, flags=re.IGNORECASE)
+    stem = re.sub(r"^\d+_", "", stem)
+    candidate = re.sub(r"[^A-Za-z0-9_]+", "_", stem).strip("_")
+    if not candidate:
+        raise ValueError(f"Cannot derive camera name from image path: {image_path}")
+    return candidate.lower()
+
+
+def _board_prototype_family(board_id: str) -> Optional[str]:
+    normalized = str(board_id).strip().upper().replace("-", "_")
+    if re.fullmatch(r"B\d+", normalized):
+        return "B"
+    if re.fullmatch(r"S\d+", normalized):
+        return "S"
+    if normalized in {"G1_L", "G1_LEFT", "G1LEFT", "G1_LEFT_MARK", "G1LEFTMARK"}:
+        return "G1_LEFT"
+    if normalized in {"G1_C", "G1_CENTER", "G1CENTRE", "G1_CENTER_CIRCLE", "G1CENTERCIRCLE"}:
+        return "G1_CENTER"
+    if normalized in {"G1_R", "G1_RIGHT", "G1RIGHT", "G1_RIGHT_MARK", "G1RIGHTMARK"}:
+        return "G1_RIGHT"
+    if normalized.startswith("G1") and "LEFT" in normalized:
+        return "G1_LEFT"
+    if normalized.startswith("G1") and ("CENTER" in normalized or "CENTRE" in normalized or normalized.endswith("_C")):
+        return "G1_CENTER"
+    if normalized.startswith("G1") and "RIGHT" in normalized:
+        return "G1_RIGHT"
+    return None
+
+
+def _extract_annotation_rectangles(annotated_image_path: Path) -> List[Tuple[int, int, int, int]]:
+    annotated = cv2.imread(str(annotated_image_path))
+    if annotated is None:
+        raise FileNotFoundError(f"Failed to read annotated image: {annotated_image_path}")
+
+    red_mask = (
+        (annotated[:, :, 2] > 180)
+        & (annotated[:, :, 2] > annotated[:, :, 1] + 60)
+        & (annotated[:, :, 2] > annotated[:, :, 0] + 60)
+    ).astype(np.uint8) * 255
+    image_height, image_width = red_mask.shape[:2]
+    contours, _ = cv2.findContours(red_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    rectangles: List[Tuple[int, int, int, int]] = []
+    for contour in contours:
+        x, y, width, height = cv2.boundingRect(contour)
+        if width < 25 or height < 25:
+            continue
+
+        area = float(cv2.contourArea(contour))
+        fill_ratio = area / max(float(width * height), 1.0)
+        perimeter = cv2.arcLength(contour, True)
+        approx = cv2.approxPolyDP(contour, 0.03 * perimeter, True)
+        if len(approx) < 3 or len(approx) > 8:
+            continue
+
+        box_mask = red_mask[y : y + height, x : x + width]
+        border = max(1, min(width, height) // 20)
+        edge_ratios = [
+            float(box_mask[:border, :].mean()) / 255.0,
+            float(box_mask[-border:, :].mean()) / 255.0,
+            float(box_mask[:, :border].mean()) / 255.0,
+            float(box_mask[:, -border:].mean()) / 255.0,
+        ]
+        strong_edge_count = sum(value >= 0.20 for value in edge_ratios)
+        touches_border = (
+            x <= 1 or y <= 1 or x + width >= image_width - 1 or y + height >= image_height - 1
+        )
+        if fill_ratio < 0.85 and not (touches_border and fill_ratio >= 0.60 and strong_edge_count >= 3):
+            continue
+
+        rectangles.append((x, y, width, height))
+
+    rectangles.sort(key=lambda item: (item[0], item[1], item[2] * item[3]), reverse=False)
+    deduped: List[Tuple[int, int, int, int]] = []
+    for candidate in rectangles:
+        x1, y1, w1, h1 = candidate
+        keep = True
+        for existing in deduped:
+            x2, y2, w2, h2 = existing
+            inter_left = max(x1, x2)
+            inter_top = max(y1, y2)
+            inter_right = min(x1 + w1, x2 + w2)
+            inter_bottom = min(y1 + h1, y2 + h2)
+            if inter_right <= inter_left or inter_bottom <= inter_top:
+                continue
+            inter_area = float((inter_right - inter_left) * (inter_bottom - inter_top))
+            union_area = float(w1 * h1 + w2 * h2) - inter_area
+            if union_area > 0.0 and inter_area / union_area >= 0.90:
+                keep = False
+                break
+        if keep:
+            deduped.append(candidate)
+
+    if not deduped:
+        raise RuntimeError(
+            f"No annotation rectangles were detected in {annotated_image_path}. "
+            "Expected red rectangular board annotations."
+        )
+    return deduped
+
+
+def _cluster_1d(values: np.ndarray, cluster_count: int) -> np.ndarray:
+    if values.size == 0:
+        return np.empty((0,), dtype=np.int32)
+    effective_clusters = max(1, min(int(cluster_count), int(values.size)))
+    centers = np.linspace(float(values.min()), float(values.max()), effective_clusters)
+    labels = np.zeros(values.shape[0], dtype=np.int32)
+    for _ in range(32):
+        distances = np.abs(values[:, None] - centers[None, :])
+        new_labels = np.argmin(distances, axis=1)
+        new_centers = centers.copy()
+        for index in range(effective_clusters):
+            assigned = values[new_labels == index]
+            if assigned.size > 0:
+                new_centers[index] = float(assigned.mean())
+        if np.array_equal(new_labels, labels) and np.allclose(new_centers, centers):
+            break
+        labels = new_labels
+        centers = new_centers
+    return labels
+
+
+def _group_annotation_rectangles(
+    rectangles: List[Tuple[int, int, int, int]]
+) -> Dict[str, List[Tuple[int, int, int, int]]]:
+    grouped: Dict[str, List[Tuple[int, int, int, int]]] = {"S": [], "B": [], "G1": []}
+    if not rectangles:
+        return grouped
+
+    by_area_desc = sorted(rectangles, key=lambda rect: rect[2] * rect[3], reverse=True)
+    groundmaker_count = 0
+    for index in range(min(3, len(by_area_desc) - 1)):
+        current_area = max(by_area_desc[index][2] * by_area_desc[index][3], 1)
+        next_area = max(by_area_desc[index + 1][2] * by_area_desc[index + 1][3], 1)
+        if current_area / next_area >= 1.8:
+            groundmaker_count = index + 1
+
+    grouped["G1"] = list(by_area_desc[:groundmaker_count])
+    checkerboards = list(by_area_desc[groundmaker_count:])
+    if not checkerboards:
+        return grouped
+
+    if len(checkerboards) == 1:
+        grouped["B"] = checkerboards
+        return grouped
+
+    widths = np.log(
+        np.array([max(width, height, 1) for _, _, width, height in checkerboards], dtype=np.float64)
+    )
+    labels = _cluster_1d(widths, 2)
+    clusters = {0: [], 1: []}
+    for rect, label in zip(checkerboards, labels):
+        clusters[int(label)].append(rect)
+
+    cluster_order = sorted(
+        clusters,
+        key=lambda cluster_id: np.mean([max(rect[2], rect[3]) for rect in clusters[cluster_id]])
+        if clusters[cluster_id]
+        else -1.0,
+    )
+    grouped["S"] = clusters[cluster_order[0]]
+    grouped["B"] = clusters[cluster_order[1]]
+    return grouped
+
+
+def _build_boards_from_annotation_rectangles(
+    template_cfg: dict,
+    rectangles: List[Tuple[int, int, int, int]],
+) -> List[dict]:
+    grouped = _group_annotation_rectangles(rectangles)
+
+    def _sort_rectangles_by_column_then_row(
+        items: List[Tuple[int, int, int, int]]
+    ) -> List[Tuple[int, int, int, int]]:
+        if not items:
+            return []
+        avg_width = float(np.mean([rect[2] for rect in items]))
+        column_threshold = max(24.0, avg_width * 0.35)
+        sorted_by_x = sorted(items, key=lambda rect: rect[0] + rect[2] / 2.0)
+        columns: List[List[Tuple[int, int, int, int]]] = []
+        column_centers: List[float] = []
+        for rect in sorted_by_x:
+            center_x = rect[0] + rect[2] / 2.0
+            if not columns or abs(center_x - column_centers[-1]) > column_threshold:
+                columns.append([rect])
+                column_centers.append(center_x)
+                continue
+            columns[-1].append(rect)
+            column_centers[-1] = float(
+                np.mean([item[0] + item[2] / 2.0 for item in columns[-1]])
+            )
+
+        ordered: List[Tuple[int, int, int, int]] = []
+        for column in columns:
+            ordered.extend(sorted(column, key=lambda rect: rect[1] + rect[3] / 2.0))
+        return ordered
+
+    prototypes: Dict[str, dict] = {}
+    for board_cfg in template_cfg.get("boards", []):
+        family = _board_prototype_family(str(board_cfg.get("board_id", "")))
+        if family and family not in prototypes:
+            prototypes[family] = copy.deepcopy(board_cfg)
+
+    missing = [family for family in ("B", "S", "G1_LEFT", "G1_CENTER", "G1_RIGHT") if family not in prototypes]
+    if missing:
+        raise RuntimeError(
+            "Template config is missing board prototypes for: " + ", ".join(missing)
+        )
+
+    generated_boards: List[dict] = []
+
+    checkerboard_large = _sort_rectangles_by_column_then_row(grouped["B"])
+    for index, rect in enumerate(checkerboard_large, start=1):
+        board_cfg = copy.deepcopy(prototypes["B"])
+        board_cfg["board_id"] = f"B{index}"
+        board_cfg["roi"] = [int(value) for value in rect]
+        generated_boards.append(board_cfg)
+
+    checkerboard_small = _sort_rectangles_by_column_then_row(grouped["S"])
+    for index, rect in enumerate(checkerboard_small, start=1):
+        board_cfg = copy.deepcopy(prototypes["S"])
+        board_cfg["board_id"] = f"S{index}"
+        board_cfg["roi"] = [int(value) for value in rect]
+        generated_boards.append(board_cfg)
+
+    groundmaker_rects = sorted(grouped["G1"], key=lambda rect: rect[0] + rect[2] / 2.0)
+    groundmaker_family = [
+        ("G1_LEFT", "G1_left"),
+        ("G1_CENTER", "G1_center"),
+        ("G1_RIGHT", "G1_right"),
+    ]
+    for index, rect in enumerate(groundmaker_rects):
+        family_key, board_id = groundmaker_family[min(index, len(groundmaker_family) - 1)]
+        board_cfg = copy.deepcopy(prototypes[family_key])
+        board_cfg["board_id"] = board_id
+        board_cfg["roi"] = [int(value) for value in rect]
+        generated_boards.append(board_cfg)
+
+    def _board_sort_key(board_cfg: dict) -> Tuple[int, int, int]:
+        board_id = str(board_cfg.get("board_id", ""))
+        if board_id.startswith("B"):
+            return (0, int(re.sub(r"\D", "", board_id) or 0), 0)
+        if board_id.startswith("S"):
+            return (1, int(re.sub(r"\D", "", board_id) or 0), 0)
+        groundmaker_rank = {"G1_left": 0, "G1_center": 1, "G1_right": 2}
+        return (2, groundmaker_rank.get(board_id, 99), 0)
+
+    return sorted(generated_boards, key=_board_sort_key)
+
+
+def bootstrap_config_from_annotation(
+    config_path: Path,
+    real_image_path: Path,
+    annotated_image_path: Path,
+    output_path: Optional[Path] = None,
+    preview_path: Optional[Path] = None,
+    camera_name: Optional[str] = None,
+    capture_current_params: bool = True,
+) -> Tuple[Path, Path, List[dict]]:
+    with open(config_path, "r", encoding="utf-8-sig") as f:
+        cfg = json.load(f)
+
+    resolved_real_image = real_image_path.resolve()
+    resolved_annotated_image = annotated_image_path.resolve()
+    resolved_camera_name = camera_name or _derive_camera_name_from_image_path(resolved_real_image)
+    output_file = output_path or config_path.with_name(f"config.{resolved_camera_name}.json")
+    preview_file = preview_path or (_default_sim_output_root() / resolved_camera_name / "annotation_bootstrap_preview.png")
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    preview_file.parent.mkdir(parents=True, exist_ok=True)
+
+    rectangles = _extract_annotation_rectangles(resolved_annotated_image)
+    generated_boards = _build_boards_from_annotation_rectangles(cfg, rectangles)
+
+    cfg["real_image"] = _path_to_json_string(resolved_real_image)
+    cfg.pop("output_dir", None)
+    cfg["boards"] = generated_boards
+    if capture_current_params:
+        bootstrap_calibrator = CameraCalibrator(cfg, config_path=output_file)
+        current_values = bootstrap_calibrator.capture_initial_values()
+        updated_names = _apply_initial_values_to_cfg(cfg, current_values)
+        print(
+            "Bootstrap captured current window values: "
+            f"names={', '.join(sorted(updated_names))}"
+        )
+    with open(output_file, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=4)
+
+    preview_image = cv2.imread(str(resolved_real_image))
+    if preview_image is None:
+        raise FileNotFoundError(f"Failed to read real image: {resolved_real_image}")
+    palette = {
+        "B": (70, 80, 230),
+        "S": (60, 170, 90),
+        "G1": (220, 110, 60),
+    }
+    for board_cfg in generated_boards:
+        x, y, width, height = [int(value) for value in board_cfg["roi"]]
+        family = _board_prototype_family(str(board_cfg.get("board_id", ""))) or "B"
+        family_prefix = "G1" if family.startswith("G1") else family
+        color = palette.get(family_prefix, (200, 200, 70))
+        cv2.rectangle(preview_image, (x, y), (x + width, y + height), color, 3)
+        cv2.putText(
+            preview_image,
+            str(board_cfg["board_id"]),
+            (x, max(24, y - 10)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            color,
+            2,
+            cv2.LINE_AA,
+        )
+
+    cv2.imwrite(str(preview_file), preview_image)
+    print(f"Bootstrapped config: {output_file}")
+    print(f"Bootstrap preview image: {preview_file}")
+    print(f"Detected annotation rectangles: {len(rectangles)}")
+    for board_cfg in generated_boards:
+        print(f"{board_cfg['board_id']}: roi={board_cfg['roi']}")
+    return output_file, preview_file, generated_boards
 
 
 def _camera_history_summary_path(camera_name: str) -> Path:
@@ -478,6 +806,18 @@ def _write_initial_values_to_config(config_path: Path, values: Dict[str, float])
     with open(config_path, "r", encoding="utf-8-sig") as f:
         cfg = json.load(f)
 
+    updated_names = _apply_initial_values_to_cfg(cfg, values)
+
+    with open(config_path, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=4)
+
+    print(
+        "Updated config initial values: "
+        f"path={config_path}, names={', '.join(sorted(updated_names))}"
+    )
+
+
+def _apply_initial_values_to_cfg(cfg: dict, values: Dict[str, float]) -> List[str]:
     parameters = cfg.get("parameters", {})
     updated_names: List[str] = []
     for name, value in values.items():
@@ -487,15 +827,8 @@ def _write_initial_values_to_config(config_path: Path, values: Dict[str, float])
         updated_names.append(name)
 
     if not updated_names:
-        raise ValueError(f"No matching parameters found in config: {config_path}")
-
-    with open(config_path, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, ensure_ascii=False, indent=4)
-
-    print(
-        "Updated config initial values: "
-        f"path={config_path}, names={', '.join(sorted(updated_names))}"
-    )
+        raise ValueError("No matching parameters found in config")
+    return updated_names
 
 
 def _quantize_float(value: float, decimals: int) -> float:
@@ -4398,6 +4731,41 @@ def parse_args() -> argparse.Namespace:
         help="Optional path for proposal preview image output",
     )
     parser.add_argument(
+        "--bootstrap-config-from-annotation",
+        action="store_true",
+        help="Generate a new camera config from a real image plus a manually annotated red-box image",
+    )
+    parser.add_argument(
+        "--bootstrap-real-image",
+        default=None,
+        help="Real camera image used as the new config real_image",
+    )
+    parser.add_argument(
+        "--bootstrap-annotated-image",
+        default=None,
+        help="Manually annotated image with red rectangles around boards",
+    )
+    parser.add_argument(
+        "--bootstrap-output",
+        default=None,
+        help="Optional output path for the generated config",
+    )
+    parser.add_argument(
+        "--bootstrap-preview",
+        default=None,
+        help="Optional output path for the generated preview image",
+    )
+    parser.add_argument(
+        "--bootstrap-camera-name",
+        default=None,
+        help="Optional camera name override for generated config/output naming",
+    )
+    parser.add_argument(
+        "--bootstrap-skip-current-params",
+        action="store_true",
+        help="Skip reading current window parameters through Script Control during config bootstrap",
+    )
+    parser.add_argument(
         "--annotate-image",
         default=None,
         help="Annotate an existing simulation image using the current config",
@@ -4471,6 +4839,30 @@ def main() -> None:
         raise ValueError("--multi-start-jitter-steps must be >= 0")
     if args.refine_iters is not None and args.refine_iters <= 0:
         raise ValueError("--refine-iters must be > 0")
+
+    if args.bootstrap_config_from_annotation:
+        if not args.bootstrap_real_image or not args.bootstrap_annotated_image:
+            raise ValueError(
+                "--bootstrap-config-from-annotation requires --bootstrap-real-image and --bootstrap-annotated-image"
+            )
+        if args.multi_start_count > 0 or args.explore_then_refine or args.resume_from_result:
+            raise ValueError(
+                "bootstrap-config-from-annotation cannot be combined with optimization campaign options"
+            )
+        if args.propose_boards or args.annotate_image or args.capture_initials:
+            raise ValueError(
+                "bootstrap-config-from-annotation cannot be combined with capture/propose/annotate commands"
+            )
+        bootstrap_config_from_annotation(
+            config_path=config_path,
+            real_image_path=Path(args.bootstrap_real_image),
+            annotated_image_path=Path(args.bootstrap_annotated_image),
+            output_path=Path(args.bootstrap_output) if args.bootstrap_output else None,
+            preview_path=Path(args.bootstrap_preview) if args.bootstrap_preview else None,
+            camera_name=args.bootstrap_camera_name,
+            capture_current_params=not args.bootstrap_skip_current_params,
+        )
+        return
 
     base_output_dir = _resolve_config_output_dir(cfg, config_path)
     cfg["output_dir"] = str(base_output_dir)

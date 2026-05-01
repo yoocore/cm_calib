@@ -1,0 +1,379 @@
+{
+    "real_image": "C:/CM_Projects/CMO141_Calibration/Movie/ngxpro/8_left_tv_origin.jpg",
+    "settings_input_mode": "script_control",
+    "script_control_script_path": "C:/CM_Projects/CMO141_Calibration/Data/Script/CameraCalibration/script_control_apply.tcl",
+    "script_control_result_path": "C:/CM_Projects/CMO141_Calibration/SimOutput/script_control_camera_apply_result.txt",
+    "script_control_dde_service": "TclEval",
+    "script_control_dde_topic": "CarMaker",
+    "script_control_timeout_sec": 8.0,
+    "script_control_settle_sec": 0.2,
+    "template_feature_max_dim": 2048,
+    "movie_auto_crop_content": true,
+    "comparison_mode": "direct",
+    "overlay_residual_threshold": 12,
+    "overlay_residual_blur": 0,
+    "movie_match_reference_aspect": true,
+    "movie_aspect_crop_anchor": "top-left",
+    "keep_aspect_resize": true,
+    "verify_all_coordinate_fields": false,
+    "stop_after_first_accepted_direction": true,
+    "progress_flush_every": 1,
+    "boards": [
+        {
+            "board_id": "B1",
+            "board_type": "checkerboard",
+            "weight": 1.0,
+            "critical": true,
+            "board_size": [
+                7,
+                4
+            ],
+            "roi": [
+                124,
+                488,
+                188,
+                146
+            ],
+            "template_image": "C:/CM_Projects/CMO141_Calibration/Movie/ngxpro/1396_786.png"
+        },
+        {
+            "board_id": "B2",
+            "board_type": "checkerboard",
+            "weight": 1.0,
+            "critical": true,
+            "board_size": [
+                7,
+                4
+            ],
+            "roi": [
+                138,
+                652,
+                202,
+                142
+            ],
+            "template_image": "C:/CM_Projects/CMO141_Calibration/Movie/ngxpro/1396_786.png"
+        },
+        {
+            "board_id": "B3",
+            "board_type": "checkerboard",
+            "weight": 1.0,
+            "critical": true,
+            "board_size": [
+                7,
+                4
+            ],
+            "roi": [
+                692,
+                378,
+                246,
+                156
+            ],
+            "template_image": "C:/CM_Projects/CMO141_Calibration/Movie/ngxpro/1396_786.png"
+        },
+        {
+            "board_id": "B4",
+            "board_type": "checkerboard",
+            "weight": 1.0,
+            "critical": true,
+            "board_size": [
+                7,
+                4
+            ],
+            "roi": [
+                700,
+                552,
+                236,
+                154
+            ],
+            "template_image": "C:/CM_Projects/CMO141_Calibration/Movie/ngxpro/1396_786.png"
+        },
+        {
+            "board_id": "B5",
+            "board_type": "checkerboard",
+            "weight": 1.0,
+            "critical": true,
+            "board_size": [
+                7,
+                4
+            ],
+            "roi": [
+                996,
+                366,
+                226,
+                160
+            ],
+            "template_image": "C:/CM_Projects/CMO141_Calibration/Movie/ngxpro/1396_786.png"
+        },
+        {
+            "board_id": "B6",
+            "board_type": "checkerboard",
+            "weight": 1.0,
+            "critical": true,
+            "board_size": [
+                7,
+                4
+            ],
+            "roi": [
+                998,
+                540,
+                220,
+                167
+            ],
+            "template_image": "C:/CM_Projects/CMO141_Calibration/Movie/ngxpro/1396_786.png"
+        },
+        {
+            "board_id": "S1",
+            "board_type": "checkerboard",
+            "weight": 1.0,
+            "critical": true,
+            "board_size": [
+                7,
+                4
+            ],
+            "roi": [
+                378,
+                602,
+                152,
+                116
+            ],
+            "template_image": "C:/CM_Projects/CMO141_Calibration/Movie/ngxpro/698_393.png"
+        },
+        {
+            "board_id": "S2",
+            "board_type": "checkerboard",
+            "weight": 1.0,
+            "critical": true,
+            "board_size": [
+                7,
+                4
+            ],
+            "roi": [
+                1472,
+                564,
+                106,
+                99
+            ],
+            "template_image": "C:/CM_Projects/CMO141_Calibration/Movie/ngxpro/698_393.png"
+        },
+        {
+            "board_id": "S3",
+            "board_type": "checkerboard",
+            "weight": 1.0,
+            "critical": true,
+            "board_size": [
+                7,
+                4
+            ],
+            "roi": [
+                1832,
+                626,
+                55,
+                99
+            ],
+            "template_image": "C:/CM_Projects/CMO141_Calibration/Movie/ngxpro/698_393.png"
+        },
+        {
+            "board_id": "S4",
+            "board_type": "checkerboard",
+            "weight": 1.0,
+            "critical": true,
+            "board_size": [
+                7,
+                4
+            ],
+            "roi": [
+                1891,
+                656,
+                29,
+                107
+            ],
+            "template_image": "C:/CM_Projects/CMO141_Calibration/Movie/ngxpro/698_393.png"
+        },
+        {
+            "board_id": "G1_left",
+            "board_type": "custom_groundmaker",
+            "weight": 0.8,
+            "critical": true,
+            "roi": [
+                128,
+                804,
+                492,
+                264
+            ],
+            "template_image": "C:/CM_Projects/CMO141_Calibration/Movie/ngxpro/g1_patches/g1_left_mark_fine.png",
+            "template_crop": [
+                24,
+                10,
+                34,
+                40
+            ],
+            "custom_detector": "template_match",
+            "template_match_threshold": 0.45,
+            "template_binary_threshold": 150,
+            "min_detected_points": 9
+        },
+        {
+            "board_id": "G1_center",
+            "board_type": "custom_groundmaker",
+            "weight": 0.6,
+            "critical": true,
+            "roi": [
+                844,
+                788,
+                472,
+                368
+            ],
+            "template_image": "C:/CM_Projects/CMO141_Calibration/Movie/ngxpro/g1_patches/g1_center_circle.png",
+            "custom_detector": "template_match",
+            "template_match_threshold": 0.3,
+            "template_binary_threshold": 150,
+            "min_detected_points": 9
+        },
+        {
+            "board_id": "G1_right",
+            "board_type": "custom_groundmaker",
+            "weight": 0.8,
+            "critical": true,
+            "roi": [
+                1334,
+                746,
+                440,
+                310
+            ],
+            "template_image": "C:/CM_Projects/CMO141_Calibration/Movie/ngxpro/g1_patches/g1_right_mark_fine.png",
+            "template_crop": [
+                12,
+                4,
+                50,
+                34
+            ],
+            "custom_detector": "template_match",
+            "template_match_threshold": 0.55,
+            "template_binary_threshold": 150,
+            "min_detected_points": 9
+        }
+    ],
+    "settle_sec": 0.35,
+    "target_score": 5.0,
+    "acceptance_criteria": {
+        "bottleneck_board_score_max_threshold": 4.0,
+        "bottleneck_board_score_avg_threshold": 2.5
+    },
+    "max_iters": 180,
+    "min_improve": 5e-05,
+    "step_decay": 0.7,
+    "priority_board_acceptance": {
+        "board_ids": [
+            "G1_left",
+            "G1_center",
+            "G1_right"
+        ],
+        "min_board_score_improvement": 0.75,
+        "max_total_score_worsen": 1.0,
+        "min_board_count": 1
+    },
+    "joint_exploration": {
+        "apply_to_all_params": true,
+        "max_single_score_worsen": 2.5,
+        "trial_multipliers": [
+            1.0,
+            2.0,
+            4.0
+        ]
+    },
+    "optimization_order": [
+        "pos_z",
+        "pitch",
+        "yaw",
+        "pos_x",
+        "roll",
+        "pos_y",
+        "lens_fov",
+        "lens_scale",
+        "lens_offset_x",
+        "lens_offset_y"
+    ],
+    "parameters": {
+        "pos_x": {
+            "initial": 3.2699999809265137,
+            "step": 0.002,
+            "min_offset": -0.02,
+            "max_offset": 0.02,
+            "min_step": 0.001,
+            "decimals": 4
+        },
+        "pos_y": {
+            "initial": 1.0307,
+            "step": 0.001,
+            "min_offset": -0.01,
+            "max_offset": 0.01,
+            "min_step": 0.001,
+            "decimals": 4
+        },
+        "pos_z": {
+            "initial": 1.1102,
+            "step": 0.002,
+            "min_offset": -0.03,
+            "max_offset": 0.03,
+            "min_step": 0.001,
+            "decimals": 4
+        },
+        "yaw": {
+            "initial": 90.0,
+            "step": 0.01,
+            "min_offset": -0.25,
+            "max_offset": 0.25,
+            "min_step": 0.002,
+            "decimals": 4
+        },
+        "pitch": {
+            "initial": 24.0,
+            "step": 0.02,
+            "min_offset": -0.45,
+            "max_offset": 0.45,
+            "min_step": 0.002,
+            "decimals": 4
+        },
+        "roll": {
+            "initial": 0.0,
+            "step": 0.01,
+            "min_offset": -0.2,
+            "max_offset": 0.2,
+            "min_step": 0.002,
+            "decimals": 4
+        },
+        "lens_fov": {
+            "initial": 196.0,
+            "step": 0.2,
+            "min_offset": -6.0,
+            "max_offset": 6.0,
+            "min_step": 0.1,
+            "decimals": 1
+        },
+        "lens_scale": {
+            "initial": 1.0,
+            "step": 0.005,
+            "min_offset": 0.0,
+            "max_offset": 0.0,
+            "min_step": 0.005,
+            "decimals": 3
+        },
+        "lens_offset_x": {
+            "initial": 0.0,
+            "step": 0.01,
+            "min_offset": 0.0,
+            "max_offset": 0.0,
+            "min_step": 0.01,
+            "decimals": 2
+        },
+        "lens_offset_y": {
+            "initial": 0.0,
+            "step": 0.01,
+            "min_offset": 0.0,
+            "max_offset": 0.0,
+            "min_step": 0.01,
+            "decimals": 2
+        }
+    },
+    "output_dir": "C:\\CM_Projects\\CMO141_Calibration\\SimOutput\\left_tv"
+}

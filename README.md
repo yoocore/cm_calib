@@ -86,6 +86,7 @@ Output
 - Screenshots: output_dir/*.png
 - Best score image: whenever a new global best is written, the script also writes a scored overlay image next to it as *_score.png
 - Optimization result: output_dir/result.json
+- result.json now includes acceptance, which records whether the calibration passed by target_score or by bottleneck fallback thresholds
 
 Scoring notes
 - Score is lower when match is better.
@@ -96,6 +97,10 @@ Scoring notes
 - Final score is weighted sum across boards plus degradation penalty.
 - If a critical board degrades too much, the trial is rejected.
 - target_score in config controls stop threshold.
+- Final acceptance is evaluated after optimization completes:
+  - pass immediately if best_score <= target_score
+  - if target_score is not reached but optimization appears bottlenecked, still pass when compared-board max score < acceptance_criteria.bottleneck_board_score_max_threshold and compared-board average score < acceptance_criteria.bottleneck_board_score_avg_threshold
+  - if neither condition is met, the run is marked as not passed in result.json and campaign summaries
 
 Optimization notes
 - Every parameter already goes through single-parameter bidirectional probing in the main loop.

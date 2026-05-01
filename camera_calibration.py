@@ -153,8 +153,16 @@ def _resolve_config_output_dir(cfg: dict, config_path: Optional[Path] = None) ->
     return _default_sim_output_root() / _default_output_name_from_config(config_path)
 
 
-def _build_isolated_output_dir(prefix: str) -> Path:
+def _build_isolated_output_dir(prefix: str, camera_parent: Optional[str] = None) -> Path:
+    """Build an isolated output directory under SimOutput.
+
+    If `camera_parent` is provided, the returned path will be
+    `SimOutput / camera_parent / {prefix}_{ts}` so that runs for the
+    same camera are grouped under the same parent directory.
+    """
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if camera_parent:
+        return _default_sim_output_root() / camera_parent / f"{prefix}_{ts}"
     return _default_sim_output_root() / f"{prefix}_{ts}"
 
 
@@ -163,7 +171,19 @@ def _marker_name_for_output_dir(output_dir: Path) -> str:
 
 
 def _marker_path_for_output_dir(output_dir: Path) -> Path:
-    return _default_sim_output_root() / _marker_name_for_output_dir(output_dir)
+    """Return marker path for an output_dir.
+
+    Prefer placing the marker inside the camera parent directory (if
+    the output_dir is under the SimOutput root and has a parent there),
+    otherwise fall back to the SimOutput root.
+    """
+    root = _default_sim_output_root()
+    parent = output_dir.parent
+    try:
+        parent.relative_to(root)
+        return parent / _marker_name_for_output_dir(output_dir)
+    except Exception:
+        return root / _marker_name_for_output_dir(output_dir)
 
 
 def _write_run_marker(marker_path: Path, payload: dict) -> None:
@@ -301,7 +321,7 @@ def _build_multi_start_run_configs(
         raise ValueError("parameters must be a non-empty object for multi-start mode")
 
     root_output_dir = output_root_dir or _build_isolated_output_dir(
-        f"{base_output_dir.name}_multistart"
+        f"{base_output_dir.name}_multistart", camera_parent=base_output_dir.name
     )
     rng = random.Random(seed)
     run_cfgs: List[dict] = []
@@ -401,6 +421,7 @@ def _run_multi_start_campaign(
                     "best_score": result["best_score"],
                     "best_values": result["best_values"],
                     "best_image": result["best_image"],
+                    "acceptance": result.get("acceptance"),
                     "best_score_image": result.get("best_score_image"),
                     "best_overlay_image": result.get("best_overlay_image"),
                     "result_json": str(output_dir / "result.json"),
@@ -466,6 +487,16 @@ def _cfg_with_initial_values(cfg: dict, initial_values: Dict[str, float]) -> dic
     return run_cfg
 
 
+def _select_campaign_best_run(explore_best_run: dict, refine_run: dict) -> dict:
+    explore_candidate = dict(explore_best_run)
+    explore_candidate["stage"] = "explore"
+    refine_candidate = dict(refine_run)
+    refine_candidate["stage"] = "refine"
+    if float(refine_candidate["best_score"]) < float(explore_candidate["best_score"]):
+        return refine_candidate
+    return explore_candidate
+
+
 def _run_explore_then_refine_campaign(
     config_path: Path,
     cfg: dict,
@@ -481,7 +512,9 @@ def _run_explore_then_refine_campaign(
     if explore_max_iters <= 0:
         raise ValueError("explore-then-refine mode requires positive explore iterations")
 
-    campaign_root = _build_isolated_output_dir(f"{base_output_dir.name}_campaign")
+    campaign_root = _build_isolated_output_dir(
+        f"{base_output_dir.name}_campaign", camera_parent=base_output_dir.name
+    )
     campaign_root.mkdir(parents=True, exist_ok=True)
 
     print(
@@ -546,18 +579,22 @@ def _run_explore_then_refine_campaign(
             "best_score": result["best_score"],
             "best_values": result["best_values"],
             "best_image": result["best_image"],
+            "acceptance": result.get("acceptance"),
             "best_score_image": result.get("best_score_image"),
             "best_overlay_image": result.get("best_overlay_image"),
             "result_json": str(refine_output_dir / "result.json"),
         },
     }
+    summary["best_run"] = _select_campaign_best_run(best_run, summary["refine"])
     summary_path = campaign_root / "campaign_summary.json"
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    best_run_overall = summary["best_run"]
     print("Campaign summary:", summary_path)
-    print("Campaign best score:", result["best_score"])
-    print("Campaign best image:", result["best_image"])
-    print("Campaign best result JSON:", str(refine_output_dir / "result.json"))
+    print("Campaign best stage:", best_run_overall["stage"])
+    print("Campaign best score:", best_run_overall["best_score"])
+    print("Campaign best image:", best_run_overall["best_image"])
+    print("Campaign best result JSON:", best_run_overall["result_json"])
     return summary
 
 
@@ -638,6 +675,17 @@ class TotalScoreDetail:
 
 
 @dataclass
+class AcceptanceDecision:
+    passed: bool
+    mode: str
+    reason: str
+    target_score_reached: bool
+    compared_board_count: int
+    max_board_score: Optional[float]
+    avg_board_score: Optional[float]
+
+
+@dataclass
 class EvalImageTransform:
     scale_x: float
     scale_y: float
@@ -682,10 +730,10 @@ class CameraCalibrator:
         "pos_z": 3,
     }
 
-    def __init__(self, cfg: dict):
+    def __init__(self, cfg: dict, config_path: Optional[Path] = None):
         self.cfg = cfg
         self.repo_root = Path(__file__).resolve().parents[3]
-        self.output_dir = _resolve_config_output_dir(cfg)
+        self.output_dir = _resolve_config_output_dir(cfg, config_path)
         cfg["output_dir"] = str(self.output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -702,6 +750,13 @@ class CameraCalibrator:
 
         self.settle_sec = float(cfg.get("settle_sec", 0.3))
         self.target_score = float(cfg.get("target_score", 5.0))
+        acceptance_cfg = cfg.get("acceptance_criteria", {})
+        self.bottleneck_board_score_max_threshold = float(
+            acceptance_cfg.get("bottleneck_board_score_max_threshold", 4.0)
+        )
+        self.bottleneck_board_score_avg_threshold = float(
+            acceptance_cfg.get("bottleneck_board_score_avg_threshold", 2.5)
+        )
         self.max_iters = int(cfg.get("max_iters", 100))
         self.min_improve = float(cfg.get("min_improve", 1e-4))
         self.step_decay = float(cfg.get("step_decay", 0.6))
@@ -1290,6 +1345,130 @@ class CameraCalibrator:
         return "worst=" + ", ".join(
             f"{score.board_id}:{score.total_score:.3f}" for score in leaders
         )
+
+    @staticmethod
+    def _compared_board_scores(total_detail: TotalScoreDetail) -> List[BoardScoreDetail]:
+        return [score for score in total_detail.board_scores if score.compared]
+
+    def _evaluate_acceptance(self, total_detail: TotalScoreDetail) -> AcceptanceDecision:
+        compared_scores = self._compared_board_scores(total_detail)
+        compared_board_count = len(compared_scores)
+        max_board_score = (
+            max(score.total_score for score in compared_scores)
+            if compared_scores
+            else None
+        )
+        avg_board_score = (
+            sum(score.total_score for score in compared_scores) / compared_board_count
+            if compared_scores
+            else None
+        )
+        target_score_reached = total_detail.total_score <= self.target_score
+
+        if not total_detail.success:
+            return AcceptanceDecision(
+                passed=False,
+                mode="failed",
+                reason=total_detail.failed_reason or "critical board degraded",
+                target_score_reached=target_score_reached,
+                compared_board_count=compared_board_count,
+                max_board_score=max_board_score,
+                avg_board_score=avg_board_score,
+            )
+
+        if compared_board_count <= 0:
+            return AcceptanceDecision(
+                passed=False,
+                mode="failed",
+                reason="no comparable boards in final result",
+                target_score_reached=target_score_reached,
+                compared_board_count=compared_board_count,
+                max_board_score=max_board_score,
+                avg_board_score=avg_board_score,
+            )
+
+        if target_score_reached:
+            return AcceptanceDecision(
+                passed=True,
+                mode="target_score",
+                reason=(
+                    f"best_score={total_detail.total_score:.6f} <= "
+                    f"target_score={self.target_score:.6f}"
+                ),
+                target_score_reached=True,
+                compared_board_count=compared_board_count,
+                max_board_score=max_board_score,
+                avg_board_score=avg_board_score,
+            )
+
+        bottleneck_passed = (
+            max_board_score is not None
+            and avg_board_score is not None
+            and max_board_score < self.bottleneck_board_score_max_threshold
+            and avg_board_score < self.bottleneck_board_score_avg_threshold
+        )
+        if bottleneck_passed:
+            return AcceptanceDecision(
+                passed=True,
+                mode="bottleneck_threshold",
+                reason=(
+                    f"target_score not reached; max_board_score={max_board_score:.6f} < "
+                    f"{self.bottleneck_board_score_max_threshold:.6f} and "
+                    f"avg_board_score={avg_board_score:.6f} < "
+                    f"{self.bottleneck_board_score_avg_threshold:.6f}"
+                ),
+                target_score_reached=False,
+                compared_board_count=compared_board_count,
+                max_board_score=max_board_score,
+                avg_board_score=avg_board_score,
+            )
+
+        max_board_score_text = (
+            f"{max_board_score:.6f}" if max_board_score is not None else "none"
+        )
+        avg_board_score_text = (
+            f"{avg_board_score:.6f}" if avg_board_score is not None else "none"
+        )
+        return AcceptanceDecision(
+            passed=False,
+            mode="failed",
+            reason=(
+                "target_score not reached and bottleneck thresholds failed: "
+                f"max_board_score={max_board_score_text}, "
+                f"avg_board_score={avg_board_score_text}"
+            ),
+            target_score_reached=False,
+            compared_board_count=compared_board_count,
+            max_board_score=max_board_score,
+            avg_board_score=avg_board_score,
+        )
+
+    def _acceptance_payload(self, total_detail: TotalScoreDetail) -> Dict[str, object]:
+        decision = self._evaluate_acceptance(total_detail)
+        return {
+            "passed": decision.passed,
+            "mode": decision.mode,
+            "reason": decision.reason,
+            "target_score": self.target_score,
+            "target_score_reached": decision.target_score_reached,
+            "bottleneck_board_score_max_threshold": self.bottleneck_board_score_max_threshold,
+            "bottleneck_board_score_avg_threshold": self.bottleneck_board_score_avg_threshold,
+            "compared_board_count": decision.compared_board_count,
+            "max_board_score": decision.max_board_score,
+            "avg_board_score": decision.avg_board_score,
+        }
+
+    def _print_acceptance_summary(self, total_detail: TotalScoreDetail) -> None:
+        acceptance = self._acceptance_payload(total_detail)
+        print(
+            "Acceptance summary: "
+            f"passed={acceptance['passed']} "
+            f"mode={acceptance['mode']} "
+            f"target_reached={acceptance['target_score_reached']} "
+            f"max_board_score={acceptance['max_board_score']} "
+            f"avg_board_score={acceptance['avg_board_score']}"
+        )
+        print("Acceptance reason:", acceptance["reason"])
 
     def _print_run_summary(self) -> None:
         print(
@@ -2110,10 +2289,10 @@ class CameraCalibrator:
         text: str,
         anchor: Tuple[int, int],
         color: Tuple[int, int, int],
+        scale: float = 0.62,
+        thickness: int = 2,
     ) -> None:
         font = cv2.FONT_HERSHEY_SIMPLEX
-        scale = 0.62
-        thickness = 2
         (text_w, text_h), baseline = cv2.getTextSize(text, font, scale, thickness)
         x = max(8, int(anchor[0]))
         y = max(text_h + 12, int(anchor[1]))
@@ -2190,35 +2369,75 @@ class CameraCalibrator:
         total_detail = total_detail or self._aggregate_scores(board_scores, baseline_metrics=None)
 
         header = f"{Path(self.cfg['real_image']).name} compare on {image_path.name}"
-        self._draw_annotated_label(sim_bgr, header, (12, 26), (245, 245, 245))
         summary = (
             f"total={total_detail.total_score:.6f} "
             f"compared={total_detail.compared_board_count} "
             f"degrade={total_detail.degrade_penalty:.3f}"
         )
-        self._draw_annotated_label(sim_bgr, summary, (12, 58), (230, 235, 245))
 
         param_values = values or self._snapshot_values()
-        param_y = 90
-        for line in self._format_value_lines(param_values):
-            self._draw_annotated_label(sim_bgr, line, (12, param_y), (220, 245, 220))
-            param_y += 32
-
-        legend_y = max(96, param_y + 10)
+        info_lines: List[Tuple[str, Tuple[int, int, int]]] = [
+            (header, (245, 245, 245)),
+            (summary, (230, 235, 245)),
+        ]
+        info_lines.extend(
+            (line, (220, 245, 220)) for line in self._format_value_lines(param_values)
+        )
         for index, score in enumerate(board_scores):
             color = palette[index % len(palette)]
-
             legend_text = (
                 f"{score.board_id}: {score.total_score:.3f}"
                 if score.compared
                 else f"{score.board_id}: skipped"
             )
-            self._draw_annotated_label(sim_bgr, legend_text, (12, legend_y), color)
-            legend_y += 30
+            info_lines.append((legend_text, color))
+
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        panel_scale = 0.58
+        panel_thickness = 2
+        panel_gap = 24
+        panel_left = 16
+        panel_top = 24
+        line_step = 30
+        panel_min_width = 340
+        max_text_width = 0
+        for text, _ in info_lines:
+            (text_w, _), _ = cv2.getTextSize(text, font, panel_scale, panel_thickness)
+            max_text_width = max(max_text_width, text_w)
+        panel_width = max(panel_min_width, max_text_width + 36)
+
+        canvas_height, canvas_width = sim_bgr.shape[:2]
+        annotated_canvas = np.full(
+            (canvas_height, canvas_width + panel_gap + panel_width, 3),
+            236,
+            dtype=np.uint8,
+        )
+        annotated_canvas[:, :canvas_width] = sim_bgr
+        separator_x = canvas_width + (panel_gap // 2)
+        cv2.line(
+            annotated_canvas,
+            (separator_x, 0),
+            (separator_x, canvas_height - 1),
+            (205, 205, 205),
+            2,
+        )
+
+        panel_x = canvas_width + panel_gap + panel_left
+        panel_y = panel_top
+        for text, color in info_lines:
+            self._draw_annotated_label(
+                annotated_canvas,
+                text,
+                (panel_x, panel_y),
+                color,
+                scale=panel_scale,
+                thickness=panel_thickness,
+            )
+            panel_y += line_step
 
         final_output = output_path or image_path.with_name(f"{image_path.stem}_annotated.png")
         final_output.parent.mkdir(parents=True, exist_ok=True)
-        cv2.imwrite(str(final_output), sim_bgr)
+        cv2.imwrite(str(final_output), annotated_canvas)
         return final_output, board_scores
 
     @staticmethod
@@ -3010,11 +3229,6 @@ class CameraCalibrator:
         compared_board_count = 0
         board_map = {b.board_id: b for b in self.boards}
 
-        # 新增用于通过标准的统计
-        max_board_score = float('-inf')
-        sum_board_score = 0.0
-        count_board_score = 0
-
         for score in board_scores:
             board = board_map[score.board_id]
             if not score.compared:
@@ -3023,11 +3237,6 @@ class CameraCalibrator:
             compared_board_count += 1
             weighted = board.weight * score.total_score
             total_score += weighted
-
-            # 统计单板最大值和均值
-            max_board_score = max(max_board_score, score.total_score)
-            sum_board_score += score.total_score
-            count_board_score += 1
 
             if baseline_metrics is None:
                 continue
@@ -3076,31 +3285,15 @@ class CameraCalibrator:
 
         total_score += self.degrade_lambda * degrade_penalty
 
-        # 标定通过标准：
-        # 1. 没有瓶颈（has_critical_degrade==False）时，结果越小越好，直接 success=True
-        # 2. 有瓶颈（has_critical_degrade==True）时，所有单板最大值<4 且均值<2.5 才 success，否则 fail
-        pass_reason = None
-        if not has_critical_degrade:
-            success = True
-            pass_reason = "no_bottleneck"
-        else:
-            avg_board_score = sum_board_score / max(1, count_board_score)
-            if max_board_score < 4.0 and avg_board_score < 2.5:
-                success = True
-                pass_reason = f"bottleneck_pass(max={max_board_score:.3f},avg={avg_board_score:.3f})"
-            else:
-                success = False
-                pass_reason = f"bottleneck_fail(max={max_board_score:.3f},avg={avg_board_score:.3f})"
-
         return TotalScoreDetail(
-            success=success,
+            success=not has_critical_degrade,
             total_score=total_score,
             degrade_penalty=degrade_penalty,
             has_critical_degrade=has_critical_degrade,
             degraded_boards=degraded_boards,
             compared_board_count=compared_board_count,
             board_scores=board_scores,
-            failed_reason=pass_reason,
+            failed_reason="critical board degraded" if has_critical_degrade else None,
         )
 
     def _as_baseline_metrics(
@@ -3254,6 +3447,7 @@ class CameraCalibrator:
     ) -> dict:
         updated_at = datetime.now().astimezone().isoformat(timespec="seconds")
         run_stats = self._build_run_stats(history)
+        acceptance = self._acceptance_payload(best_total_detail)
         return {
             "boards": [
                 {
@@ -3268,6 +3462,7 @@ class CameraCalibrator:
             "output_dir": str(self.output_dir),
             "best_score": best_score,
             "best_values": best_values,
+            "acceptance": acceptance,
             "best_metrics": {
                 "compared_board_count": best_total_detail.compared_board_count,
                 "degrade_penalty": best_total_detail.degrade_penalty,
@@ -3368,7 +3563,7 @@ class CameraCalibrator:
         self._preflight_capture_aspect_ratio()
         self.preflight_script_control()
         self.apply_params(self.params)
-        best_total_detail, best_img = self.evaluate("iter_0000", baseline_metrics=None)
+        best_total_detail, best_img = self.evaluate("initial", baseline_metrics=None)
         best_score = best_total_detail.total_score
         best_baseline = self._as_baseline_metrics(best_total_detail)
         best_values = {p.name: p.value for p in self.params}
@@ -3377,7 +3572,7 @@ class CameraCalibrator:
             best_img,
             best_total_detail,
             best_values,
-            output_path=best_img.with_name(f"{best_img.stem}_initial_score.png"),
+            output_path=best_img.with_name("initial_score.png"),
         )
 
         history = [
@@ -3435,12 +3630,6 @@ class CameraCalibrator:
             base_values = self._snapshot_values()
             base_score = best_score
             candidate_moves: List[Dict[str, object]] = []
-            round_start_score_image = self._build_score_image_for_snapshot(
-                best_img,
-                best_total_detail,
-                base_values,
-                output_path=best_img.with_name(f"iter_{it:04d}_initial_score.png"),
-            )
             history.append(
                 self._make_history_entry(
                     it,
@@ -3448,12 +3637,7 @@ class CameraCalibrator:
                     best_img,
                     True,
                     meta={
-                        "phase": "round_start",
-                        "score_image": (
-                            str(round_start_score_image)
-                            if round_start_score_image is not None
-                            else None
-                        ),
+                        "phase": "iteration_start",
                     },
                 )
             )
@@ -3852,6 +4036,7 @@ class CameraCalibrator:
             history=history,
             in_progress=False,
         )
+        self._print_acceptance_summary(best_total_detail)
         self._write_progress_result(
             best_score=best_score,
             best_values=best_values,
@@ -3999,13 +4184,15 @@ def main() -> None:
             explore_max_iters=int(campaign_explore_iters),
             refine_max_iters=args.refine_iters,
         )
+        best_run = summary["best_run"]
         refine = summary["refine"]
-        _write_initial_values_to_config(config_path, refine["best_values"])
+        _write_initial_values_to_config(config_path, best_run["best_values"])
         print("Explore summary JSON:", summary["explore"]["summary_json"])
         print("Refine output dir:", refine["output_dir"])
-        print("Refine best score:", refine["best_score"])
-        print("Refine best image:", refine["best_image"])
-        print("Refine best result JSON:", refine["result_json"])
+        print("Campaign best stage:", best_run["stage"])
+        print("Campaign best score:", best_run["best_score"])
+        print("Campaign best image:", best_run["best_image"])
+        print("Campaign best result JSON:", best_run["result_json"])
         return
 
     if args.multi_start_count > 0:
@@ -4037,7 +4224,7 @@ def main() -> None:
         marker_path = _marker_path_for_output_dir(base_output_dir)
         if args.resume_from_result:
             resume_result_path = _read_latest_result_path(marker_path, base_output_dir)
-        cfg["output_dir"] = str(_build_isolated_output_dir(base_output_dir.name))
+        cfg["output_dir"] = str(_build_isolated_output_dir(base_output_dir.name, camera_parent=base_output_dir.name))
         marker_payload = {
             "started_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "config": str(config_path),
@@ -4048,6 +4235,8 @@ def main() -> None:
             "status": "starting",
         }
         _write_run_marker(marker_path, marker_payload)
+    else:
+        cfg["output_dir"] = str(base_output_dir)
 
     live_log_path = _configure_live_log(cfg, args.resume_from_result)
     print("Live log:", str(live_log_path))
@@ -4059,7 +4248,7 @@ def main() -> None:
         marker_payload["live_log"] = str(live_log_path)
         _write_run_marker(marker_path, marker_payload)
 
-    calib = CameraCalibrator(cfg)
+    calib = CameraCalibrator(cfg, config_path=config_path)
     calib.live_log_path = live_log_path
     try:
         if args.propose_boards:

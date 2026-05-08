@@ -8,12 +8,9 @@
     "script_control_timeout_sec": 8.0,
     "script_control_settle_sec": 0.2,
     "template_feature_max_dim": 2048,
-    "movie_auto_crop_content": true,
     "comparison_mode": "direct",
     "overlay_residual_threshold": 12,
     "overlay_residual_blur": 0,
-    "movie_match_reference_aspect": true,
-    "movie_aspect_crop_anchor": "top-left",
     "keep_aspect_resize": true,
     "verify_all_coordinate_fields": false,
     "stop_after_first_accepted_direction": true,
@@ -147,6 +144,7 @@
                 7,
                 4
             ],
+            "detect_roi_padding": 20,
             "roi": [
                 1472,
                 564,
@@ -164,6 +162,7 @@
                 7,
                 4
             ],
+            "detect_roi_padding": 20,
             "roi": [
                 1832,
                 626,
@@ -173,39 +172,21 @@
             "template_image": "C:/CM_Projects/CMO141_Calibration/Movie/ngxpro/698_393.png"
         },
         {
-            "board_id": "S4",
-            "board_type": "checkerboard",
-            "weight": 1.0,
-            "critical": true,
-            "board_size": [
-                7,
-                4
-            ],
-            "roi": [
-                1891,
-                656,
-                29,
-                107
-            ],
-            "template_image": "C:/CM_Projects/CMO141_Calibration/Movie/ngxpro/698_393.png"
-        },
-        {
             "board_id": "G1_left",
-            "board_type": "custom_groundmaker",
+            "board_type": "custom_maker",
             "weight": 0.8,
             "critical": true,
             "roi": [
+                68,
+                744,
+                612,
+                344
+            ],
+            "template_source_roi": [
                 128,
                 804,
                 492,
                 264
-            ],
-            "template_image": "C:/CM_Projects/CMO141_Calibration/Movie/ngxpro/g1_patches/g1_left_mark_fine.png",
-            "template_crop": [
-                24,
-                10,
-                34,
-                40
             ],
             "custom_detector": "template_match",
             "template_match_threshold": 0.45,
@@ -214,16 +195,21 @@
         },
         {
             "board_id": "G1_center",
-            "board_type": "custom_groundmaker",
+            "board_type": "custom_maker",
             "weight": 0.6,
             "critical": true,
             "roi": [
+                764,
+                718,
+                632,
+                488
+            ],
+            "template_source_roi": [
                 844,
                 788,
                 472,
                 368
             ],
-            "template_image": "C:/CM_Projects/CMO141_Calibration/Movie/ngxpro/g1_patches/g1_center_circle.png",
             "custom_detector": "template_match",
             "template_match_threshold": 0.3,
             "template_binary_threshold": 150,
@@ -231,21 +217,20 @@
         },
         {
             "board_id": "G1_right",
-            "board_type": "custom_groundmaker",
+            "board_type": "custom_maker",
             "weight": 0.8,
             "critical": true,
             "roi": [
+                1254,
+                676,
+                600,
+                430
+            ],
+            "template_source_roi": [
                 1334,
                 746,
                 440,
                 310
-            ],
-            "template_image": "C:/CM_Projects/CMO141_Calibration/Movie/ngxpro/g1_patches/g1_right_mark_fine.png",
-            "template_crop": [
-                12,
-                4,
-                50,
-                34
             ],
             "custom_detector": "template_match",
             "template_match_threshold": 0.55,
@@ -264,38 +249,91 @@
     "step_decay": 0.7,
     "priority_board_acceptance": {
         "board_ids": [
-            "G1_left",
-            "G1_center",
-            "G1_right"
+            "S3"
         ],
-        "min_board_score_improvement": 0.75,
-        "max_total_score_worsen": 1.0,
+        "min_board_score_improvement": 0.35,
+        "max_total_score_worsen": 1.5,
         "min_board_count": 1
     },
     "joint_exploration": {
         "apply_to_all_params": true,
-        "max_single_score_worsen": 2.5,
+        "max_single_score_worsen": 1.5,
         "trial_multipliers": [
             1.0,
             2.0,
-            4.0
+            4.0,
+            6.0
+        ]
+    },
+    "strategy_adaptation": {
+        "enabled": true,
+        "reorder_params": true,
+        "adjust_step_scale": true,
+        "focus_on_joint_candidates": true,
+        "bottleneck_board_awareness": true,
+        "bottleneck_top_k": 2,
+        "bottleneck_min_improvement": 0.1,
+        "bottleneck_priority_boost": 1.25,
+        "priority_decay": 0.82,
+        "accepted_priority_boost": 2.5,
+        "joint_candidate_priority_boost": 0.75,
+        "rejected_priority_penalty": 0.15,
+        "step_scale_up": 1.35,
+        "step_scale_down": 0.85,
+        "stagnation_patience": 2,
+        "stagnation_step_scale_up": 1.2,
+        "min_step_scale": 0.5,
+        "max_step_scale": 3.0,
+        "exploration_profiles": [
+            {
+                "name": "baseline",
+                "min_stagnation": 0,
+                "single_trial_multipliers": [
+                    1.0
+                ],
+                "joint_trial_multipliers": []
+            },
+            {
+                "name": "expanded",
+                "min_stagnation": 2,
+                "single_trial_multipliers": [
+                    1.0,
+                    2.0
+                ],
+                "joint_trial_multipliers": [
+                    6.0
+                ]
+            },
+            {
+                "name": "aggressive",
+                "min_stagnation": 4,
+                "single_trial_multipliers": [
+                    1.0,
+                    2.0,
+                    4.0
+                ],
+                "joint_trial_multipliers": [
+                    6.0,
+                    8.0
+                ]
+            }
         ]
     },
     "optimization_order": [
-        "pos_z",
-        "pitch",
         "yaw",
         "pos_x",
+        "pitch",
+        "lens_fov",
         "roll",
         "pos_y",
-        "lens_fov",
+        "pos_z",
         "lens_scale",
         "lens_offset_x",
         "lens_offset_y"
     ],
     "parameters": {
         "pos_x": {
-            "initial": 3.2699999809265137,
+            "initial": 3.1693,
             "step": 0.002,
             "min_offset": -0.02,
             "max_offset": 0.02,
@@ -303,7 +341,7 @@
             "decimals": 4
         },
         "pos_y": {
-            "initial": 1.0307,
+            "initial": 1.0222,
             "step": 0.001,
             "min_offset": -0.01,
             "max_offset": 0.01,
@@ -311,31 +349,31 @@
             "decimals": 4
         },
         "pos_z": {
-            "initial": 1.1102,
-            "step": 0.002,
-            "min_offset": -0.03,
-            "max_offset": 0.03,
+            "initial": 1.083,
+            "step": 0.001,
+            "min_offset": -0.012,
+            "max_offset": 0.012,
             "min_step": 0.001,
             "decimals": 4
         },
         "yaw": {
-            "initial": 90.0,
-            "step": 0.01,
-            "min_offset": -0.25,
-            "max_offset": 0.25,
+            "initial": 88.9567,
+            "step": 0.015,
+            "min_offset": -0.35,
+            "max_offset": 0.35,
             "min_step": 0.002,
             "decimals": 4
         },
         "pitch": {
-            "initial": 24.0,
-            "step": 0.02,
-            "min_offset": -0.45,
-            "max_offset": 0.45,
+            "initial": 24.8985,
+            "step": 0.03,
+            "min_offset": -0.6,
+            "max_offset": 0.6,
             "min_step": 0.002,
             "decimals": 4
         },
         "roll": {
-            "initial": 0.0,
+            "initial": 0.5928,
             "step": 0.01,
             "min_offset": -0.2,
             "max_offset": 0.2,
@@ -343,10 +381,10 @@
             "decimals": 4
         },
         "lens_fov": {
-            "initial": 196.0,
+            "initial": 192.1,
             "step": 0.2,
-            "min_offset": -6.0,
-            "max_offset": 6.0,
+            "min_offset": -2.0,
+            "max_offset": 2.0,
             "min_step": 0.1,
             "decimals": 1
         },

@@ -15,7 +15,7 @@
 本文档用于指导后续 Python 脚本重构与实现，不包含具体代码实现。
 
 当前仓库约定：
-- 版本化输入按摄像头分别命名为 [Data/Script/CameraCalibration/config.<camera>.json](Data/Script/CameraCalibration/config.rear_tv.json)，例如当前 rear_tv 使用 [Data/Script/CameraCalibration/config.rear_tv.json](Data/Script/CameraCalibration/config.rear_tv.json)
+- 版本化输入按摄像头分别命名为 [Data/Script/CameraCalibration/camera.<camera>.json](Data/Script/CameraCalibration/camera.rear_tv.json)，例如当前 rear_tv 使用 [Data/Script/CameraCalibration/camera.rear_tv.json](Data/Script/CameraCalibration/camera.rear_tv.json)
 - Script Control 命令脚本只保留一个活动入口：[Data/Script/CameraCalibration/script_control_apply.tcl](Data/Script/CameraCalibration/script_control_apply.tcl)
 - 当前运行链路只保留 Script Control DDE 写参与 IPG-MOVIE DDE/FBO 抓图，不再依赖 UI 窗口连接
 - lens 参数仍依赖 `.camera.cammoddlg` widget 树在 IPG-MOVIE 中已创建；首次运行前需要手动打开一次 lens 页面

@@ -1,0 +1,39 @@
+{
+    "bootstrap_templates": [
+        {
+            "detected_group": "B",
+            "board": {
+                "board_type": "checkerboard",
+                "weight": 1.0,
+                "board_size": [
+                    7,
+                    4
+                ],
+                "template_image": "C:/CM_Projects/CMO141_Calibration/Movie/ngxpro/1396_786.png"
+            }
+        },
+        {
+            "detected_group": "S",
+            "board": {
+                "board_type": "checkerboard",
+                "weight": 1.0,
+                "board_size": [
+                    7,
+                    4
+                ],
+                "template_image": "C:/CM_Projects/CMO141_Calibration/Movie/ngxpro/698_393.png"
+            }
+        },
+        {
+            "detected_group": "C",
+            "board": {
+                "board_type": "custom_maker",
+                "weight": 0.8,
+                "custom_detector": "template_match",
+                "template_match_threshold": 0.55,
+                "template_binary_threshold": 150,
+                "min_detected_points": 9
+            }
+        }
+    ]
+}

@@ -562,12 +562,12 @@ total_score_detail 至少包含：
 
 当前已落地脚本与文档：
 - 主脚本见 [Data/Script/CameraCalibration/camera_calibration.py](Data/Script/CameraCalibration/camera_calibration.py)
-- 当前 rear_tv 配置见 [Data/Script/CameraCalibration/config.rear_tv.json](Data/Script/CameraCalibration/config.rear_tv.json)
+- 当前 rear_tv 配置见 [Data/Script/CameraCalibration/camera.rear_tv.json](Data/Script/CameraCalibration/camera.rear_tv.json)
 - 单一活动 Script Control 命令脚本见 [Data/Script/CameraCalibration/script_control_apply.tcl](Data/Script/CameraCalibration/script_control_apply.tcl)
 - 使用说明见 [Data/Script/CameraCalibration/README.md](Data/Script/CameraCalibration/README.md)
 
 说明：
-- 当前仓库不再保留 overnight/best/final/proposed 命名的版本化配置变体；配置文件统一采用 config.<camera>.json 命名，例如 rear_tv 使用 [Data/Script/CameraCalibration/config.rear_tv.json](Data/Script/CameraCalibration/config.rear_tv.json)。
+- 当前仓库不再保留 overnight/best/final/proposed 命名的版本化配置变体；运行配置统一采用 camera.<camera>.json 命名，例如 rear_tv 使用 [Data/Script/CameraCalibration/camera.rear_tv.json](Data/Script/CameraCalibration/camera.rear_tv.json)。
 - 当前主链已收敛为纯 DDE/FBO：参数写入通过 Script Control DDE 发送到 IPG-MOVIE，抓图通过 FBO + gl readpixels 完成，不再依赖 IPGMovie 窗口连接或前台激活。
 - 当前参数链仍依赖 `.camera` 与 `.camera.cammoddlg` widget 树；首次运行前需要手动打开一次 lens 页面，让对应控件完成初始化。
 - 在 lens 页面完成一次初始化后，Script Control、Camera Settings 和 IPGMovie 窗口可保持最小化，短链路 smoke 已验证参数读写和 FBO 抓图可用。

@@ -20,6 +20,9 @@ import numpy as np
 from PIL import Image
 
 
+_ANNOTATION_OCR_ENGINE = None
+
+
 class _TeeStream:
     def __init__(self, primary: TextIO, secondary: TextIO):
         self._primary = primary
@@ -138,9 +141,10 @@ def _default_sim_output_root() -> Path:
 def _default_output_name_from_config(config_path: Optional[Path]) -> str:
     if config_path is not None:
         name = config_path.stem
-        prefix = "config."
-        if name.startswith(prefix):
-            name = name[len(prefix):]
+        for prefix in ("camera.", "config."):
+            if name.startswith(prefix):
+                name = name[len(prefix):]
+                break
         name = name.replace(".", "_").strip("_")
         if name:
             return name
@@ -171,8 +175,364 @@ def _camera_name_from_config_path(config_path: Optional[Path]) -> str:
     return _default_output_name_from_config(config_path)
 
 
+def _default_bootstrap_template_path() -> Path:
+    calibration_dir = Path(__file__).resolve().parent
+    preferred = calibration_dir / "bootstrap.template.json"
+    if preferred.exists():
+        return preferred
+    return calibration_dir / "config.bootstrap_template.json"
+
+
+def _default_parameter_config() -> Dict[str, dict]:
+    return {
+        "pos_x": {
+            "initial": 0.0,
+            "step": 0.002,
+            "min_offset": -0.02,
+            "max_offset": 0.02,
+            "min_step": 0.001,
+            "decimals": 4,
+        },
+        "pos_y": {
+            "initial": 0.0,
+            "step": 0.001,
+            "min_offset": -0.01,
+            "max_offset": 0.01,
+            "min_step": 0.001,
+            "decimals": 4,
+        },
+        "pos_z": {
+            "initial": 0.0,
+            "step": 0.002,
+            "min_offset": -0.03,
+            "max_offset": 0.03,
+            "min_step": 0.001,
+            "decimals": 4,
+        },
+        "yaw": {
+            "initial": 0.0,
+            "step": 0.01,
+            "min_offset": -0.25,
+            "max_offset": 0.25,
+            "min_step": 0.002,
+            "decimals": 4,
+        },
+        "pitch": {
+            "initial": 0.0,
+            "step": 0.02,
+            "min_offset": -0.45,
+            "max_offset": 0.45,
+            "min_step": 0.002,
+            "decimals": 4,
+        },
+        "roll": {
+            "initial": 0.0,
+            "step": 0.01,
+            "min_offset": -0.2,
+            "max_offset": 0.2,
+            "min_step": 0.002,
+            "decimals": 4,
+        },
+        "lens_fov": {
+            "initial": 195.0,
+            "step": 0.2,
+            "min_offset": -6.0,
+            "max_offset": 6.0,
+            "min_step": 0.1,
+            "decimals": 1,
+        },
+        "lens_scale": {
+            "initial": 1.0,
+            "step": 0.005,
+            "min_offset": 0.0,
+            "max_offset": 0.0,
+            "min_step": 0.005,
+            "decimals": 3,
+        },
+        "lens_offset_x": {
+            "initial": 0.0,
+            "step": 0.01,
+            "min_offset": 0.0,
+            "max_offset": 0.0,
+            "min_step": 0.01,
+            "decimals": 2,
+        },
+        "lens_offset_y": {
+            "initial": 0.0,
+            "step": 0.01,
+            "min_offset": 0.0,
+            "max_offset": 0.0,
+            "min_step": 0.01,
+            "decimals": 2,
+        },
+    }
+
+
+def _default_parameter_order() -> List[str]:
+    return [
+        "pos_z",
+        "pitch",
+        "yaw",
+        "pos_x",
+        "roll",
+        "pos_y",
+        "lens_fov",
+        "lens_scale",
+        "lens_offset_x",
+        "lens_offset_y",
+    ]
+
+
+def _default_bootstrap_config() -> dict:
+    calibration_root = Path(__file__).resolve().parent
+    repo_root = Path(__file__).resolve().parents[3]
+    return {
+        "settings_input_mode": "script_control",
+        "script_control_script_path": str((calibration_root / "script_control_apply.tcl").resolve().as_posix()),
+        "script_control_result_path": str((repo_root / "SimOutput" / "script_control_camera_apply_result.txt").resolve().as_posix()),
+        "script_control_dde_service": "TclEval",
+        "script_control_dde_topic": "CarMaker",
+        "script_control_timeout_sec": 8.0,
+        "script_control_settle_sec": 0.2,
+        "template_feature_max_dim": 2048,
+        "comparison_mode": "direct",
+        "overlay_residual_threshold": 12,
+        "overlay_residual_blur": 0,
+        "keep_aspect_resize": True,
+        "verify_all_coordinate_fields": False,
+        "stop_after_first_accepted_direction": True,
+        "progress_flush_every": 1,
+        "settle_sec": 0.35,
+        "target_score": 5.0,
+        "acceptance_criteria": {
+            "bottleneck_board_score_max_threshold": 4.0,
+            "bottleneck_board_score_avg_threshold": 2.5,
+        },
+        "max_iters": 180,
+        "min_improve": 5e-05,
+        "step_decay": 0.7,
+        "priority_board_acceptance": {
+            "board_ids": [],
+            "min_board_score_improvement": 0.75,
+            "max_total_score_worsen": 1.0,
+            "min_board_count": 1,
+        },
+        "joint_exploration": {
+            "apply_to_all_params": True,
+            "max_single_score_worsen": 2.5,
+            "trial_multipliers": [1.0, 2.0, 4.0],
+        },
+        "strategy_adaptation": {
+            "enabled": False,
+            "reorder_params": True,
+            "adjust_step_scale": True,
+            "focus_on_joint_candidates": True,
+            "bottleneck_board_awareness": True,
+            "bottleneck_top_k": 2,
+            "bottleneck_min_improvement": 0.1,
+            "bottleneck_priority_boost": 1.25,
+            "priority_decay": 0.82,
+            "accepted_priority_boost": 2.5,
+            "joint_candidate_priority_boost": 0.75,
+            "rejected_priority_penalty": 0.15,
+            "step_scale_up": 1.35,
+            "step_scale_down": 0.85,
+            "stagnation_patience": 2,
+            "stagnation_step_scale_up": 1.2,
+            "min_step_scale": 0.5,
+            "max_step_scale": 3.0,
+            "exploration_profiles": [
+                {
+                    "name": "baseline",
+                    "min_stagnation": 0,
+                    "single_trial_multipliers": [1.0],
+                    "joint_trial_multipliers": [],
+                },
+                {
+                    "name": "expanded",
+                    "min_stagnation": 2,
+                    "single_trial_multipliers": [1.0, 2.0],
+                    "joint_trial_multipliers": [6.0],
+                },
+                {
+                    "name": "aggressive",
+                    "min_stagnation": 4,
+                    "single_trial_multipliers": [1.0, 2.0, 4.0],
+                    "joint_trial_multipliers": [6.0, 8.0],
+                },
+            ],
+        },
+        "optimization_order": _default_parameter_order(),
+        "parameters": _default_parameter_config(),
+    }
+
+
+def _deep_merge_dict(base: dict, override: dict) -> dict:
+    result = copy.deepcopy(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = _deep_merge_dict(result[key], value)
+        else:
+            result[key] = copy.deepcopy(value)
+    return result
+
+
+def _resolved_bootstrap_config(template_cfg: dict) -> dict:
+    cfg = _deep_merge_dict(_default_bootstrap_config(), template_cfg)
+    return cfg
+
+
 def _path_to_json_string(path: Path) -> str:
     return path.resolve().as_posix()
+
+
+def _bootstrap_partial_template_dir(real_image_path: Path, camera_name: str) -> Path:
+    return real_image_path.resolve().parent / "bootstrap_templates" / camera_name
+
+
+def _is_custom_marker_board_type(board_type: str) -> bool:
+    return str(board_type).strip().lower() in {"custom_groundmaker", "custom_maker"}
+
+
+def _preprocess_auto_template_match_image(
+    gray_image: np.ndarray,
+    binary_threshold: int,
+) -> np.ndarray:
+    if binary_threshold > 0:
+        _, processed = cv2.threshold(
+            gray_image,
+            float(binary_threshold),
+            255,
+            cv2.THRESH_BINARY_INV,
+        )
+        return processed.astype(np.uint8)
+    return gray_image.astype(np.uint8)
+
+
+def _masked_secondary_response_max(
+    response: np.ndarray,
+    best_location: Tuple[int, int],
+    template_shape: Tuple[int, int],
+) -> float:
+    if response.size <= 1:
+        return float("-inf")
+    mask = np.ones(response.shape, dtype=bool)
+    best_x, best_y = best_location
+    template_h, template_w = template_shape
+    radius_x = max(1, template_w // 3)
+    radius_y = max(1, template_h // 3)
+    x0 = max(0, best_x - radius_x)
+    y0 = max(0, best_y - radius_y)
+    x1 = min(response.shape[1], best_x + radius_x + 1)
+    y1 = min(response.shape[0], best_y + radius_y + 1)
+    mask[y0:y1, x0:x1] = False
+    if not mask.any():
+        return float("-inf")
+    return float(np.max(response[mask]))
+
+
+def _select_auto_template_crop(
+    roi_gray: np.ndarray,
+    binary_threshold: int,
+) -> Tuple[np.ndarray, Tuple[int, int, int, int]]:
+    roi_h, roi_w = roi_gray.shape[:2]
+    if roi_h <= 0 or roi_w <= 0:
+        raise ValueError("ROI image for auto template crop is empty")
+    if roi_h < 24 or roi_w < 24:
+        return roi_gray.copy(), (0, 0, roi_w, roi_h)
+
+    processed = _preprocess_auto_template_match_image(roi_gray, binary_threshold)
+    candidate_sizes: List[Tuple[int, int]] = []
+    for width_ratio, height_ratio in (
+        (0.18, 0.18),
+        (0.22, 0.22),
+        (0.28, 0.22),
+        (0.22, 0.28),
+        (0.32, 0.24),
+        (0.24, 0.32),
+    ):
+        crop_w = max(18, min(roi_w - 2, int(round(roi_w * width_ratio))))
+        crop_h = max(18, min(roi_h - 2, int(round(roi_h * height_ratio))))
+        if crop_w >= roi_w or crop_h >= roi_h:
+            continue
+        size = (crop_w, crop_h)
+        if size not in candidate_sizes:
+            candidate_sizes.append(size)
+
+    best_score = float("-inf")
+    best_bbox: Optional[Tuple[int, int, int, int]] = None
+    for crop_w, crop_h in candidate_sizes:
+        step_x = max(1, (roi_w - crop_w) // 4)
+        step_y = max(1, (roi_h - crop_h) // 4)
+        x_positions = sorted({0, max(0, roi_w - crop_w), *range(0, max(1, roi_w - crop_w + 1), step_x)})
+        y_positions = sorted({0, max(0, roi_h - crop_h), *range(0, max(1, roi_h - crop_h + 1), step_y)})
+        for x in x_positions:
+            for y in y_positions:
+                patch_gray = roi_gray[y : y + crop_h, x : x + crop_w]
+                patch_processed = processed[y : y + crop_h, x : x + crop_w]
+                if patch_gray.size == 0 or patch_processed.size == 0:
+                    continue
+
+                lap_var = float(cv2.Laplacian(patch_gray, cv2.CV_32F).var())
+                if lap_var < 5.0:
+                    continue
+
+                response = cv2.matchTemplate(processed, patch_processed, cv2.TM_CCOEFF_NORMED)
+                _, best_value, _, best_location = cv2.minMaxLoc(response)
+                second_best = _masked_secondary_response_max(
+                    response,
+                    best_location,
+                    (crop_h, crop_w),
+                )
+                uniqueness = float(best_value) - second_best if math.isfinite(second_best) else float(best_value)
+                center_bias = 1.0 - (
+                    abs((x + crop_w * 0.5) - roi_w * 0.5) / max(roi_w, 1)
+                    + abs((y + crop_h * 0.5) - roi_h * 0.5) / max(roi_h, 1)
+                )
+                size_penalty = 0.35 * ((crop_w / roi_w) + (crop_h / roi_h))
+                score = uniqueness * 4.0 + min(lap_var / 180.0, 3.0) + center_bias - size_penalty
+                if score > best_score:
+                    best_score = score
+                    best_bbox = (x, y, crop_w, crop_h)
+
+    if best_bbox is None:
+        fallback_w = max(18, min(roi_w, int(round(roi_w * 0.3))))
+        fallback_h = max(18, min(roi_h, int(round(roi_h * 0.3))))
+        x = max(0, (roi_w - fallback_w) // 2)
+        y = max(0, (roi_h - fallback_h) // 2)
+        best_bbox = (x, y, fallback_w, fallback_h)
+
+    x, y, crop_w, crop_h = best_bbox
+    return roi_gray[y : y + crop_h, x : x + crop_w].copy(), best_bbox
+
+
+def _materialize_auto_template_image(
+    real_gray: np.ndarray,
+    roi: Tuple[int, int, int, int],
+    binary_threshold: int,
+    template_path: Path,
+    manual_crop: Optional[Tuple[int, int, int, int]] = None,
+) -> Tuple[Path, Tuple[int, int, int, int]]:
+    x, y, width, height = [int(value) for value in roi]
+    roi_gray = real_gray[y : y + height, x : x + width]
+    if roi_gray.size == 0:
+        raise RuntimeError(f"Cannot auto-generate template from empty ROI: {list(roi)}")
+    if manual_crop is not None:
+        crop_x, crop_y, crop_w, crop_h = [int(value) for value in manual_crop]
+        crop_x0 = max(0, crop_x)
+        crop_y0 = max(0, crop_y)
+        crop_x1 = min(roi_gray.shape[1], crop_x + crop_w)
+        crop_y1 = min(roi_gray.shape[0], crop_y + crop_h)
+        if crop_x0 >= crop_x1 or crop_y0 >= crop_y1:
+            raise RuntimeError(f"Manual template_source_crop is outside ROI bounds: {list(manual_crop)}")
+        template_crop = (crop_x0, crop_y0, crop_x1 - crop_x0, crop_y1 - crop_y0)
+        template_image = roi_gray[crop_y0:crop_y1, crop_x0:crop_x1].copy()
+    else:
+        template_image, template_crop = _select_auto_template_crop(roi_gray, binary_threshold)
+    template_path.parent.mkdir(parents=True, exist_ok=True)
+    if not cv2.imwrite(str(template_path), template_image):
+        raise RuntimeError(f"Failed to write auto template image: {template_path}")
+    return template_path, template_crop
 
 
 def _derive_camera_name_from_image_path(image_path: Path) -> str:
@@ -187,6 +547,10 @@ def _derive_camera_name_from_image_path(image_path: Path) -> str:
 
 def _board_prototype_family(board_id: str) -> Optional[str]:
     normalized = str(board_id).strip().upper().replace("-", "_")
+    compact = re.sub(r"[^A-Za-z0-9]+", "", str(board_id).strip()).upper()
+    generic_match = re.fullmatch(r"([A-Z]+)(\d+)", compact)
+    if generic_match:
+        return generic_match.group(1)
     if re.fullmatch(r"B\d+", normalized):
         return "B"
     if re.fullmatch(r"S\d+", normalized):
@@ -204,6 +568,291 @@ def _board_prototype_family(board_id: str) -> Optional[str]:
     if normalized.startswith("G1") and "RIGHT" in normalized:
         return "G1_RIGHT"
     return None
+
+
+def _get_annotation_ocr_engine():
+    global _ANNOTATION_OCR_ENGINE
+
+    if _ANNOTATION_OCR_ENGINE is None:
+        try:
+            from rapidocr_onnxruntime import RapidOCR
+        except Exception as exc:
+            raise RuntimeError(
+                "Annotation bootstrap requires the rapidocr-onnxruntime package. "
+                "Install it in the CameraCalibration Python environment before using "
+                "--bootstrap-config-from-annotation."
+            ) from exc
+        _ANNOTATION_OCR_ENGINE = RapidOCR()
+    return _ANNOTATION_OCR_ENGINE
+
+
+def _normalize_annotation_board_id(text: str, detected_group: str) -> Optional[str]:
+    compact = re.sub(r"[^A-Za-z0-9]+", "", str(text).strip()).upper()
+    if not compact:
+        return None
+
+    if detected_group == "B":
+        candidate = compact.replace("I", "1").replace("L", "1")
+        if re.fullmatch(r"B\d+", candidate):
+            return f"B{int(candidate[1:])}"
+        return None
+
+    if detected_group == "S":
+        candidate = compact.replace("I", "1").replace("L", "1")
+        if re.fullmatch(r"S\d+", candidate):
+            return f"S{int(candidate[1:])}"
+        if re.fullmatch(r"[35]\d+", candidate):
+            return f"S{int(candidate[1:])}"
+        return None
+
+    if detected_group == "G1":
+        candidate = compact.replace("GI", "G1")
+        if re.fullmatch(r"G1(L|LEFT|LEFTMARK)", candidate):
+            return "G1_left"
+        if re.fullmatch(r"G1(C|CENTER|CENTRE|CENTERCIRCLE)", candidate):
+            return "G1_center"
+        if re.fullmatch(r"G1(R|RIGHT|RIGHTMARK)", candidate):
+            return "G1_right"
+        return None
+
+    generic_group = re.sub(r"[^A-Za-z0-9]+", "", str(detected_group).strip()).upper()
+    if generic_group and generic_group not in {"B", "S", "G1"}:
+        candidate = compact
+        if candidate.startswith(generic_group):
+            suffix = candidate[len(generic_group) :]
+            suffix = suffix.replace("I", "1").replace("L", "1")
+            if suffix.isdigit():
+                return f"{generic_group}{int(suffix)}"
+
+    return None
+
+
+def _run_annotation_ocr(
+    image: np.ndarray,
+    source_name: str,
+    origin: Tuple[int, int] = (0, 0),
+    scale: float = 1.0,
+) -> List[dict]:
+    ocr_engine = _get_annotation_ocr_engine()
+    result, _ = ocr_engine(image)
+    detections: List[dict] = []
+    for item in result or []:
+        if len(item) < 3:
+            continue
+        box, text, score = item
+        confidence = float(score)
+        if confidence < 0.45:
+            continue
+
+        xs = [float(point[0]) for point in box]
+        ys = [float(point[1]) for point in box]
+        min_x = origin[0] + min(xs) / max(scale, 1e-6)
+        min_y = origin[1] + min(ys) / max(scale, 1e-6)
+        max_x = origin[0] + max(xs) / max(scale, 1e-6)
+        max_y = origin[1] + max(ys) / max(scale, 1e-6)
+        detections.append(
+            {
+                "text": str(text),
+                "score": confidence,
+                "bbox": (min_x, min_y, max_x - min_x, max_y - min_y),
+                "source": source_name,
+            }
+        )
+    return detections
+
+
+def _rect_gap_distance(
+    rect_a: Tuple[float, float, float, float],
+    rect_b: Tuple[float, float, float, float],
+) -> float:
+    ax1, ay1, aw, ah = rect_a
+    bx1, by1, bw, bh = rect_b
+    ax2, ay2 = ax1 + aw, ay1 + ah
+    bx2, by2 = bx1 + bw, by1 + bh
+    gap_x = max(ax1 - bx2, bx1 - ax2, 0.0)
+    gap_y = max(ay1 - by2, by1 - ay2, 0.0)
+    if gap_x <= 0.0 and gap_y <= 0.0:
+        return 0.0
+    return math.hypot(gap_x, gap_y)
+
+
+def _assign_annotation_board_ids(
+    grouped: Dict[str, List[Tuple[int, int, int, int]]],
+    detections: List[dict],
+    group_candidates: Dict[str, List[str]],
+) -> Dict[Tuple[int, int, int, int], str]:
+    assignments: Dict[Tuple[int, int, int, int], str] = {}
+    for detected_group, rects in grouped.items():
+        candidate_groups = group_candidates.get(detected_group, [detected_group])
+        candidate_rows: List[Tuple[float, Tuple[int, int, int, int], str]] = []
+        for detection in detections:
+            board_ids = [
+                board_id
+                for board_id in (
+                    _normalize_annotation_board_id(detection.get("text", ""), candidate_group)
+                    for candidate_group in candidate_groups
+                )
+                if board_id
+            ]
+            if not board_ids:
+                continue
+
+            label_bbox = detection["bbox"]
+            label_center_x = float(label_bbox[0]) + float(label_bbox[2]) / 2.0
+            label_center_y = float(label_bbox[1]) + float(label_bbox[3]) / 2.0
+            for rect in rects:
+                max_gap = max(140.0, 0.75 * float(max(rect[2], rect[3])))
+                if detected_group == "G1":
+                    max_gap = max(max_gap, 220.0)
+                gap = _rect_gap_distance(
+                    (float(rect[0]), float(rect[1]), float(rect[2]), float(rect[3])),
+                    label_bbox,
+                )
+                if gap > max_gap:
+                    continue
+
+                rect_area = float(rect[2] * rect[3])
+                label_inside_rect = (
+                    float(rect[0]) <= label_center_x <= float(rect[0] + rect[2])
+                    and float(rect[1]) <= label_center_y <= float(rect[1] + rect[3])
+                )
+                source_bonus = 6.0 if str(detection.get("source", "")).startswith("local") else 0.0
+                containment_bonus = 30.0 if label_inside_rect else 0.0
+                area_penalty = rect_area / 50000.0 if label_inside_rect else 0.0
+                ranking = (
+                    float(detection["score"]) * 1000.0
+                    - gap * 3.0
+                    + source_bonus
+                    + containment_bonus
+                    - area_penalty
+                )
+                for board_id in board_ids:
+                    candidate_rows.append((ranking, rect, board_id))
+
+        candidate_rows.sort(key=lambda item: item[0], reverse=True)
+        used_ids: set = set()
+        used_rects: set = set()
+        for _, rect, board_id in candidate_rows:
+            if rect in used_rects or board_id in used_ids:
+                continue
+            assignments[rect] = board_id
+            used_rects.add(rect)
+            used_ids.add(board_id)
+
+    return assignments
+
+
+def _extract_annotation_board_ids(
+    annotated_image_path: Path,
+    grouped: Dict[str, List[Tuple[int, int, int, int]]],
+    candidate_group_keys: Optional[List[str]] = None,
+) -> Dict[Tuple[int, int, int, int], str]:
+    annotated = cv2.imread(str(annotated_image_path))
+    if annotated is None:
+        raise FileNotFoundError(f"Failed to read annotated image: {annotated_image_path}")
+
+    group_candidates = {
+        detected_group: list(candidate_group_keys or [])
+        if detected_group == "__ANNOTATION__"
+        else [detected_group]
+        for detected_group in grouped.keys()
+    }
+
+    detections: List[dict] = []
+    detections.extend(_run_annotation_ocr(annotated, source_name="global_color"))
+
+    gray = cv2.cvtColor(annotated, cv2.COLOR_BGR2GRAY)
+    gray_up2 = cv2.resize(gray, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
+    detections.extend(
+        _run_annotation_ocr(
+            cv2.cvtColor(gray_up2, cv2.COLOR_GRAY2BGR),
+            source_name="global_gray_up2",
+            scale=2.0,
+        )
+    )
+
+    assignments = _assign_annotation_board_ids(grouped, detections, group_candidates)
+    unresolved = [
+        (detected_group, rect)
+        for detected_group, rects in grouped.items()
+        for rect in rects
+        if rect not in assignments
+    ]
+
+    for detected_group, rect in unresolved:
+        x, y, width, height = rect
+        focused_crop = annotated[y : y + height, x : x + width]
+        if focused_crop.size != 0:
+            detections.extend(
+                _run_annotation_ocr(
+                    focused_crop,
+                    source_name=f"focused_{detected_group}_color",
+                    origin=(x, y),
+                )
+            )
+
+            focused_gray = cv2.cvtColor(focused_crop, cv2.COLOR_BGR2GRAY)
+            focused_gray_up4 = cv2.resize(
+                focused_gray,
+                None,
+                fx=4.0,
+                fy=4.0,
+                interpolation=cv2.INTER_CUBIC,
+            )
+            detections.extend(
+                _run_annotation_ocr(
+                    cv2.cvtColor(focused_gray_up4, cv2.COLOR_GRAY2BGR),
+                    source_name=f"focused_{detected_group}_gray_up4",
+                    origin=(x, y),
+                    scale=4.0,
+                )
+            )
+
+        pad_x = max(120, int(round(width * 0.9)))
+        pad_y = max(120, int(round(height * 0.9)))
+        x0 = max(0, x - pad_x)
+        y0 = max(0, y - pad_y)
+        x1 = min(annotated.shape[1], x + width + pad_x)
+        y1 = min(annotated.shape[0], y + height + pad_y)
+        crop = annotated[y0:y1, x0:x1]
+        if crop.size == 0:
+            continue
+
+        detections.extend(
+            _run_annotation_ocr(
+                crop,
+                source_name=f"local_{detected_group}_color",
+                origin=(x0, y0),
+            )
+        )
+
+        crop_gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+        crop_gray_up4 = cv2.resize(crop_gray, None, fx=4.0, fy=4.0, interpolation=cv2.INTER_CUBIC)
+        detections.extend(
+            _run_annotation_ocr(
+                cv2.cvtColor(crop_gray_up4, cv2.COLOR_GRAY2BGR),
+                source_name=f"local_{detected_group}_gray_up4",
+                origin=(x0, y0),
+                scale=4.0,
+            )
+        )
+
+    assignments = _assign_annotation_board_ids(grouped, detections, group_candidates)
+    unresolved = [
+        (detected_group, rect)
+        for detected_group, rects in grouped.items()
+        for rect in rects
+        if rect not in assignments
+    ]
+    if unresolved:
+        unresolved_text = ", ".join(
+            f"{detected_group}:{list(rect)}" for detected_group, rect in unresolved
+        )
+        raise RuntimeError(
+            "Failed to read board IDs from the annotated image for: "
+            f"{unresolved_text}. Please check that each board label is visible in the annotation."
+        )
+    return assignments
 
 
 def _extract_annotation_rectangles(annotated_image_path: Path) -> List[Tuple[int, int, int, int]]:
@@ -241,10 +890,19 @@ def _extract_annotation_rectangles(annotated_image_path: Path) -> List[Tuple[int
             float(box_mask[:, -border:].mean()) / 255.0,
         ]
         strong_edge_count = sum(value >= 0.20 for value in edge_ratios)
+        moderate_edge_count = sum(value >= 0.08 for value in edge_ratios)
+        max_edge_ratio = max(edge_ratios) if edge_ratios else 0.0
         touches_border = (
             x <= 1 or y <= 1 or x + width >= image_width - 1 or y + height >= image_height - 1
         )
-        if fill_ratio < 0.85 and not (touches_border and fill_ratio >= 0.60 and strong_edge_count >= 3):
+        border_partial_box = touches_border and fill_ratio >= 0.03 and strong_edge_count >= 3
+        large_outline_box = (
+            max(width, height) >= 300
+            and fill_ratio >= 0.03
+            and moderate_edge_count >= 3
+            and max_edge_ratio >= 0.18
+        )
+        if fill_ratio < 0.85 and not (border_partial_box or large_outline_box):
             continue
 
         rectangles.append((x, y, width, height))
@@ -300,53 +958,164 @@ def _cluster_1d(values: np.ndarray, cluster_count: int) -> np.ndarray:
 
 
 def _group_annotation_rectangles(
-    rectangles: List[Tuple[int, int, int, int]]
+    rectangles: List[Tuple[int, int, int, int]],
 ) -> Dict[str, List[Tuple[int, int, int, int]]]:
-    grouped: Dict[str, List[Tuple[int, int, int, int]]] = {"S": [], "B": [], "G1": []}
+    grouped: Dict[str, List[Tuple[int, int, int, int]]] = {"__ANNOTATION__": []}
     if not rectangles:
         return grouped
 
-    by_area_desc = sorted(rectangles, key=lambda rect: rect[2] * rect[3], reverse=True)
-    groundmaker_count = 0
-    for index in range(min(3, len(by_area_desc) - 1)):
-        current_area = max(by_area_desc[index][2] * by_area_desc[index][3], 1)
-        next_area = max(by_area_desc[index + 1][2] * by_area_desc[index + 1][3], 1)
-        if current_area / next_area >= 1.8:
-            groundmaker_count = index + 1
-
-    grouped["G1"] = list(by_area_desc[:groundmaker_count])
-    checkerboards = list(by_area_desc[groundmaker_count:])
-    if not checkerboards:
-        return grouped
-
-    if len(checkerboards) == 1:
-        grouped["B"] = checkerboards
-        return grouped
-
-    widths = np.log(
-        np.array([max(width, height, 1) for _, _, width, height in checkerboards], dtype=np.float64)
+    grouped["__ANNOTATION__"] = sorted(
+        rectangles,
+        key=lambda rect: (rect[0] + rect[2] / 2.0, rect[1] + rect[3] / 2.0),
     )
-    labels = _cluster_1d(widths, 2)
-    clusters = {0: [], 1: []}
-    for rect, label in zip(checkerboards, labels):
-        clusters[int(label)].append(rect)
-
-    cluster_order = sorted(
-        clusters,
-        key=lambda cluster_id: np.mean([max(rect[2], rect[3]) for rect in clusters[cluster_id]])
-        if clusters[cluster_id]
-        else -1.0,
-    )
-    grouped["S"] = clusters[cluster_order[0]]
-    grouped["B"] = clusters[cluster_order[1]]
     return grouped
+
+
+def _load_bootstrap_template_specs(template_cfg: dict) -> Dict[str, List[dict]]:
+    grouped_specs: Dict[str, List[dict]] = {}
+    detected_group_aliases = {
+        "B": ("B", ""),
+        "S": ("S", ""),
+        "G1": ("G1", ""),
+        "G1_LEFT": ("G1", "G1_left"),
+        "G1_CENTER": ("G1", "G1_center"),
+        "G1_RIGHT": ("G1", "G1_right"),
+    }
+    raw_templates = template_cfg.get("bootstrap_templates")
+    if isinstance(raw_templates, list) and raw_templates:
+        for item in raw_templates:
+            if not isinstance(item, dict):
+                raise ValueError("bootstrap_templates entries must be objects")
+
+            raw_detected_group = str(item.get("detected_group", "")).strip().upper()
+            detected_group_info = detected_group_aliases.get(raw_detected_group)
+            if detected_group_info is None:
+                if re.fullmatch(r"[A-Z]+", raw_detected_group) and raw_detected_group not in {"B", "S"}:
+                    detected_group_info = (raw_detected_group, "")
+                else:
+                    raise ValueError(
+                        f"Unsupported bootstrap detected_group: {raw_detected_group!r}"
+                    )
+            detected_group, detected_group_board_id = detected_group_info
+            grouped_specs.setdefault(detected_group, [])
+
+            board_cfg = item.get("board")
+            if not isinstance(board_cfg, dict) or not board_cfg:
+                raise ValueError(
+                    f"bootstrap_templates entry for {raw_detected_group} must provide board"
+                )
+
+            grouped_specs[detected_group].append(
+                {
+                    "detected_group": raw_detected_group,
+                    "generated_id_prefix": str(item.get("generated_id_prefix", "")).strip(),
+                    "generated_board_id": str(item.get("generated_board_id", "")).strip(),
+                    "sort_rank": int(item.get("sort_rank", len(grouped_specs[detected_group]))),
+                    "board": copy.deepcopy(board_cfg),
+                }
+            )
+
+            latest = grouped_specs[detected_group][-1]
+            board_type = str(board_cfg.get("board_type", "")).strip().lower()
+            if board_type == "checkerboard" and not latest["generated_id_prefix"]:
+                latest["generated_id_prefix"] = detected_group
+            if detected_group not in {"G1"} and board_type != "checkerboard" and not latest["generated_id_prefix"]:
+                latest["generated_id_prefix"] = detected_group
+            if detected_group == "G1" and not latest["generated_board_id"]:
+                latest["generated_board_id"] = detected_group_board_id
+            if detected_group == "G1" and not latest["generated_board_id"]:
+                latest["generated_board_id"] = str(board_cfg.get("board_id", "")).strip()
+            if detected_group == "G1" and not latest["generated_board_id"]:
+                raise ValueError(
+                    "G1 bootstrap template entries must provide a family via detected_group (G1_LEFT/G1_CENTER/G1_RIGHT) or generated_board_id"
+                )
+
+        if not grouped_specs:
+            raise ValueError("bootstrap_templates must define at least one group")
+        return grouped_specs
+
+    for board_cfg in template_cfg.get("boards", []):
+        family = _board_prototype_family(str(board_cfg.get("board_id", "")))
+        board_type = str(board_cfg.get("board_type", "")).strip().lower()
+        if family == "B" and not grouped_specs.get("B"):
+            grouped_specs["B"] = [
+                {
+                    "detected_group": "B",
+                    "generated_id_prefix": "B",
+                    "generated_board_id": "",
+                    "sort_rank": 0,
+                    "board": copy.deepcopy(board_cfg),
+                }
+            ]
+        elif family == "S" and not grouped_specs.get("S"):
+            grouped_specs["S"] = [
+                {
+                    "detected_group": "S",
+                    "generated_id_prefix": "S",
+                    "generated_board_id": "",
+                    "sort_rank": 0,
+                    "board": copy.deepcopy(board_cfg),
+                }
+            ]
+        elif family in {"G1_LEFT", "G1_CENTER", "G1_RIGHT"}:
+            generated_board_id = str(board_cfg.get("board_id", "")).strip()
+            sort_rank = {"G1_LEFT": 0, "G1_CENTER": 1, "G1_RIGHT": 2}[family]
+            exists = any(
+                spec["generated_board_id"] == generated_board_id
+                for spec in grouped_specs.setdefault("G1", [])
+            )
+            if not exists:
+                grouped_specs["G1"].append(
+                    {
+                        "detected_group": "G1",
+                        "generated_id_prefix": "",
+                        "generated_board_id": generated_board_id,
+                        "sort_rank": sort_rank,
+                        "board": copy.deepcopy(board_cfg),
+                    }
+                )
+        elif family and board_type == "checkerboard" and family not in {"B", "S"} and family not in grouped_specs:
+            grouped_specs[family] = [
+                {
+                    "detected_group": family,
+                    "generated_id_prefix": family,
+                    "generated_board_id": "",
+                    "sort_rank": 0,
+                    "board": copy.deepcopy(board_cfg),
+                }
+            ]
+        elif family and family not in grouped_specs:
+            grouped_specs[family] = [
+                {
+                    "detected_group": family,
+                    "generated_id_prefix": family,
+                    "generated_board_id": "",
+                    "sort_rank": 0,
+                    "board": copy.deepcopy(board_cfg),
+                }
+            ]
+
+    if not grouped_specs:
+        raise RuntimeError("Template config is missing bootstrap prototypes")
+    return grouped_specs
 
 
 def _build_boards_from_annotation_rectangles(
     template_cfg: dict,
     rectangles: List[Tuple[int, int, int, int]],
+    annotated_image_path: Path,
 ) -> List[dict]:
+    bootstrap_specs = _load_bootstrap_template_specs(template_cfg)
+    candidate_group_keys = list(bootstrap_specs.keys())
+    if not candidate_group_keys:
+        raise RuntimeError("Bootstrap template currently requires at least one detected_group family")
+
     grouped = _group_annotation_rectangles(rectangles)
+    recognized_board_ids = _extract_annotation_board_ids(
+        annotated_image_path,
+        grouped,
+        candidate_group_keys=candidate_group_keys,
+    )
 
     def _sort_rectangles_by_column_then_row(
         items: List[Tuple[int, int, int, int]]
@@ -374,61 +1143,167 @@ def _build_boards_from_annotation_rectangles(
             ordered.extend(sorted(column, key=lambda rect: rect[1] + rect[3] / 2.0))
         return ordered
 
-    prototypes: Dict[str, dict] = {}
-    for board_cfg in template_cfg.get("boards", []):
-        family = _board_prototype_family(str(board_cfg.get("board_id", "")))
-        if family and family not in prototypes:
-            prototypes[family] = copy.deepcopy(board_cfg)
-
-    missing = [family for family in ("B", "S", "G1_LEFT", "G1_CENTER", "G1_RIGHT") if family not in prototypes]
-    if missing:
-        raise RuntimeError(
-            "Template config is missing board prototypes for: " + ", ".join(missing)
-        )
-
     generated_boards: List[dict] = []
 
-    checkerboard_large = _sort_rectangles_by_column_then_row(grouped["B"])
-    for index, rect in enumerate(checkerboard_large, start=1):
-        board_cfg = copy.deepcopy(prototypes["B"])
-        board_cfg["board_id"] = f"B{index}"
-        board_cfg["roi"] = [int(value) for value in rect]
-        generated_boards.append(board_cfg)
+    family_specs: Dict[str, dict] = {}
+    family_order: Dict[str, Tuple[int, int]] = {}
+    for group_index, (group, specs) in enumerate(bootstrap_specs.items()):
+        if not specs:
+            continue
+        board_type = str(specs[0]["board"].get("board_type", "")).strip().lower()
+        if board_type == "checkerboard":
+            if len(specs) != 1 or not specs[0]["generated_id_prefix"]:
+                raise RuntimeError(
+                    f"Bootstrap template must define exactly one {group} entry with generated_id_prefix"
+                )
+            family_specs[group] = specs[0]
+            family_order[group] = (group_index, 0)
+            continue
 
-    checkerboard_small = _sort_rectangles_by_column_then_row(grouped["S"])
-    for index, rect in enumerate(checkerboard_small, start=1):
-        board_cfg = copy.deepcopy(prototypes["S"])
-        board_cfg["board_id"] = f"S{index}"
-        board_cfg["roi"] = [int(value) for value in rect]
-        generated_boards.append(board_cfg)
+        if group == "G1":
+            for spec in specs:
+                family = _board_prototype_family(str(spec.get("generated_board_id", "")))
+                if family is None:
+                    raise RuntimeError("G1 bootstrap template entries must define a recognizable board.board_id")
+                if family in family_specs:
+                    raise RuntimeError(f"Duplicate bootstrap template family detected: {family}")
+                family_specs[family] = spec
+                family_order[family] = (group_index, int(spec.get("sort_rank", 0)))
+            continue
 
-    groundmaker_rects = sorted(grouped["G1"], key=lambda rect: rect[0] + rect[2] / 2.0)
-    groundmaker_family = [
-        ("G1_LEFT", "G1_left"),
-        ("G1_CENTER", "G1_center"),
-        ("G1_RIGHT", "G1_right"),
-    ]
-    for index, rect in enumerate(groundmaker_rects):
-        family_key, board_id = groundmaker_family[min(index, len(groundmaker_family) - 1)]
-        board_cfg = copy.deepcopy(prototypes[family_key])
-        board_cfg["board_id"] = board_id
+        if len(specs) != 1 or not specs[0].get("generated_id_prefix"):
+            raise RuntimeError(
+                f"Bootstrap template must define exactly one {group} entry with generated_id_prefix"
+            )
+        family_specs[group] = specs[0]
+        family_order[group] = (group_index, 0)
+
+    all_rects = _sort_rectangles_by_column_then_row(grouped["__ANNOTATION__"])
+
+    for rect in all_rects:
+        recognized_board_id = recognized_board_ids[rect]
+        family = _board_prototype_family(recognized_board_id)
+        if family not in family_specs:
+            raise RuntimeError(
+                f"No bootstrap template prototype matches recognized board ID {recognized_board_id!r}"
+            )
+        spec = family_specs[family]
+
+        board_cfg = copy.deepcopy(spec["board"])
+        board_cfg["board_id"] = recognized_board_id
         board_cfg["roi"] = [int(value) for value in rect]
+        if str(board_cfg.get("board_type", "")).strip().lower() == "custom_maker":
+            board_cfg["template_source_roi"] = [int(value) for value in rect]
+            board_cfg["template_source_crop"] = [0, 0, int(rect[2]), int(rect[3])]
         generated_boards.append(board_cfg)
 
     def _board_sort_key(board_cfg: dict) -> Tuple[int, int, int]:
         board_id = str(board_cfg.get("board_id", ""))
-        if board_id.startswith("B"):
-            return (0, int(re.sub(r"\D", "", board_id) or 0), 0)
-        if board_id.startswith("S"):
-            return (1, int(re.sub(r"\D", "", board_id) or 0), 0)
+        family = _board_prototype_family(board_id) or ""
+        if family in family_order:
+            group_rank, family_rank = family_order[family]
+            return (group_rank, family_rank, int(re.sub(r"\D", "", board_id) or 0))
+        generic_match = re.fullmatch(r"([A-Za-z]+)(\d+)", board_id)
+        if generic_match:
+            return (len(family_order), 0, int(generic_match.group(2)))
         groundmaker_rank = {"G1_left": 0, "G1_center": 1, "G1_right": 2}
-        return (2, groundmaker_rank.get(board_id, 99), 0)
+        return (len(family_order), groundmaker_rank.get(board_id, 99), 0)
 
     return sorted(generated_boards, key=_board_sort_key)
 
 
-def bootstrap_config_from_annotation(
+def _auto_upgrade_partial_checkerboards(
+    cfg: dict,
     config_path: Path,
+    real_image_path: Path,
+    camera_name: str,
+) -> List[str]:
+    calibrator = CameraCalibrator(copy.deepcopy(cfg), config_path=config_path)
+    board_cfg_by_id = {
+        str(board_cfg.get("board_id", "")).strip(): board_cfg
+        for board_cfg in cfg.get("boards", [])
+        if isinstance(board_cfg, dict)
+    }
+    template_dir = _bootstrap_partial_template_dir(real_image_path, camera_name)
+    template_dir.mkdir(parents=True, exist_ok=True)
+
+    upgraded_board_ids: List[str] = []
+    for board in calibrator.boards:
+        if board.board_type != "checkerboard" or board.roi is None:
+            continue
+
+        primary = calibrator._detect_checkerboard(calibrator.real_img, board)
+        if calibrator._is_visible(primary, board.min_detected_points):
+            continue
+
+        board_cfg = board_cfg_by_id.get(board.board_id)
+        if board_cfg is None:
+            continue
+
+        template_name = re.sub(r"[^A-Za-z0-9_]+", "_", board.board_id).strip("_") or "checkerboard"
+        template_path = template_dir / f"{template_name.lower()}_partial.png"
+        _materialize_auto_template_image(
+            calibrator.real_img,
+            board.roi,
+            int(board_cfg.get("template_binary_threshold", 150)),
+            template_path,
+        )
+
+        previous_values = {
+            "template_image": board_cfg.get("template_image"),
+            "template_match_threshold": board_cfg.get("template_match_threshold"),
+            "template_binary_threshold": board_cfg.get("template_binary_threshold"),
+            "min_detected_points": board_cfg.get("min_detected_points"),
+        }
+        board_cfg["template_image"] = _path_to_json_string(template_path)
+        board_cfg["custom_detector"] = "template_match"
+        board_cfg["template_match_threshold"] = float(board_cfg.get("template_match_threshold", 0.45))
+        board_cfg["template_binary_threshold"] = int(board_cfg.get("template_binary_threshold", 150))
+        current_min_detected_points = board_cfg.get("min_detected_points")
+        if current_min_detected_points is None:
+            board_cfg["min_detected_points"] = 9
+        else:
+            board_cfg["min_detected_points"] = min(int(current_min_detected_points), 9)
+
+        trial_calibrator = CameraCalibrator(copy.deepcopy(cfg), config_path=config_path)
+        trial_board = next((item for item in trial_calibrator.boards if item.board_id == board.board_id), None)
+        if trial_board is None:
+            continue
+        upgraded_detection = trial_calibrator._detect_board(trial_calibrator.real_img, trial_board)
+        if trial_calibrator._is_visible(upgraded_detection, trial_board.min_detected_points):
+            upgraded_board_ids.append(board.board_id)
+            continue
+
+        for key, value in previous_values.items():
+            if value is None:
+                board_cfg.pop(key, None)
+            else:
+                board_cfg[key] = value
+        _unlink_if_exists(template_path)
+
+    return upgraded_board_ids
+
+
+def _sync_materialized_board_fields_from_calibrator(cfg: dict, calibrator: "CameraCalibrator") -> None:
+    board_cfg_by_id = {
+        str(board_cfg.get("board_id", "")).strip(): board_cfg
+        for board_cfg in cfg.get("boards", [])
+        if isinstance(board_cfg, dict)
+    }
+    for board in calibrator.boards:
+        board_cfg = board_cfg_by_id.get(board.board_id)
+        if board_cfg is None:
+            continue
+        if board.template_image:
+            board_cfg["template_image"] = str(board.template_image)
+        if board.template_source_roi is not None:
+            board_cfg["template_source_roi"] = [int(value) for value in board.template_source_roi]
+        if board.template_source_crop is not None:
+            board_cfg["template_source_crop"] = [int(value) for value in board.template_source_crop]
+
+
+def bootstrap_config_from_annotation(
+    template_config_path: Path,
     real_image_path: Path,
     annotated_image_path: Path,
     output_path: Optional[Path] = None,
@@ -436,25 +1311,46 @@ def bootstrap_config_from_annotation(
     camera_name: Optional[str] = None,
     capture_current_params: bool = True,
 ) -> Tuple[Path, Path, List[dict]]:
-    with open(config_path, "r", encoding="utf-8-sig") as f:
-        cfg = json.load(f)
+    with open(template_config_path, "r", encoding="utf-8-sig") as f:
+        template_cfg = json.load(f)
+
+    cfg = _resolved_bootstrap_config(template_cfg)
 
     resolved_real_image = real_image_path.resolve()
     resolved_annotated_image = annotated_image_path.resolve()
     resolved_camera_name = camera_name or _derive_camera_name_from_image_path(resolved_real_image)
-    output_file = output_path or config_path.with_name(f"config.{resolved_camera_name}.json")
+    output_file = output_path or template_config_path.with_name(f"camera.{resolved_camera_name}.json")
     preview_file = preview_path or (_default_sim_output_root() / resolved_camera_name / "annotation_bootstrap_preview.png")
     output_file.parent.mkdir(parents=True, exist_ok=True)
     preview_file.parent.mkdir(parents=True, exist_ok=True)
 
     rectangles = _extract_annotation_rectangles(resolved_annotated_image)
-    generated_boards = _build_boards_from_annotation_rectangles(cfg, rectangles)
+    generated_boards = _build_boards_from_annotation_rectangles(
+        cfg,
+        rectangles,
+        resolved_annotated_image,
+    )
 
     cfg["real_image"] = _path_to_json_string(resolved_real_image)
     cfg.pop("output_dir", None)
+    cfg.pop("bootstrap_templates", None)
     cfg["boards"] = generated_boards
+    auto_upgraded_checkerboards = _auto_upgrade_partial_checkerboards(
+        cfg,
+        output_file,
+        resolved_real_image,
+        resolved_camera_name,
+    )
+    priority_accept_cfg = cfg.get("priority_board_acceptance")
+    if isinstance(priority_accept_cfg, dict) and not priority_accept_cfg.get("board_ids"):
+        priority_accept_cfg["board_ids"] = [
+            str(board.get("board_id", ""))
+            for board in generated_boards
+            if _is_custom_marker_board_type(str(board.get("board_type", "")))
+        ]
+    bootstrap_calibrator = CameraCalibrator(cfg, config_path=output_file)
+    _sync_materialized_board_fields_from_calibrator(cfg, bootstrap_calibrator)
     if capture_current_params:
-        bootstrap_calibrator = CameraCalibrator(cfg, config_path=output_file)
         current_values = bootstrap_calibrator.capture_initial_values()
         updated_names = _apply_initial_values_to_cfg(cfg, current_values)
         print(
@@ -493,25 +1389,48 @@ def bootstrap_config_from_annotation(
     print(f"Bootstrapped config: {output_file}")
     print(f"Bootstrap preview image: {preview_file}")
     print(f"Detected annotation rectangles: {len(rectangles)}")
+    if auto_upgraded_checkerboards:
+        print(
+            "Bootstrap auto-upgraded partial checkerboards: "
+            + ", ".join(auto_upgraded_checkerboards)
+        )
     for board_cfg in generated_boards:
         print(f"{board_cfg['board_id']}: roi={board_cfg['roi']}")
     return output_file, preview_file, generated_boards
 
 
 def _camera_history_summary_path(camera_name: str) -> Path:
-    return _default_sim_output_root() / camera_name / "camera_summary.json"
+    return _default_sim_output_root() / _canonical_camera_group_name(camera_name) / "camera_summary.json"
 
 
 def _camera_history_summary_compact_path(camera_name: str) -> Path:
-    return _default_sim_output_root() / camera_name / "camera_summary_compact.json"
+    return _default_sim_output_root() / _canonical_camera_group_name(camera_name) / "camera_summary_compact.json"
 
 
 def _iter_camera_history_dirs(camera_name: str) -> List[Path]:
     root = _default_sim_output_root()
-    camera_root = root / camera_name
+    camera_root = root / _canonical_camera_group_name(camera_name)
     if not camera_root.exists() or not camera_root.is_dir():
         return []
     return [camera_root]
+
+
+def _canonical_camera_group_name(name: str) -> str:
+    raw_name = str(name).strip()
+    if not raw_name:
+        return raw_name
+    for suffix in (
+        "_baseline_compare",
+        "_bootstrap_auto",
+        "_bootstrap_custom_maker",
+        "_from_template",
+        "_lock_validation",
+        "_manual_g1center_test",
+        "_validation",
+    ):
+        if raw_name.endswith(suffix) and len(raw_name) > len(suffix):
+            return raw_name[: -len(suffix)]
+    return raw_name
 
 
 def _camera_name_from_output_dir(output_dir: Path) -> str:
@@ -519,10 +1438,10 @@ def _camera_name_from_output_dir(output_dir: Path) -> str:
     try:
         relative_parts = output_dir.resolve().relative_to(root.resolve()).parts
     except Exception:
-        return output_dir.name
+        return _canonical_camera_group_name(output_dir.name)
     if relative_parts:
-        return relative_parts[0]
-    return output_dir.name
+        return _canonical_camera_group_name(relative_parts[0])
+    return _canonical_camera_group_name(output_dir.name)
 
 
 def _load_json_if_exists(path: Path) -> Optional[dict]:
@@ -597,6 +1516,66 @@ def _build_campaign_digest(campaign_payload: dict, campaign_summary_path: Path) 
     }
 
 
+def _format_duration_stats_seconds(seconds: float) -> str:
+    total_ms = max(0, int(round(float(seconds) * 1000.0)))
+    hours, rem_ms = divmod(total_ms, 3600 * 1000)
+    minutes, rem_ms = divmod(rem_ms, 60 * 1000)
+    secs, millis = divmod(rem_ms, 1000)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}.{millis:03d}"
+
+
+def _build_camera_history_overview(summary: dict) -> Optional[dict]:
+    runs = [item for item in (summary.get("runs") or []) if isinstance(item, dict)]
+    if not runs:
+        return None
+
+    first_run = runs[0]
+    latest_run = runs[-1]
+    best_run = summary.get("best_run") if isinstance(summary.get("best_run"), dict) else None
+
+    total_iteration_round_count = sum(int(item.get("iteration_round_count") or 0) for item in runs)
+    total_history_event_count = sum(int(item.get("history_event_count") or 0) for item in runs)
+    total_iter_count = sum(
+        max(
+            0,
+            int(item.get("history_event_count") or 0) - int(item.get("iteration_round_count") or 0),
+        )
+        for item in runs
+    )
+    total_elapsed_sec = sum(float(item.get("total_elapsed_sec") or 0.0) for item in runs)
+    total_score_improvement = sum(float(item.get("score_improvement") or 0.0) for item in runs)
+    run_count = len(runs)
+    average_run_elapsed_sec = total_elapsed_sec / max(1, run_count)
+    average_iter_count = total_iter_count / max(1, run_count)
+    average_iter_elapsed_sec = total_elapsed_sec / max(1, total_iter_count)
+
+    first_start_score = float(first_run.get("start_score") or 0.0)
+    latest_final_score = float(latest_run.get("final_score") or 0.0)
+    best_final_score = float(best_run.get("final_score") or latest_final_score) if best_run else latest_final_score
+
+    return {
+        "started_at": first_run.get("started_at"),
+        "finished_at": latest_run.get("finished_at"),
+        "run_count": run_count,
+        "campaign_count": int(summary.get("campaign_count") or 0),
+        "passed_run_count": int(summary.get("passed_run_count") or 0),
+        "total_iter_count": total_iter_count,
+        "average_iter_count": average_iter_count,
+        "total_round_count": total_iteration_round_count,
+        "total_elapsed_sec": total_elapsed_sec,
+        "total_elapsed_text": _format_duration_stats_seconds(total_elapsed_sec),
+        "average_run_elapsed_sec": average_run_elapsed_sec,
+        "average_run_elapsed_text": _format_duration_stats_seconds(average_run_elapsed_sec),
+        "average_iter_elapsed_sec": average_iter_elapsed_sec,
+        "average_iter_elapsed_text": _format_duration_stats_seconds(average_iter_elapsed_sec),
+        "first_start_score": first_start_score,
+        "latest_final_score": latest_final_score,
+        "best_final_score": best_final_score,
+        "net_score_improvement_to_latest": first_start_score - latest_final_score,
+        "net_score_improvement_to_best": first_start_score - best_final_score,
+    }
+
+
 def _build_camera_history_summary(camera_name: str) -> dict:
     history_dirs = _iter_camera_history_dirs(camera_name)
     run_digests: List[dict] = []
@@ -666,9 +1645,7 @@ def _build_camera_history_summary_compact(summary: dict) -> dict:
     return {
         "camera": summary.get("camera"),
         "generated_at": summary.get("generated_at"),
-        "run_count": summary.get("run_count"),
-        "passed_run_count": summary.get("passed_run_count"),
-        "campaign_count": summary.get("campaign_count"),
+        "overview": _build_camera_history_overview(summary),
         "first_run": (summary.get("runs") or [None])[0],
         "best_run": summary.get("best_run"),
         "latest_run": summary.get("latest_run"),
@@ -732,20 +1709,26 @@ def _marker_name_for_output_dir(output_dir: Path) -> str:
     return f"{output_dir.name}_last.json"
 
 
+def _camera_scope_output_dir(output_dir: Path) -> Path:
+    """Return the camera-scoped root directory under SimOutput for an output path."""
+    root = _default_sim_output_root()
+    try:
+        relative = output_dir.relative_to(root)
+    except Exception:
+        return output_dir
+    if not relative.parts:
+        return output_dir
+    return root / _canonical_camera_group_name(relative.parts[0])
+
+
 def _marker_path_for_output_dir(output_dir: Path) -> Path:
     """Return marker path for an output_dir.
 
-    Prefer placing the marker inside the camera parent directory (if
-    the output_dir is under the SimOutput root and has a parent there),
-    otherwise fall back to the SimOutput root.
+    Prefer placing the marker inside the camera-scoped directory under
+    SimOutput, otherwise fall back to the output_dir itself.
     """
-    root = _default_sim_output_root()
-    parent = output_dir.parent
-    try:
-        parent.relative_to(root)
-        return parent / _marker_name_for_output_dir(output_dir)
-    except Exception:
-        return root / _marker_name_for_output_dir(output_dir)
+    camera_scope_dir = _camera_scope_output_dir(output_dir)
+    return camera_scope_dir / _marker_name_for_output_dir(output_dir)
 
 
 def _write_run_marker(marker_path: Path, payload: dict) -> None:
@@ -817,6 +1800,36 @@ def _write_initial_values_to_config(config_path: Path, values: Dict[str, float])
     )
 
 
+def _write_initial_values_to_config_if_best(
+    config_path: Path,
+    camera_name: str,
+    best_score: float,
+    values: Dict[str, float],
+    tolerance: float = 1e-6,
+) -> bool:
+    summary_path = _camera_history_summary_path(camera_name)
+    previous_best_score: Optional[float] = None
+    if summary_path.exists():
+        try:
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            best_run = summary.get("best_run")
+            if isinstance(best_run, dict):
+                previous_best_score = float(best_run.get("final_score"))
+        except Exception:
+            previous_best_score = None
+
+    if previous_best_score is not None and float(best_score) > previous_best_score + tolerance:
+        print(
+            "Skipped config initial update: "
+            f"path={config_path}, current_best={float(best_score):.6f}, "
+            f"history_best={previous_best_score:.6f}"
+        )
+        return False
+
+    _write_initial_values_to_config(config_path, values)
+    return True
+
+
 def _apply_initial_values_to_cfg(cfg: dict, values: Dict[str, float]) -> List[str]:
     parameters = cfg.get("parameters", {})
     updated_names: List[str] = []
@@ -871,6 +1884,12 @@ def _build_explicit_parameter_config(param_cfg: dict, initial_value: float) -> d
     return explicit_param_cfg
 
 
+def _set_run_local_script_control_result_path(run_cfg: dict, output_dir: Path) -> None:
+    configured_path = str(run_cfg.get("script_control_result_path", "")).strip()
+    result_name = Path(configured_path).name if configured_path else "script_control_camera_apply_result.txt"
+    run_cfg["script_control_result_path"] = str((output_dir / result_name).resolve())
+
+
 def _build_multi_start_run_configs(
     cfg: dict,
     base_output_dir: Path,
@@ -888,14 +1907,16 @@ def _build_multi_start_run_configs(
         raise ValueError("parameters must be a non-empty object for multi-start mode")
 
     root_output_dir = output_root_dir or _build_isolated_output_dir(
-        f"{base_output_dir.name}_multistart", camera_parent=base_output_dir.name
+        "multistart", camera_parent=base_output_dir.name
     )
     rng = random.Random(seed)
     run_cfgs: List[dict] = []
 
     for start_index in range(start_count):
         run_cfg = copy.deepcopy(cfg)
-        run_cfg["output_dir"] = str(root_output_dir / f"start_{start_index:02d}")
+        run_output_dir = root_output_dir / f"start_{start_index:02d}"
+        run_cfg["output_dir"] = str(run_output_dir)
+        _set_run_local_script_control_result_path(run_cfg, run_output_dir)
         if max_iters_override is not None:
             run_cfg["max_iters"] = int(max_iters_override)
 
@@ -1010,6 +2031,8 @@ def _run_multi_start_campaign(
                 }
             )
             print(f"Multi-start run {start_index + 1} failed: {exc}")
+            if _is_fatal_initial_board_error(exc):
+                raise
 
     successful_runs = [entry for entry in run_summaries if entry.get("status") == "finished"]
     successful_runs.sort(key=lambda item: float(item["best_score"]))
@@ -1073,14 +2096,15 @@ def _run_explore_then_refine_campaign(
     seed: int,
     explore_max_iters: int,
     refine_max_iters: Optional[int],
+    output_root_dir: Optional[Path] = None,
 ) -> dict:
     if start_count <= 0:
         raise ValueError("explore-then-refine mode requires a positive start count")
     if explore_max_iters <= 0:
         raise ValueError("explore-then-refine mode requires positive explore iterations")
 
-    campaign_root = _build_isolated_output_dir(
-        f"{base_output_dir.name}_campaign", camera_parent=base_output_dir.name
+    campaign_root = output_root_dir or _build_isolated_output_dir(
+        "campaign", camera_parent=base_output_dir.name
     )
     campaign_root.mkdir(parents=True, exist_ok=True)
 
@@ -1110,6 +2134,7 @@ def _run_explore_then_refine_campaign(
     refine_cfg = _cfg_with_initial_values(cfg, best_values)
     refine_output_dir = campaign_root / "refine"
     refine_cfg["output_dir"] = str(refine_output_dir)
+    _set_run_local_script_control_result_path(refine_cfg, refine_output_dir)
     if refine_max_iters is not None:
         refine_cfg["max_iters"] = int(refine_max_iters)
 
@@ -1165,6 +2190,390 @@ def _run_explore_then_refine_campaign(
     return summary
 
 
+def _load_strategy_adaptation_from_result_json(result_json: Optional[str]) -> Optional[dict]:
+    if not result_json:
+        return None
+    payload = _load_json_if_exists(Path(result_json))
+    if not isinstance(payload, dict):
+        return None
+    strategy_payload = payload.get("strategy_adaptation")
+    if not isinstance(strategy_payload, dict):
+        return None
+    return dict(strategy_payload)
+
+
+def _cfg_with_round_guidance(
+    cfg: dict,
+    best_values: Dict[str, float],
+    strategy_payload: Optional[dict],
+) -> dict:
+    next_cfg = _cfg_with_initial_values(cfg, best_values)
+    if not isinstance(strategy_payload, dict):
+        return next_cfg
+
+    raw_order = strategy_payload.get("current_param_order")
+    if not isinstance(raw_order, list):
+        return next_cfg
+
+    current_params = next_cfg.get("parameters") or {}
+    guided_order: List[str] = []
+    seen: set[str] = set()
+    for raw_name in raw_order:
+        name = str(raw_name).strip()
+        if not name or name in seen or name not in current_params:
+            continue
+        guided_order.append(name)
+        seen.add(name)
+    for name in current_params.keys():
+        if name not in seen:
+            guided_order.append(name)
+
+    if guided_order:
+        next_cfg["optimization_order"] = guided_order
+    return next_cfg
+
+
+def _write_rounds_summary(rounds_root: Path, payload: dict) -> Path:
+    rounds_root.mkdir(parents=True, exist_ok=True)
+    summary_path = rounds_root / "rounds_summary.json"
+    summary_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return summary_path
+
+
+def _is_fatal_initial_board_error(exc: Exception) -> bool:
+    return str(exc).startswith("Initial evaluation aborted due to fatal board scores:")
+
+
+def _run_single_optimize(
+    config_path: Path,
+    cfg: dict,
+    base_output_dir: Path,
+    camera_name: str,
+    *,
+    resume_from_result: bool,
+    output_dir_override: Optional[Path] = None,
+) -> dict:
+    run_cfg = copy.deepcopy(cfg)
+    marker_path = _marker_path_for_output_dir(base_output_dir)
+    resume_result_path: Optional[Path] = None
+    if resume_from_result:
+        resume_result_path = _read_latest_result_path(marker_path, base_output_dir)
+
+    if output_dir_override is not None:
+        run_cfg["output_dir"] = str(output_dir_override)
+    else:
+        run_cfg["output_dir"] = str(
+            _build_isolated_output_dir("run", camera_parent=base_output_dir.name)
+        )
+
+    marker_payload = {
+        "started_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "config": str(config_path),
+        "base_output_dir": str(base_output_dir),
+        "output_dir": str(run_cfg["output_dir"]),
+        "max_iters": int(run_cfg.get("max_iters", 0)),
+        "resume_from_result": bool(resume_from_result),
+        "status": "starting",
+    }
+    _write_run_marker(marker_path, marker_payload)
+
+    live_log_path = _configure_live_log(run_cfg, resume_from_result)
+    print("Live log:", str(live_log_path))
+    print("Isolated output dir:", str(run_cfg["output_dir"]))
+
+    marker_payload["status"] = "running"
+    marker_payload["live_log"] = str(live_log_path)
+    _write_run_marker(marker_path, marker_payload)
+
+    calib = CameraCalibrator(run_cfg, config_path=config_path)
+    calib.live_log_path = live_log_path
+    try:
+        if resume_from_result:
+            calib.load_best_values_from_result(
+                resume_result_path or (base_output_dir / "result.json")
+            )
+
+        result = calib.optimize()
+        _write_initial_values_to_config_if_best(
+            config_path,
+            camera_name,
+            float(result["best_score"]),
+            result["best_values"],
+        )
+        marker_payload.update(
+            {
+                "status": "finished",
+                "finished_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "best_score": result["best_score"],
+                "best_values": result["best_values"],
+                "best_image": result["best_image"],
+                "result_json": str(Path(run_cfg["output_dir"]) / "result.json"),
+                "run_session_id": result.get("run_session_id"),
+            }
+        )
+        _write_run_marker(marker_path, marker_payload)
+        return {
+            "output_dir": str(run_cfg["output_dir"]),
+            "live_log": str(live_log_path),
+            "result": result,
+            "result_json": str(Path(run_cfg["output_dir"]) / "result.json"),
+        }
+    except Exception as exc:
+        marker_payload.update(
+            {
+                "status": "failed",
+                "failed_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "error": str(exc),
+            }
+        )
+        _write_run_marker(marker_path, marker_payload)
+        raise
+
+
+def _run_plain_optimize_rounds(
+    config_path: Path,
+    cfg: dict,
+    base_output_dir: Path,
+    camera_name: str,
+    round_count: int,
+    *,
+    resume_from_result: bool,
+) -> dict:
+    if round_count <= 0:
+        raise ValueError("round_count must be positive")
+
+    rounds_root = _build_isolated_output_dir("rounds", camera_parent=base_output_dir.name)
+    active_cfg = copy.deepcopy(cfg)
+    target_score = float(cfg.get("target_score", 5.0))
+    round_summaries: List[dict] = []
+    best_round: Optional[dict] = None
+
+    for round_index in range(round_count):
+        round_no = round_index + 1
+        round_output_dir = rounds_root / f"round_{round_no:02d}" / "run"
+        print(
+            f"Plain optimize rounds: round={round_no}/{round_count} "
+            f"output_dir={round_output_dir}"
+        )
+        run_payload = _run_single_optimize(
+            config_path=config_path,
+            cfg=active_cfg,
+            base_output_dir=base_output_dir,
+            camera_name=camera_name,
+            resume_from_result=resume_from_result and round_index == 0,
+            output_dir_override=round_output_dir,
+        )
+        result = dict(run_payload["result"])
+        strategy_payload = result.get("strategy_adaptation")
+        current_param_order: List[str] = []
+        if isinstance(strategy_payload, dict):
+            raw_order = strategy_payload.get("current_param_order")
+            if isinstance(raw_order, list):
+                current_param_order = [str(item) for item in raw_order]
+        round_entry = {
+            "round_index": round_no,
+            "output_dir": run_payload["output_dir"],
+            "live_log": run_payload["live_log"],
+            "best_score": result["best_score"],
+            "best_values": result["best_values"],
+            "best_image": result["best_image"],
+            "result_json": run_payload["result_json"],
+            "current_param_order": current_param_order,
+        }
+        round_summaries.append(round_entry)
+        if best_round is None or float(round_entry["best_score"]) < float(best_round["best_score"]):
+            best_round = round_entry
+        active_cfg = _cfg_with_round_guidance(
+            active_cfg,
+            dict(result["best_values"]),
+            strategy_payload if isinstance(strategy_payload, dict) else None,
+        )
+        if float(result["best_score"]) <= target_score:
+            print(
+                f"Plain optimize rounds: stop early at round {round_no} because target_score was reached"
+            )
+            break
+
+    payload = {
+        "mode": "plain-optimize-rounds",
+        "config": str(config_path),
+        "camera": camera_name,
+        "round_count_requested": round_count,
+        "round_count_completed": len(round_summaries),
+        "rounds_output_dir": str(rounds_root),
+        "best_round": best_round,
+        "rounds": round_summaries,
+    }
+    payload["summary_json"] = str(_write_rounds_summary(rounds_root, payload))
+    return payload
+
+
+def _run_multi_start_rounds(
+    config_path: Path,
+    cfg: dict,
+    base_output_dir: Path,
+    camera_name: str,
+    round_count: int,
+    start_count: int,
+    jitter_steps: float,
+    seed: int,
+    max_iters_override: Optional[int],
+) -> dict:
+    if round_count <= 0:
+        raise ValueError("round_count must be positive")
+
+    rounds_root = _build_isolated_output_dir("rounds", camera_parent=base_output_dir.name)
+    active_cfg = copy.deepcopy(cfg)
+    target_score = float(cfg.get("target_score", 5.0))
+    round_summaries: List[dict] = []
+    best_round: Optional[dict] = None
+
+    for round_index in range(round_count):
+        round_no = round_index + 1
+        round_output_dir = rounds_root / f"round_{round_no:02d}" / "multistart"
+        round_seed = int(seed) + round_index
+        print(
+            f"Multi-start rounds: round={round_no}/{round_count} "
+            f"seed={round_seed} output_dir={round_output_dir}"
+        )
+        summary = _run_multi_start_campaign(
+            config_path=config_path,
+            cfg=active_cfg,
+            base_output_dir=base_output_dir,
+            start_count=start_count,
+            jitter_steps=jitter_steps,
+            seed=round_seed,
+            max_iters_override=max_iters_override,
+            output_root_dir=round_output_dir,
+        )
+        best_run = dict(summary["best_run"])
+        _write_initial_values_to_config_if_best(
+            config_path,
+            camera_name,
+            float(best_run["best_score"]),
+            best_run["best_values"],
+        )
+        strategy_payload = _load_strategy_adaptation_from_result_json(best_run.get("result_json"))
+        current_param_order: List[str] = []
+        if isinstance(strategy_payload, dict):
+            raw_order = strategy_payload.get("current_param_order")
+            if isinstance(raw_order, list):
+                current_param_order = [str(item) for item in raw_order]
+        round_entry = {
+            "round_index": round_no,
+            "seed": round_seed,
+            "output_dir": summary["output_dir"],
+            "best_run": best_run,
+            "current_param_order": current_param_order,
+        }
+        round_summaries.append(round_entry)
+        if best_round is None or float(best_run["best_score"]) < float(best_round["best_run"]["best_score"]):
+            best_round = round_entry
+        active_cfg = _cfg_with_round_guidance(active_cfg, dict(best_run["best_values"]), strategy_payload)
+        if float(best_run["best_score"]) <= target_score:
+            print(
+                f"Multi-start rounds: stop early at round {round_no} because target_score was reached"
+            )
+            break
+
+    payload = {
+        "mode": "multi-start-rounds",
+        "config": str(config_path),
+        "camera": camera_name,
+        "round_count_requested": round_count,
+        "round_count_completed": len(round_summaries),
+        "rounds_output_dir": str(rounds_root),
+        "best_round": best_round,
+        "rounds": round_summaries,
+    }
+    payload["summary_json"] = str(_write_rounds_summary(rounds_root, payload))
+    return payload
+
+
+def _run_explore_then_refine_rounds(
+    config_path: Path,
+    cfg: dict,
+    base_output_dir: Path,
+    camera_name: str,
+    round_count: int,
+    start_count: int,
+    jitter_steps: float,
+    seed: int,
+    explore_max_iters: int,
+    refine_max_iters: Optional[int],
+) -> dict:
+    if round_count <= 0:
+        raise ValueError("round_count must be positive")
+
+    rounds_root = _build_isolated_output_dir("rounds", camera_parent=base_output_dir.name)
+    active_cfg = copy.deepcopy(cfg)
+    target_score = float(cfg.get("target_score", 5.0))
+    round_summaries: List[dict] = []
+    best_round: Optional[dict] = None
+
+    for round_index in range(round_count):
+        round_no = round_index + 1
+        round_output_dir = rounds_root / f"round_{round_no:02d}" / "campaign"
+        round_seed = int(seed) + round_index
+        print(
+            f"Explore-then-refine rounds: round={round_no}/{round_count} "
+            f"seed={round_seed} output_dir={round_output_dir}"
+        )
+        summary = _run_explore_then_refine_campaign(
+            config_path=config_path,
+            cfg=active_cfg,
+            base_output_dir=base_output_dir,
+            start_count=start_count,
+            jitter_steps=jitter_steps,
+            seed=round_seed,
+            explore_max_iters=explore_max_iters,
+            refine_max_iters=refine_max_iters,
+            output_root_dir=round_output_dir,
+        )
+        best_run = dict(summary["best_run"])
+        _write_initial_values_to_config_if_best(
+            config_path,
+            camera_name,
+            float(best_run["best_score"]),
+            best_run["best_values"],
+        )
+        strategy_payload = _load_strategy_adaptation_from_result_json(best_run.get("result_json"))
+        current_param_order: List[str] = []
+        if isinstance(strategy_payload, dict):
+            raw_order = strategy_payload.get("current_param_order")
+            if isinstance(raw_order, list):
+                current_param_order = [str(item) for item in raw_order]
+        round_entry = {
+            "round_index": round_no,
+            "seed": round_seed,
+            "campaign_output_dir": summary["campaign_output_dir"],
+            "best_run": best_run,
+            "current_param_order": current_param_order,
+        }
+        round_summaries.append(round_entry)
+        if best_round is None or float(best_run["best_score"]) < float(best_round["best_run"]["best_score"]):
+            best_round = round_entry
+        active_cfg = _cfg_with_round_guidance(active_cfg, dict(best_run["best_values"]), strategy_payload)
+        if float(best_run["best_score"]) <= target_score:
+            print(
+                f"Explore-then-refine rounds: stop early at round {round_no} because target_score was reached"
+            )
+            break
+
+    payload = {
+        "mode": "explore-then-refine-rounds",
+        "config": str(config_path),
+        "camera": camera_name,
+        "round_count_requested": round_count,
+        "round_count_completed": len(round_summaries),
+        "rounds_output_dir": str(rounds_root),
+        "best_round": best_round,
+        "rounds": round_summaries,
+    }
+    payload["summary_json"] = str(_write_rounds_summary(rounds_root, payload))
+    return payload
+
+
 @dataclass
 class ParameterSpec:
     name: str
@@ -1183,6 +2592,9 @@ class BoardProfile:
     weight: float
     critical: bool
     roi: Optional[Tuple[int, int, int, int]]
+    detect_roi_padding: int = 0
+    template_source_roi: Optional[Tuple[int, int, int, int]] = None
+    template_source_crop: Optional[Tuple[int, int, int, int]] = None
     board_size: Optional[Tuple[int, int]] = None
     square_size: float = 1.0
     alpha: float = 1000.0
@@ -1299,10 +2711,18 @@ class CameraCalibrator:
 
     def __init__(self, cfg: dict, config_path: Optional[Path] = None):
         self.cfg = cfg
+        self.config_path = config_path
         self.repo_root = Path(__file__).resolve().parents[3]
         self.output_dir = _resolve_config_output_dir(cfg, config_path)
         cfg["output_dir"] = str(self.output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.real_image_path = Path(cfg["real_image"]).resolve()
+        self.camera_name = _derive_camera_name_from_image_path(self.real_image_path)
+        if not self.camera_name:
+            self.camera_name = _camera_name_from_config_path(config_path)
+        cache_name = re.sub(r"[^A-Za-z0-9_]+", "_", self.camera_name or "camera").strip("_") or "camera"
+        camera_scope_dir = _camera_scope_output_dir(self.output_dir)
+        self.movie_size_cache_path = camera_scope_dir / f"{cache_name.lower()}_movie_size_cache.txt"
 
         self.real_img = cv2.imread(cfg["real_image"], cv2.IMREAD_GRAYSCALE)
         if self.real_img is None:
@@ -1345,20 +2765,11 @@ class CameraCalibrator:
         self.script_control_timeout_sec = float(cfg.get("script_control_timeout_sec", 5.0))
         self.script_control_settle_sec = float(cfg.get("script_control_settle_sec", 0.2))
         self.template_feature_max_dim = int(cfg.get("template_feature_max_dim", 2048))
-        self.movie_auto_crop_content = bool(cfg.get("movie_auto_crop_content", True))
-        self.movie_match_reference_aspect = bool(
-            cfg.get("movie_match_reference_aspect", True)
-        )
         self.comparison_mode = str(cfg.get("comparison_mode", "direct")).lower()
         if self.comparison_mode not in {"direct", "overlay_residual"}:
             raise ValueError("comparison_mode must be 'direct' or 'overlay_residual'")
         self.overlay_residual_threshold = int(cfg.get("overlay_residual_threshold", 12))
         self.overlay_residual_blur = int(cfg.get("overlay_residual_blur", 0))
-        self.movie_aspect_crop_anchor = str(
-            cfg.get("movie_aspect_crop_anchor", "top-left")
-        ).lower()
-        if self.movie_aspect_crop_anchor not in {"top-left", "center"}:
-            raise ValueError("movie_aspect_crop_anchor must be 'top-left' or 'center'")
         self.verify_all_coordinate_fields = bool(
             cfg.get("verify_all_coordinate_fields", True)
         )
@@ -1430,6 +2841,128 @@ class CameraCalibrator:
         self.joint_exploration_trial_multipliers = trial_multipliers or [1.0]
         self.param_order_index = {param.name: index for index, param in enumerate(self.params)}
         self.preferred_directions = {param.name: 1.0 for param in self.params}
+        strategy_cfg = cfg.get("strategy_adaptation", {})
+        self.strategy_adaptation_enabled = bool(strategy_cfg.get("enabled", False))
+        self.strategy_reorder_params = bool(strategy_cfg.get("reorder_params", True))
+        self.strategy_adjust_step_scale = bool(strategy_cfg.get("adjust_step_scale", True))
+        self.strategy_focus_on_joint_candidates = bool(
+            strategy_cfg.get("focus_on_joint_candidates", True)
+        )
+        self.strategy_bottleneck_board_awareness = bool(
+            strategy_cfg.get("bottleneck_board_awareness", True)
+        )
+        self.strategy_bottleneck_top_k = max(
+            1,
+            int(strategy_cfg.get("bottleneck_top_k", 2)),
+        )
+        self.strategy_bottleneck_min_improvement = max(
+            0.0,
+            float(strategy_cfg.get("bottleneck_min_improvement", 0.1)),
+        )
+        self.strategy_bottleneck_priority_boost = max(
+            0.0,
+            float(strategy_cfg.get("bottleneck_priority_boost", 1.25)),
+        )
+        self.strategy_priority_decay = min(
+            1.0,
+            max(0.0, float(strategy_cfg.get("priority_decay", 0.82))),
+        )
+        self.strategy_accepted_priority_boost = float(
+            strategy_cfg.get("accepted_priority_boost", 2.5)
+        )
+        self.strategy_joint_candidate_priority_boost = float(
+            strategy_cfg.get("joint_candidate_priority_boost", 0.75)
+        )
+        self.strategy_rejected_priority_penalty = float(
+            strategy_cfg.get("rejected_priority_penalty", 0.15)
+        )
+        self.strategy_step_scale_up = max(
+            1.0,
+            float(strategy_cfg.get("step_scale_up", 1.35)),
+        )
+        self.strategy_step_scale_down = min(
+            1.0,
+            max(0.05, float(strategy_cfg.get("step_scale_down", 0.85))),
+        )
+        self.strategy_stagnation_patience = max(
+            1,
+            int(strategy_cfg.get("stagnation_patience", 2)),
+        )
+        self.strategy_stagnation_step_scale_up = max(
+            1.0,
+            float(strategy_cfg.get("stagnation_step_scale_up", 1.2)),
+        )
+        self.strategy_min_step_scale = max(
+            0.05,
+            float(strategy_cfg.get("min_step_scale", 0.5)),
+        )
+        self.strategy_max_step_scale = max(
+            self.strategy_min_step_scale,
+            float(strategy_cfg.get("max_step_scale", 3.0)),
+        )
+        default_profiles = [
+            {
+                "name": "baseline",
+                "min_stagnation": 0,
+                "single_trial_multipliers": [1.0],
+                "joint_trial_multipliers": [],
+            },
+            {
+                "name": "expanded",
+                "min_stagnation": 2,
+                "single_trial_multipliers": [1.0, 2.0],
+                "joint_trial_multipliers": [6.0],
+            },
+            {
+                "name": "aggressive",
+                "min_stagnation": 4,
+                "single_trial_multipliers": [1.0, 2.0, 4.0],
+                "joint_trial_multipliers": [6.0, 8.0],
+            },
+        ]
+        raw_profiles = strategy_cfg.get("exploration_profiles", default_profiles)
+        if not isinstance(raw_profiles, list):
+            raw_profiles = default_profiles
+        self.strategy_exploration_profiles: List[Dict[str, object]] = []
+        for index, raw_profile in enumerate(raw_profiles):
+            if not isinstance(raw_profile, dict):
+                continue
+            profile_name = str(raw_profile.get("name", f"profile_{index}")).strip()
+            if not profile_name:
+                profile_name = f"profile_{index}"
+            self.strategy_exploration_profiles.append(
+                {
+                    "name": profile_name,
+                    "min_stagnation": max(0, int(raw_profile.get("min_stagnation", 0))),
+                    "single_trial_multipliers": self._normalize_trial_multiplier_values(
+                        raw_profile.get("single_trial_multipliers", [1.0]),
+                        default=[1.0],
+                    ),
+                    "joint_trial_multipliers": self._normalize_trial_multiplier_values(
+                        raw_profile.get("joint_trial_multipliers", []),
+                        default=[],
+                    ),
+                }
+            )
+        if not self.strategy_exploration_profiles:
+            self.strategy_exploration_profiles = default_profiles
+        self.strategy_exploration_profiles.sort(
+            key=lambda profile: int(profile.get("min_stagnation", 0))
+        )
+        self.strategy_stagnation_count = 0
+        self.strategy_param_state = {
+            param.name: {
+                "priority_score": 0.0,
+                "step_scale": 1.0,
+                "attempt_count": 0,
+                "accepted_count": 0,
+                "joint_candidate_count": 0,
+                "bottleneck_focus_score": 0.0,
+                "last_bottleneck_boards": [],
+                "last_accepted_iteration": None,
+            }
+            for param in self.params
+        }
         self.resume_result_path: Optional[Path] = None
         self.resume_best_score: Optional[float] = None
         self.live_log_path: Optional[Path] = None
@@ -1443,8 +2976,32 @@ class CameraCalibrator:
         if not self.boards:
             raise ValueError("boards must be a non-empty array")
 
+        self._materialize_custom_maker_templates()
+
         self.custom_templates = self._load_custom_templates(self.boards)
         self.real_detections: Optional[Dict[str, DetectionResult]] = None
+
+    def _materialize_custom_maker_templates(self) -> None:
+        template_dir = _bootstrap_partial_template_dir(self.real_image_path, self.camera_name)
+        for board in self.boards:
+            if board.board_type != "custom_maker" or board.template_image or board.roi is None:
+                continue
+            template_source_roi = board.template_source_roi or board.roi
+            manual_crop = board.template_source_crop
+            if manual_crop is None:
+                _, _, source_w, source_h = template_source_roi
+                manual_crop = (0, 0, int(source_w), int(source_h))
+            template_name = re.sub(r"[^A-Za-z0-9_]+", "_", board.board_id).strip("_") or "custom_maker"
+            template_path = template_dir / f"{template_name.lower()}_auto.png"
+            template_path, template_source_crop = _materialize_auto_template_image(
+                self.real_img,
+                template_source_roi,
+                board.template_binary_threshold,
+                template_path,
+                manual_crop=manual_crop,
+            )
+            board.template_image = _path_to_json_string(template_path)
+            board.template_source_crop = template_source_crop
 
     @staticmethod
     def _read_clipboard_text() -> str:
@@ -1625,10 +3182,12 @@ class CameraCalibrator:
             board_type = str(board.get("board_type", "")).strip().lower()
             if not board_id:
                 raise ValueError("Each board must provide board_id")
-            if board_type not in {"checkerboard", "custom_groundmaker"}:
+            if board_type not in {"checkerboard", "custom_groundmaker", "custom_maker"}:
                 raise ValueError(f"Unsupported board_type for {board_id}: {board_type}")
 
             roi = self._parse_roi(board.get("roi"))
+            template_source_roi = self._parse_roi(board.get("template_source_roi"))
+            template_source_crop = self._parse_roi(board.get("template_source_crop"))
             board_size = None
             if board_type == "checkerboard":
                 raw_size = board.get("board_size")
@@ -1639,7 +3198,8 @@ class CameraCalibrator:
                 board_size = (int(raw_size[0]), int(raw_size[1]))
 
             min_points_default = board_size[0] * board_size[1] if board_size else 6
-            custom_detector = str(board.get("custom_detector", "feature")).strip().lower()
+            default_detector = "template_match" if board_type == "custom_maker" else "feature"
+            custom_detector = str(board.get("custom_detector", default_detector)).strip().lower()
             if custom_detector not in {"feature", "template_match"}:
                 raise ValueError(
                     f"Unsupported custom_detector for {board_id}: {custom_detector}"
@@ -1651,6 +3211,9 @@ class CameraCalibrator:
                     weight=self._read_float(board.get("weight"), 1.0),
                     critical=bool(board.get("critical", True)),
                     roi=roi,
+                    detect_roi_padding=self._read_int(board.get("detect_roi_padding"), 0),
+                    template_source_roi=template_source_roi,
+                    template_source_crop=template_source_crop,
                     board_size=board_size,
                     square_size=self._read_float(board.get("square_size"), 1.0),
                     alpha=self._read_float(board.get("alpha"), 1000.0),
@@ -2281,53 +3844,205 @@ class CameraCalibrator:
             return "msg_end" in stripped
         return True
 
+    @staticmethod
+    def _summarize_dde_detail(detail: object, limit: int = 240) -> str:
+        text = str(detail).replace("\r", " ").replace("\n", " | ").strip()
+        if len(text) <= limit:
+            return text
+        return text[: limit - 3] + "..."
+
+    def _log_dde_retry_event(
+        self,
+        operation: str,
+        attempt_no: int,
+        attempt_count: int,
+        status: str,
+        elapsed_sec: float,
+        detail: Optional[object] = None,
+        retry_sleep_sec: Optional[float] = None,
+    ) -> None:
+        parts = [
+            f"DDE diag [{operation}]",
+            f"attempt={attempt_no}/{attempt_count}",
+            f"status={status}",
+            f"elapsed_sec={elapsed_sec:.3f}",
+        ]
+        if retry_sleep_sec is not None:
+            parts.append(f"retry_sleep_sec={retry_sleep_sec:.3f}")
+        if detail is not None:
+            detail_text = self._summarize_dde_detail(detail)
+            if detail_text:
+                parts.append(f"detail={detail_text}")
+        print(" ".join(parts))
+
     def _run_script_control_script(self, script_text: str) -> str:
         self.script_control_script_path.parent.mkdir(parents=True, exist_ok=True)
         self.script_control_result_path.parent.mkdir(parents=True, exist_ok=True)
         self.script_control_script_path.write_text(script_text, encoding="utf-8")
-        try:
-            self.script_control_result_path.unlink()
-        except FileNotFoundError:
-            pass
+        self._unlink_script_control_result_file(required=True)
 
-        for attempt in range(3):
+        last_runtime_error: Optional[RuntimeError] = None
+        attempt_count = 6
+        retry_delay = max(self.script_control_settle_sec, 0.2)
+        for attempt in range(attempt_count):
+            attempt_no = attempt + 1
+            attempt_started = time.perf_counter()
+            attempt_runtime_error: Optional[RuntimeError] = None
             if not self._run_script_control_dde_runscript(self.script_control_script_path):
-                raise RuntimeError("Script Control DDE RunScript did not execute")
-            deadline = time.time() + self.script_control_timeout_sec
-            while time.time() < deadline:
-                if self.script_control_result_path.exists():
-                    text = self.script_control_result_path.read_text(encoding="utf-8", errors="replace")
-                    if self._is_script_control_result_complete(text):
-                        rc, msg = self._parse_script_control_result_text(text)
-                        if rc != 0:
-                            raise RuntimeError(f"Script Control apply failed: {msg}")
-                        return msg
-                time.sleep(0.1)
+                attempt_runtime_error = RuntimeError("Script Control DDE RunScript did not execute")
+            else:
+                deadline = time.time() + self.script_control_timeout_sec
+                while time.time() < deadline:
+                    if self.script_control_result_path.exists():
+                        text = self.script_control_result_path.read_text(encoding="utf-8", errors="replace")
+                        if self._is_script_control_result_complete(text):
+                            rc, msg = self._parse_script_control_result_text(text)
+                            if rc != 0:
+                                attempt_runtime_error = RuntimeError(
+                                    f"Script Control apply failed: {msg}"
+                                )
+                                self._unlink_script_control_result_file(required=True)
+                                break
+                            self._log_dde_retry_event(
+                                "script_control_apply",
+                                attempt_no,
+                                attempt_count,
+                                "success",
+                                time.perf_counter() - attempt_started,
+                            )
+                            return msg
+                    time.sleep(0.1)
 
+            if attempt_runtime_error is None:
+                attempt_runtime_error = RuntimeError(
+                    "Timed out waiting for Script Control result file"
+                )
+            last_runtime_error = attempt_runtime_error
+            retry_sleep_sec = retry_delay * attempt_no if attempt < attempt_count - 1 else None
+            self._log_dde_retry_event(
+                "script_control_apply",
+                attempt_no,
+                attempt_count,
+                "retry" if retry_sleep_sec is not None else "failed",
+                time.perf_counter() - attempt_started,
+                detail=attempt_runtime_error,
+                retry_sleep_sec=retry_sleep_sec,
+            )
+            if retry_sleep_sec is not None:
+                if self._runtime_error_needs_dde_recovery_probe(attempt_runtime_error):
+                    if self._wait_for_dde_service_recovery():
+                        continue
+                time.sleep(retry_sleep_sec)
+
+        if last_runtime_error is not None:
+            raise last_runtime_error
         raise RuntimeError(
             "Timed out waiting for Script Control result file. "
             f"Script Control did not execute {self.script_control_script_path}."
         )
 
-    def _recover_after_runtime_error(self, expected_values: Dict[str, float]) -> bool:
+    def _unlink_script_control_result_file(self, required: bool = False) -> bool:
+        for attempt in range(5):
+            try:
+                self.script_control_result_path.unlink()
+                return True
+            except FileNotFoundError:
+                return True
+            except PermissionError as exc:
+                if attempt == 4:
+                    if required:
+                        raise RuntimeError(
+                            f"Script Control result file is busy: {self.script_control_result_path}"
+                        ) from exc
+                    return False
+                time.sleep(0.05 * (attempt + 1))
+        return False
+
+    def _runtime_error_needs_dde_recovery_probe(self, exc: BaseException) -> bool:
+        text = self._summarize_dde_detail(exc).lower()
+        return "remote server cannot handle this command" in text
+
+    def _wait_for_dde_service_recovery(self) -> bool:
+        retry_delay = max(self.script_control_settle_sec, 0.5)
+        attempt_count = 4
+        for attempt in range(attempt_count):
+            attempt_no = attempt + 1
+            attempt_started = time.perf_counter()
+            try:
+                self._get_movie_dde_view_size(allow_cached_fallback=False)
+                self._log_dde_retry_event(
+                    "dde_recovery_probe",
+                    attempt_no,
+                    attempt_count,
+                    "success",
+                    time.perf_counter() - attempt_started,
+                )
+                return True
+            except Exception as exc:
+                retry_sleep_sec = retry_delay * attempt_no if attempt < attempt_count - 1 else None
+                self._log_dde_retry_event(
+                    "dde_recovery_probe",
+                    attempt_no,
+                    attempt_count,
+                    "retry" if retry_sleep_sec is not None else "failed",
+                    time.perf_counter() - attempt_started,
+                    detail=exc,
+                    retry_sleep_sec=retry_sleep_sec,
+                )
+                if retry_sleep_sec is not None:
+                    time.sleep(retry_sleep_sec)
+        return False
+
+    def _recover_after_runtime_error(
+        self,
+        expected_values: Dict[str, float],
+        cause: Optional[BaseException] = None,
+    ) -> bool:
         for param in self.params:
             if param.name in expected_values:
                 param.value = self._quantize_param_value(param, float(expected_values[param.name]))
 
-        try:
-            self._apply_value_map(expected_values)
-            return True
-        except RuntimeError:
-            return False
+        if cause is not None and self._runtime_error_needs_dde_recovery_probe(cause):
+            if not self._wait_for_dde_service_recovery():
+                return False
+
+        retry_delay = max(self.script_control_settle_sec, 0.2)
+        for attempt in range(4):
+            try:
+                self._apply_value_map(expected_values)
+                return True
+            except RuntimeError:
+                if attempt == 3:
+                    return False
+                time.sleep(retry_delay * (attempt + 1))
+
+        return False
 
     def _apply_value_map_or_recover(self, values: Dict[str, float], context: str) -> None:
         try:
             self._apply_value_map(values)
         except RuntimeError as exc:
-            restored = self._recover_after_runtime_error(values)
+            restored = self._recover_after_runtime_error(values, exc)
             if restored:
                 return
             raise RuntimeError(f"{context}: {exc}") from exc
+
+    def _apply_initial_value_map_with_retry(self, values: Dict[str, float], context: str) -> None:
+        retry_delay = max(self.script_control_settle_sec, 0.2)
+        last_error: Optional[RuntimeError] = None
+        for attempt in range(5):
+            try:
+                self._apply_value_map(values)
+                return
+            except RuntimeError as exc:
+                last_error = exc
+                if attempt == 4:
+                    break
+                time.sleep(retry_delay * (attempt + 1))
+
+        if last_error is not None:
+            raise RuntimeError(f"{context}: {last_error}") from last_error
+        raise RuntimeError(context)
 
     def _read_script_control_values(self, params: List[ParameterSpec]) -> Dict[str, float]:
         msg = self._run_script_control_script(self._render_script_control_read_script(params))
@@ -2423,7 +4138,7 @@ class CameraCalibrator:
     def apply_params(self, params: List[ParameterSpec]) -> None:
         self._apply_script_control_params(params)
 
-    def _get_movie_dde_view_size(self) -> Tuple[int, int]:
+    def _get_movie_dde_view_size(self, allow_cached_fallback: bool = True) -> Tuple[int, int]:
         script_path = self.output_dir / "movie_size_probe_dde.tcl"
         result_path = self.output_dir / "movie_size_probe_dde.txt"
         script_text = "\n".join(
@@ -2459,115 +4174,116 @@ class CameraCalibrator:
         except Exception as exc:
             raise RuntimeError("movie size probe requires pywin32 DDE support") from exc
 
-        server = None
-        try:
-            server = dde.CreateServer()
-            server.Create(f"CopilotMovieSizeProbe.{uuid.uuid4().hex}")
-            conv = dde.CreateConversation(server)
-            conv.ConnectTo(self.script_control_dde_service, self.script_control_dde_topic)
-            conv.Exec(f"RunScript {{{script_path.as_posix()}}}")
-        except Exception as exc:
-            raise RuntimeError(f"movie size probe RunScript failed: {exc}") from exc
-        finally:
-            if server is not None:
-                try:
-                    server.Shutdown()
-                except Exception:
-                    pass
+        last_runtime_error: Optional[RuntimeError] = None
+        attempt_count = 6
+        retry_delay = max(self.script_control_settle_sec, 0.2)
+        for attempt in range(attempt_count):
+            attempt_no = attempt + 1
+            attempt_started = time.perf_counter()
+            attempt_runtime_error: Optional[RuntimeError] = None
+            try:
+                result_path.unlink()
+            except FileNotFoundError:
+                pass
 
-        deadline = time.time() + self.script_control_timeout_sec
-        while time.time() < deadline:
-            if result_path.exists():
-                text = result_path.read_text(encoding="utf-8", errors="replace")
-                if self._is_script_control_result_complete(text):
-                    rc, msg = self._parse_script_control_result_text(text)
-                    if rc != 0:
-                        raise RuntimeError(f"movie size probe failed: {msg}")
-                    parts = str(msg).split()
-                    if len(parts) != 2:
-                        raise RuntimeError(f"movie size probe returned unexpected payload: {msg}")
+            server = None
+            try:
+                server = dde.CreateServer()
+                server.Create(f"CopilotMovieSizeProbe.{uuid.uuid4().hex}")
+                conv = dde.CreateConversation(server)
+                conv.ConnectTo(self.script_control_dde_service, self.script_control_dde_topic)
+                conv.Exec(f"RunScript {{{script_path.as_posix()}}}")
+            except Exception as exc:
+                attempt_runtime_error = RuntimeError(f"movie size probe RunScript failed: {exc}")
+            finally:
+                if server is not None:
+                    try:
+                        server.Shutdown()
+                    except Exception:
+                        pass
+
+            if attempt_runtime_error is None:
+                deadline = time.time() + self.script_control_timeout_sec
+                while time.time() < deadline:
+                    if result_path.exists():
+                        text = result_path.read_text(encoding="utf-8", errors="replace")
+                        if self._is_script_control_result_complete(text):
+                            rc, msg = self._parse_script_control_result_text(text)
+                            if rc != 0:
+                                attempt_runtime_error = RuntimeError(f"movie size probe failed: {msg}")
+                                try:
+                                    result_path.unlink()
+                                except FileNotFoundError:
+                                    pass
+                                break
+                            parts = str(msg).split()
+                            if len(parts) != 2:
+                                raise RuntimeError(f"movie size probe returned unexpected payload: {msg}")
+                            width = int(parts[0])
+                            height = int(parts[1])
+                            if width <= 0 or height <= 0:
+                                raise RuntimeError(f"movie size probe returned invalid size: {width}x{height}")
+                            self.movie_size_cache_path.parent.mkdir(parents=True, exist_ok=True)
+                            self.movie_size_cache_path.write_text(f"{width} {height}\n", encoding="utf-8")
+                            self._log_dde_retry_event(
+                                "movie_size_probe",
+                                attempt_no,
+                                attempt_count,
+                                "success",
+                                time.perf_counter() - attempt_started,
+                                detail=f"size={width}x{height}",
+                            )
+                            _unlink_if_exists(script_path)
+                            _unlink_if_exists(result_path)
+                            return width, height
+                    time.sleep(0.05)
+
+            if attempt_runtime_error is None:
+                attempt_runtime_error = RuntimeError("Timed out waiting for movie size probe result")
+            last_runtime_error = attempt_runtime_error
+            retry_sleep_sec = retry_delay * attempt_no if attempt < attempt_count - 1 else None
+            self._log_dde_retry_event(
+                "movie_size_probe",
+                attempt_no,
+                attempt_count,
+                "retry" if retry_sleep_sec is not None else "failed",
+                time.perf_counter() - attempt_started,
+                detail=attempt_runtime_error,
+                retry_sleep_sec=retry_sleep_sec,
+            )
+            if retry_sleep_sec is not None:
+                time.sleep(retry_sleep_sec)
+
+        if allow_cached_fallback and self.movie_size_cache_path.exists():
+            cached_text = self.movie_size_cache_path.read_text(encoding="utf-8", errors="replace").strip()
+            parts = cached_text.split()
+            if len(parts) == 2:
+                try:
                     width = int(parts[0])
                     height = int(parts[1])
-                    if width <= 0 or height <= 0:
-                        raise RuntimeError(f"movie size probe returned invalid size: {width}x{height}")
+                except ValueError:
+                    width = 0
+                    height = 0
+                if width > 0 and height > 0:
+                    print(
+                        "Movie size probe fallback: "
+                        f"using cached size {width}x{height} from {self.movie_size_cache_path}"
+                    )
                     _unlink_if_exists(script_path)
                     _unlink_if_exists(result_path)
                     return width, height
-            time.sleep(0.05)
 
+        if last_runtime_error is not None:
+            raise last_runtime_error
         raise RuntimeError("Timed out waiting for movie size probe result")
 
-    def _crop_to_reference_aspect(self, image):
-        if not self.movie_match_reference_aspect:
-            return image
-
-        img_w, img_h = image.size
-        if img_w <= 0 or img_h <= 0:
-            return image
-
-        ref_h, ref_w = self.real_img.shape[:2]
-        target_ratio = ref_w / max(1, ref_h)
-        current_ratio = img_w / max(1, img_h)
-
-        if math.isclose(current_ratio, target_ratio, rel_tol=0.0, abs_tol=1e-6):
-            return image
-
-        if current_ratio > target_ratio:
-            new_w = max(1, int(round(img_h * target_ratio)))
-            new_h = img_h
-            if self.movie_aspect_crop_anchor == "center":
-                left = max(0, int(round((img_w - new_w) / 2)))
-            else:
-                left = 0
-            top = 0
-        else:
-            new_w = img_w
-            new_h = max(1, int(round(img_w / target_ratio)))
-            left = 0
-            if self.movie_aspect_crop_anchor == "center":
-                top = max(0, int(round((img_h - new_h) / 2)))
-            else:
-                top = 0
-
-        return image.crop((left, top, left + new_w, top + new_h))
-
-    def _detect_content_top_offset(self, image) -> int:
-        rgb = np.array(image.convert("RGB"), dtype=np.int16)
-        if rgb.ndim != 3 or rgb.shape[0] < 8:
-            return 0
-
-        max_scan = min(max(40, int(rgb.shape[0] * 0.2)), 160)
-        baseline = rgb[0]
-        diffs = np.mean(np.abs(rgb[:max_scan] - baseline), axis=(1, 2))
-        threshold = max(35.0, float(np.median(diffs[: max(5, max_scan // 4)]) + 40.0))
-        consecutive = 4
-        for idx in range(1, max_scan - consecutive + 1):
-            if np.all(diffs[idx : idx + consecutive] > threshold):
-                return int(idx)
-        return 0
-
-    def _crop_movie_content(self, image):
-        if not self.movie_auto_crop_content:
-            return image
-
-        img_w, img_h = image.size
-        if img_w <= 0 or img_h <= 0:
-            return image
-
-        top = self._detect_content_top_offset(image)
-        cropped = image.crop((0, top, img_w, img_h)) if top > 0 else image
-        return self._crop_to_reference_aspect(cropped)
-
     def _preflight_capture_aspect_ratio(self) -> None:
-        raw_w, raw_h = self._get_movie_dde_view_size()
-        ref_h, ref_w = self.real_img.shape[:2]
-
-        if self.movie_auto_crop_content and self.movie_match_reference_aspect:
-            print(
-                "Capture aspect preflight: auto crop with reference aspect matching enabled; "
-                f"raw={raw_w}x{raw_h}, real={ref_w}x{ref_h}"
-            )
+        try:
+            raw_w, raw_h = self._get_movie_dde_view_size()
+        except RuntimeError as exc:
+            print(f"Capture aspect preflight skipped: {exc}")
             return
+        ref_h, ref_w = self.real_img.shape[:2]
 
         if raw_w * ref_h != ref_w * raw_h:
             raise RuntimeError(
@@ -2634,38 +4350,78 @@ class CameraCalibrator:
         except Exception as exc:
             raise RuntimeError("movie dde_fbo capture requires pywin32 DDE support") from exc
 
-        server = None
-        try:
-            server = dde.CreateServer()
-            server.Create(f"CopilotMovieCapture.{uuid.uuid4().hex}")
-            conv = dde.CreateConversation(server)
-            conv.ConnectTo(self.script_control_dde_service, self.script_control_dde_topic)
-            conv.Exec(f"RunScript {{{script_path.as_posix()}}}")
-        except Exception as exc:
-            raise RuntimeError(f"movie dde_fbo RunScript failed: {exc}") from exc
-        finally:
-            if server is not None:
-                try:
-                    server.Shutdown()
-                except Exception:
-                    pass
+        last_runtime_error: Optional[RuntimeError] = None
+        attempt_count = 6
+        retry_delay = max(self.script_control_settle_sec, 0.2)
+        for attempt in range(attempt_count):
+            attempt_no = attempt + 1
+            attempt_started = time.perf_counter()
+            attempt_runtime_error: Optional[RuntimeError] = None
+            try:
+                result_path.unlink()
+            except FileNotFoundError:
+                pass
 
-        deadline = time.time() + self.script_control_timeout_sec
-        while time.time() < deadline:
-            if result_path.exists():
-                text = result_path.read_text(encoding="utf-8", errors="replace")
-                if self._is_script_control_result_complete(text):
-                    rc, msg = self._parse_script_control_result_text(text)
-                    if rc != 0:
-                        raise RuntimeError(f"movie dde_fbo capture failed: {msg}")
-                    with Image.open(out_path) as raw_img:
-                        img = self._crop_movie_content(raw_img.copy())
-                    img.save(out_path)
-                    _unlink_if_exists(script_path)
-                    _unlink_if_exists(result_path)
-                    return out_path
-            time.sleep(0.05)
+            server = None
+            try:
+                server = dde.CreateServer()
+                server.Create(f"CopilotMovieCapture.{uuid.uuid4().hex}")
+                conv = dde.CreateConversation(server)
+                conv.ConnectTo(self.script_control_dde_service, self.script_control_dde_topic)
+                conv.Exec(f"RunScript {{{script_path.as_posix()}}}")
+            except Exception as exc:
+                attempt_runtime_error = RuntimeError(f"movie dde_fbo RunScript failed: {exc}")
+            finally:
+                if server is not None:
+                    try:
+                        server.Shutdown()
+                    except Exception:
+                        pass
 
+            if attempt_runtime_error is None:
+                deadline = time.time() + self.script_control_timeout_sec
+                while time.time() < deadline:
+                    if result_path.exists():
+                        text = result_path.read_text(encoding="utf-8", errors="replace")
+                        if self._is_script_control_result_complete(text):
+                            rc, msg = self._parse_script_control_result_text(text)
+                            if rc != 0:
+                                attempt_runtime_error = RuntimeError(f"movie dde_fbo capture failed: {msg}")
+                                break
+                            self._log_dde_retry_event(
+                                "movie_capture",
+                                attempt_no,
+                                attempt_count,
+                                "success",
+                                time.perf_counter() - attempt_started,
+                                detail=f"output={out_path.name}",
+                            )
+                            _unlink_if_exists(script_path)
+                            _unlink_if_exists(result_path)
+                            return out_path
+                    time.sleep(0.05)
+
+            if attempt_runtime_error is None:
+                attempt_runtime_error = RuntimeError("Timed out waiting for movie dde_fbo capture result")
+            last_runtime_error = attempt_runtime_error
+            retry_sleep_sec = retry_delay * attempt_no if attempt < attempt_count - 1 else None
+            self._log_dde_retry_event(
+                "movie_capture",
+                attempt_no,
+                attempt_count,
+                "retry" if retry_sleep_sec is not None else "failed",
+                time.perf_counter() - attempt_started,
+                detail=attempt_runtime_error,
+                retry_sleep_sec=retry_sleep_sec,
+            )
+            if retry_sleep_sec is not None:
+                if self._runtime_error_needs_dde_recovery_probe(attempt_runtime_error):
+                    if self._wait_for_dde_service_recovery():
+                        continue
+                time.sleep(retry_sleep_sec)
+
+        if last_runtime_error is not None:
+            raise last_runtime_error
         raise RuntimeError("Timed out waiting for movie dde_fbo capture result")
 
     def capture_movie(self, tag: str) -> Path:
@@ -2731,12 +4487,20 @@ class CameraCalibrator:
         return entry
 
     def _extract_roi(
-        self, image: np.ndarray, roi: Optional[Tuple[int, int, int, int]]
+        self,
+        image: np.ndarray,
+        roi: Optional[Tuple[int, int, int, int]],
+        padding: int = 0,
     ) -> Tuple[np.ndarray, Tuple[int, int]]:
         if roi is None:
             return image, (0, 0)
 
         x, y, width, height = roi
+        if padding > 0:
+            x -= padding
+            y -= padding
+            width += padding * 2
+            height += padding * 2
         img_h, img_w = image.shape[:2]
         x0 = max(0, x)
         y0 = max(0, y)
@@ -2900,7 +4664,7 @@ class CameraCalibrator:
 
         for index, board in enumerate(self.boards):
             color = palette[index % len(palette)]
-            detection_img = sim_prepared if board.board_type == "custom_groundmaker" else sim_score_img
+            detection_img = sim_prepared if _is_custom_marker_board_type(board.board_type) else sim_score_img
             sim_detection = self._detect_board(detection_img, board)
             real_detection = self.real_detections[board.board_id]
             score = self._score_board(board, real_detection, sim_detection)
@@ -3221,28 +4985,37 @@ class CameraCalibrator:
         self, gray_image: np.ndarray, board: BoardProfile
     ) -> DetectionResult:
         eval_image = self._prepare_eval_image(gray_image)
-        roi_img, offset = self._extract_roi(eval_image, board.roi)
+        roi_attempts = [0]
+        detect_roi_padding = max(0, int(board.detect_roi_padding))
+        if detect_roi_padding > 0:
+            roi_attempts.append(detect_roi_padding)
+
         found = False
         corners = None
-        for candidate in self._preprocess_variants(roi_img):
-            flags = cv2.CALIB_CB_EXHAUSTIVE | cv2.CALIB_CB_ACCURACY
-            found, corners = cv2.findChessboardCornersSB(candidate, board.board_size, flags=flags)
-            if found and corners is not None:
-                break
+        offset = (0, 0)
+        for padding in roi_attempts:
+            roi_img, offset = self._extract_roi(eval_image, board.roi, padding=padding)
+            for candidate in self._preprocess_variants(roi_img):
+                flags = cv2.CALIB_CB_EXHAUSTIVE | cv2.CALIB_CB_ACCURACY
+                found, corners = cv2.findChessboardCornersSB(candidate, board.board_size, flags=flags)
+                if found and corners is not None:
+                    break
 
-            fallback_flags = (
-                cv2.CALIB_CB_ADAPTIVE_THRESH
-                | cv2.CALIB_CB_NORMALIZE_IMAGE
-                | cv2.CALIB_CB_FAST_CHECK
-            )
-            found, corners = cv2.findChessboardCorners(candidate, board.board_size, fallback_flags)
-            if found and corners is not None:
-                criteria = (
-                    cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_MAX_ITER,
-                    30,
-                    0.001,
+                fallback_flags = (
+                    cv2.CALIB_CB_ADAPTIVE_THRESH
+                    | cv2.CALIB_CB_NORMALIZE_IMAGE
+                    | cv2.CALIB_CB_FAST_CHECK
                 )
-                corners = cv2.cornerSubPix(candidate, corners, (11, 11), (-1, -1), criteria)
+                found, corners = cv2.findChessboardCorners(candidate, board.board_size, fallback_flags)
+                if found and corners is not None:
+                    criteria = (
+                        cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_MAX_ITER,
+                        30,
+                        0.001,
+                    )
+                    corners = cv2.cornerSubPix(candidate, corners, (11, 11), (-1, -1), criteria)
+                    break
+            if found and corners is not None:
                 break
 
         if not found or corners is None:
@@ -3432,17 +5205,30 @@ class CameraCalibrator:
         match_x = float(offset[0] + max_location[0])
         match_y = float(offset[1] + max_location[1])
         template_h, template_w = template_gray.shape[:2]
+        anchor_x = match_x
+        anchor_y = match_y
+        anchor_w = float(template_w)
+        anchor_h = float(template_h)
+        if board.board_type == "custom_maker":
+            if board.template_source_roi is not None and board.template_source_crop is not None:
+                _, _, source_w, source_h = board.template_source_roi
+                crop_x, crop_y, crop_w, crop_h = board.template_source_crop
+                if crop_w > 0 and crop_h > 0:
+                    anchor_x = match_x - float(crop_x)
+                    anchor_y = match_y - float(crop_y)
+                    anchor_w = float(source_w)
+                    anchor_h = float(source_h)
         anchors = np.array(
             [
-                [match_x, match_y],
-                [match_x + template_w - 1.0, match_y],
-                [match_x + template_w - 1.0, match_y + template_h - 1.0],
-                [match_x, match_y + template_h - 1.0],
-                [match_x + template_w * 0.5, match_y + template_h * 0.5],
-                [match_x + template_w * 0.25, match_y + template_h * 0.25],
-                [match_x + template_w * 0.75, match_y + template_h * 0.25],
-                [match_x + template_w * 0.75, match_y + template_h * 0.75],
-                [match_x + template_w * 0.25, match_y + template_h * 0.75],
+                [anchor_x, anchor_y],
+                [anchor_x + anchor_w - 1.0, anchor_y],
+                [anchor_x + anchor_w - 1.0, anchor_y + anchor_h - 1.0],
+                [anchor_x, anchor_y + anchor_h - 1.0],
+                [anchor_x + anchor_w * 0.5, anchor_y + anchor_h * 0.5],
+                [anchor_x + anchor_w * 0.25, anchor_y + anchor_h * 0.25],
+                [anchor_x + anchor_w * 0.75, anchor_y + anchor_h * 0.25],
+                [anchor_x + anchor_w * 0.75, anchor_y + anchor_h * 0.75],
+                [anchor_x + anchor_w * 0.25, anchor_y + anchor_h * 0.75],
             ],
             dtype=np.float32,
         )
@@ -3469,11 +5255,14 @@ class CameraCalibrator:
             if primary.success:
                 return primary
             if board.template_image:
-                fallback = self._detect_template_board(gray_image, board)
+                if board.custom_detector == "template_match":
+                    fallback = self._detect_template_match_board(gray_image, board)
+                else:
+                    fallback = self._detect_template_board(gray_image, board)
                 if fallback.success:
                     return fallback
             return primary
-        if board.board_type == "custom_groundmaker":
+        if _is_custom_marker_board_type(board.board_type):
             return self._detect_custom_groundmaker(gray_image, board)
         return DetectionResult(
             board_id=board.board_id,
@@ -3658,7 +5447,7 @@ class CameraCalibrator:
             if prototype is None:
                 continue
 
-            default_instances = 1 if prototype.board_type == "custom_groundmaker" else 4
+            default_instances = 1 if _is_custom_marker_board_type(prototype.board_type) else 4
             max_instances = int(prototype_cfg.get("proposal_max_instances", default_instances))
             candidate_entries: List[Tuple[DetectionResult, Tuple[int, int, int, int]]] = []
 
@@ -4013,7 +5802,355 @@ class CameraCalibrator:
             and self.joint_exploration_max_single_worsen > 0.0
         )
 
+    def _clamp_strategy_step_scale(self, step_scale: float) -> float:
+        return min(self.strategy_max_step_scale, max(self.strategy_min_step_scale, step_scale))
+
+    @staticmethod
+    def _normalize_trial_multiplier_values(
+        raw_values: object,
+        default: List[float],
+    ) -> List[float]:
+        values = raw_values if isinstance(raw_values, list) else default
+        normalized: List[float] = []
+        for raw_value in values:
+            try:
+                multiplier = abs(float(raw_value))
+            except (TypeError, ValueError):
+                continue
+            if multiplier <= 0.0:
+                continue
+            if any(math.isclose(multiplier, seen, rel_tol=0.0, abs_tol=1e-12) for seen in normalized):
+                continue
+            normalized.append(multiplier)
+        return normalized or list(default)
+
+    @staticmethod
+    def _merge_trial_multiplier_sequences(*sequences: List[float]) -> List[float]:
+        merged: List[float] = []
+        for sequence in sequences:
+            for raw_value in sequence:
+                try:
+                    multiplier = abs(float(raw_value))
+                except (TypeError, ValueError):
+                    continue
+                if multiplier <= 0.0:
+                    continue
+                if any(math.isclose(multiplier, seen, rel_tol=0.0, abs_tol=1e-12) for seen in merged):
+                    continue
+                merged.append(multiplier)
+        return merged or [1.0]
+
+    def _strategy_active_profile(self) -> Dict[str, object]:
+        active_profile = self.strategy_exploration_profiles[0]
+        for profile in self.strategy_exploration_profiles:
+            if self.strategy_stagnation_count < int(profile.get("min_stagnation", 0)):
+                break
+            active_profile = profile
+        return active_profile
+
+    def _strategy_bottleneck_board_ids(self, total_detail: TotalScoreDetail) -> List[str]:
+        if not self.strategy_bottleneck_board_awareness:
+            return []
+        compared = self._compared_board_scores(total_detail)
+        if not compared:
+            return []
+        compared.sort(key=lambda score: score.total_score, reverse=True)
+        return [score.board_id for score in compared[: self.strategy_bottleneck_top_k]]
+
+    def _strategy_bottleneck_focus_boost(
+        self,
+        baseline_detail: Optional[TotalScoreDetail],
+        candidate_detail: Optional[TotalScoreDetail],
+    ) -> Tuple[float, List[str]]:
+        if (
+            not self.strategy_bottleneck_board_awareness
+            or baseline_detail is None
+            or candidate_detail is None
+        ):
+            return 0.0, []
+
+        bottleneck_ids = self._strategy_bottleneck_board_ids(baseline_detail)
+        if not bottleneck_ids:
+            return 0.0, []
+
+        baseline_scores = {
+            score.board_id: score
+            for score in self._compared_board_scores(baseline_detail)
+        }
+        candidate_scores = {
+            score.board_id: score
+            for score in self._compared_board_scores(candidate_detail)
+        }
+        boost = 0.0
+        improved_board_ids: List[str] = []
+        for rank, board_id in enumerate(bottleneck_ids, start=1):
+            baseline_score = baseline_scores.get(board_id)
+            candidate_score = candidate_scores.get(board_id)
+            if baseline_score is None or candidate_score is None:
+                continue
+            improvement = baseline_score.total_score - candidate_score.total_score
+            if improvement < self.strategy_bottleneck_min_improvement:
+                continue
+            boost += improvement / float(rank)
+            improved_board_ids.append(board_id)
+        return boost, improved_board_ids
+
+    def _strategy_effective_step(self, param: ParameterSpec) -> float:
+        if not (self.strategy_adaptation_enabled and self.strategy_adjust_step_scale):
+            return float(param.step)
+        state = self.strategy_param_state.get(param.name, {})
+        step_scale = float(state.get("step_scale", 1.0))
+        return max(param.min_step, float(param.step) * self._clamp_strategy_step_scale(step_scale))
+
+    def _ordered_params_for_iteration(self) -> List[ParameterSpec]:
+        if not (self.strategy_adaptation_enabled and self.strategy_reorder_params):
+            return list(self.params)
+        return sorted(
+            self.params,
+            key=lambda param: (
+                -float(self.strategy_param_state.get(param.name, {}).get("priority_score", 0.0)),
+                self.param_order_index.get(param.name, len(self.param_order_index)),
+            ),
+        )
+
+    def _strategy_iteration_meta(self, ordered_params: List[ParameterSpec]) -> Optional[Dict[str, object]]:
+        if not self.strategy_adaptation_enabled:
+            return None
+        active_profile = self._strategy_active_profile()
+        return {
+            "stagnation_count": self.strategy_stagnation_count,
+            "exploration_profile": str(active_profile.get("name", "baseline")),
+            "param_order": [param.name for param in ordered_params],
+            "step_scales": {
+                param.name: float(self.strategy_param_state.get(param.name, {}).get("step_scale", 1.0))
+                for param in ordered_params
+            },
+            "effective_steps": {
+                param.name: self._strategy_effective_step(param)
+                for param in ordered_params
+            },
+            "trial_multipliers": {
+                param.name: self._trial_multipliers_for_param(param.name)
+                for param in ordered_params
+            },
+        }
+
+    def _new_strategy_iteration_stats(self) -> Dict[str, Dict[str, object]]:
+        if not self.strategy_adaptation_enabled:
+            return {}
+        return {
+            param.name: {
+                "attempts": 0,
+                "accepted_count": 0,
+                "joint_candidate_count": 0,
+                "best_score_delta": None,
+                "accepted_score_delta": None,
+                "accepted_trial_multiplier": 1.0,
+                "bottleneck_boost": 0.0,
+                "bottleneck_boards": [],
+            }
+            for param in self.params
+        }
+
+    def _record_strategy_trial(
+        self,
+        iteration_stats: Dict[str, Dict[str, object]],
+        *,
+        param_name: str,
+        accepted: bool,
+        joint_candidate: bool,
+        score_delta: Optional[float],
+        trial_multiplier: float,
+        baseline_detail: Optional[TotalScoreDetail] = None,
+        candidate_detail: Optional[TotalScoreDetail] = None,
+    ) -> None:
+        if not self.strategy_adaptation_enabled:
+            return
+        stats = iteration_stats.setdefault(
+            param_name,
+            {
+                "attempts": 0,
+                "accepted_count": 0,
+                "joint_candidate_count": 0,
+                "best_score_delta": None,
+                "accepted_score_delta": None,
+                "accepted_trial_multiplier": 1.0,
+                "bottleneck_boost": 0.0,
+                "bottleneck_boards": [],
+            },
+        )
+        stats["attempts"] = int(stats.get("attempts", 0)) + 1
+        bottleneck_boost, improved_bottleneck_boards = self._strategy_bottleneck_focus_boost(
+            baseline_detail,
+            candidate_detail,
+        )
+        if bottleneck_boost > 0.0:
+            stats["bottleneck_boost"] = float(stats.get("bottleneck_boost", 0.0)) + bottleneck_boost
+            seen_boards = [str(board_id) for board_id in stats.get("bottleneck_boards", [])]
+            for board_id in improved_bottleneck_boards:
+                if board_id not in seen_boards:
+                    seen_boards.append(board_id)
+            stats["bottleneck_boards"] = seen_boards
+        if score_delta is not None:
+            best_score_delta = stats.get("best_score_delta")
+            if best_score_delta is None or score_delta < float(best_score_delta):
+                stats["best_score_delta"] = score_delta
+        if accepted:
+            stats["accepted_count"] = int(stats.get("accepted_count", 0)) + 1
+            accepted_score_delta = stats.get("accepted_score_delta")
+            if accepted_score_delta is None or (
+                score_delta is not None and score_delta < float(accepted_score_delta)
+            ):
+                stats["accepted_score_delta"] = score_delta
+            stats["accepted_trial_multiplier"] = max(
+                float(stats.get("accepted_trial_multiplier", 1.0)),
+                float(trial_multiplier),
+            )
+            return
+        if joint_candidate:
+            stats["joint_candidate_count"] = int(stats.get("joint_candidate_count", 0)) + 1
+
+    def _finalize_strategy_iteration(
+        self,
+        iteration: int,
+        iteration_stats: Dict[str, Dict[str, object]],
+        *,
+        improved_in_iter: bool,
+    ) -> None:
+        if not self.strategy_adaptation_enabled:
+            return
+
+        if improved_in_iter:
+            self.strategy_stagnation_count = 0
+        else:
+            self.strategy_stagnation_count += 1
+
+        for param in self.params:
+            state = self.strategy_param_state[param.name]
+            stats = iteration_stats.get(param.name, {})
+            attempts = int(stats.get("attempts", 0))
+            accepted_count = int(stats.get("accepted_count", 0))
+            joint_candidate_count = int(stats.get("joint_candidate_count", 0))
+            bottleneck_boost = float(stats.get("bottleneck_boost", 0.0))
+            bottleneck_boards = [
+                str(board_id) for board_id in stats.get("bottleneck_boards", [])
+            ]
+
+            state["priority_score"] = float(state.get("priority_score", 0.0)) * self.strategy_priority_decay
+            state["bottleneck_focus_score"] = float(
+                state.get("bottleneck_focus_score", 0.0)
+            ) * self.strategy_priority_decay
+            state["attempt_count"] = int(state.get("attempt_count", 0)) + attempts
+            state["accepted_count"] = int(state.get("accepted_count", 0)) + accepted_count
+            state["joint_candidate_count"] = int(state.get("joint_candidate_count", 0)) + joint_candidate_count
+            if bottleneck_boards:
+                state["last_bottleneck_boards"] = bottleneck_boards
+
+            if bottleneck_boost > 0.0:
+                state["bottleneck_focus_score"] = float(state["bottleneck_focus_score"]) + bottleneck_boost
+                state["priority_score"] = float(state["priority_score"]) + (
+                    self.strategy_bottleneck_priority_boost * bottleneck_boost
+                )
+
+            if accepted_count > 0:
+                accepted_score_delta = stats.get("accepted_score_delta")
+                accepted_delta = (
+                    float(accepted_score_delta)
+                    if accepted_score_delta is not None
+                    else 0.0
+                )
+                accepted_multiplier = float(stats.get("accepted_trial_multiplier", 1.0))
+                boost = self.strategy_accepted_priority_boost + min(
+                    2.0,
+                    max(0.0, -accepted_delta),
+                )
+                state["priority_score"] = float(state["priority_score"]) + boost
+                state["last_accepted_iteration"] = iteration
+                if self.strategy_adjust_step_scale:
+                    step_scale = float(state.get("step_scale", 1.0))
+                    if accepted_multiplier > 1.0 or accepted_delta < -(self.min_improve * 10.0):
+                        step_scale *= self.strategy_step_scale_up
+                    else:
+                        step_scale *= self.strategy_step_scale_down
+                    state["step_scale"] = self._clamp_strategy_step_scale(step_scale)
+                continue
+
+            if attempts > 0:
+                state["priority_score"] = float(state["priority_score"]) - self.strategy_rejected_priority_penalty
+
+            if joint_candidate_count > 0 and self.strategy_focus_on_joint_candidates:
+                state["priority_score"] = float(state["priority_score"]) + (
+                    self.strategy_joint_candidate_priority_boost * joint_candidate_count
+                )
+
+            if (
+                self.strategy_adjust_step_scale
+                and attempts > 0
+                and self.strategy_stagnation_count >= self.strategy_stagnation_patience
+            ):
+                state["step_scale"] = self._clamp_strategy_step_scale(
+                    float(state.get("step_scale", 1.0)) * self.strategy_stagnation_step_scale_up
+                )
+
+    def _strategy_state_payload(self) -> Dict[str, object]:
+        ordered_params = self._ordered_params_for_iteration()
+        active_profile = self._strategy_active_profile()
+        return {
+            "enabled": self.strategy_adaptation_enabled,
+            "reorder_params": self.strategy_reorder_params,
+            "adjust_step_scale": self.strategy_adjust_step_scale,
+            "focus_on_joint_candidates": self.strategy_focus_on_joint_candidates,
+            "bottleneck_board_awareness": self.strategy_bottleneck_board_awareness,
+            "stagnation_count": self.strategy_stagnation_count,
+            "current_exploration_profile": {
+                "name": str(active_profile.get("name", "baseline")),
+                "min_stagnation": int(active_profile.get("min_stagnation", 0)),
+                "single_trial_multipliers": list(active_profile.get("single_trial_multipliers", [1.0])),
+                "joint_trial_multipliers": list(active_profile.get("joint_trial_multipliers", [])),
+            },
+            "current_param_order": [param.name for param in ordered_params],
+            "params": {
+                param.name: {
+                    "priority_score": float(self.strategy_param_state.get(param.name, {}).get("priority_score", 0.0)),
+                    "bottleneck_focus_score": float(self.strategy_param_state.get(param.name, {}).get("bottleneck_focus_score", 0.0)),
+                    "step_scale": float(self.strategy_param_state.get(param.name, {}).get("step_scale", 1.0)),
+                    "effective_step": self._strategy_effective_step(param),
+                    "trial_multipliers": self._trial_multipliers_for_param(param.name),
+                    "attempt_count": int(self.strategy_param_state.get(param.name, {}).get("attempt_count", 0)),
+                    "accepted_count": int(self.strategy_param_state.get(param.name, {}).get("accepted_count", 0)),
+                    "joint_candidate_count": int(self.strategy_param_state.get(param.name, {}).get("joint_candidate_count", 0)),
+                    "last_bottleneck_boards": list(self.strategy_param_state.get(param.name, {}).get("last_bottleneck_boards", [])),
+                    "last_accepted_iteration": self.strategy_param_state.get(param.name, {}).get("last_accepted_iteration"),
+                }
+                for param in self.params
+            },
+            "exploration_profiles": [
+                {
+                    "name": str(profile.get("name", "profile")),
+                    "min_stagnation": int(profile.get("min_stagnation", 0)),
+                    "single_trial_multipliers": list(profile.get("single_trial_multipliers", [1.0])),
+                    "joint_trial_multipliers": list(profile.get("joint_trial_multipliers", [])),
+                }
+                for profile in self.strategy_exploration_profiles
+            ],
+        }
+
     def _trial_multipliers_for_param(self, param_name: str) -> List[float]:
+        if self.strategy_adaptation_enabled:
+            active_profile = self._strategy_active_profile()
+            profile_single = [
+                float(value) for value in active_profile.get("single_trial_multipliers", [1.0])
+            ]
+            if not self._is_joint_exploration_param(param_name):
+                return self._merge_trial_multiplier_sequences(profile_single)
+            profile_joint = [
+                float(value) for value in active_profile.get("joint_trial_multipliers", [])
+            ]
+            return self._merge_trial_multiplier_sequences(
+                profile_single,
+                self.joint_exploration_trial_multipliers,
+                profile_joint,
+            )
         if not self._is_joint_exploration_param(param_name):
             return [1.0]
         return self.joint_exploration_trial_multipliers
@@ -4036,9 +6173,16 @@ class CameraCalibrator:
 
     def _candidate_move_sort_key(self, move: Dict[str, object]) -> Tuple[int, int, float]:
         name = str(move["name"])
+        order_index = self.param_order_index.get(name, len(self.param_order_index))
+        if self.strategy_adaptation_enabled and self.strategy_reorder_params:
+            order_map = {
+                param.name: index
+                for index, param in enumerate(self._ordered_params_for_iteration())
+            }
+            order_index = order_map.get(name, order_index)
         return (
             0 if self._is_joint_exploration_param(name) else 1,
-            self.param_order_index.get(name, len(self.param_order_index)),
+            order_index,
             float(move["score"]),
         )
 
@@ -4058,7 +6202,7 @@ class CameraCalibrator:
         board_scores: List[BoardScoreDetail] = []
         for board in self.boards:
             real_detection = self.real_detections[board.board_id]
-            detection_img = sim_prepared if board.board_type == "custom_groundmaker" else sim_score_img
+            detection_img = sim_prepared if _is_custom_marker_board_type(board.board_type) else sim_score_img
             sim_detection = self._detect_board(detection_img, board)
             board_scores.append(self._score_board(board, real_detection, sim_detection))
 
@@ -4143,6 +6287,7 @@ class CameraCalibrator:
             "history_count": len(history),
             "run_stats": run_stats,
             "summary": summary,
+            "strategy_adaptation": self._strategy_state_payload(),
             "in_progress": in_progress,
             "history": history,
         }
@@ -4200,6 +6345,32 @@ class CameraCalibrator:
             in_progress=True,
         )
 
+    def _fatal_initial_board_failures(self, total_detail: TotalScoreDetail) -> List[str]:
+        board_map = {board.board_id: board for board in self.boards}
+        failures: List[str] = []
+        for score in total_detail.board_scores:
+            if not score.compared:
+                continue
+            board = board_map.get(score.board_id)
+            if board is None:
+                continue
+            fail_threshold = max(1.0, float(board.fail_penalty) * 0.95)
+            if score.success or float(score.total_score) < fail_threshold:
+                continue
+            failed_reason = score.failed_reason or "fail_penalty_reached"
+            failures.append(
+                f"{score.board_id}:{score.total_score:.3f}({failed_reason})"
+            )
+        return failures
+
+    def _raise_if_initial_board_failures(self, total_detail: TotalScoreDetail) -> None:
+        failures = self._fatal_initial_board_failures(total_detail)
+        if not failures:
+            return
+        raise RuntimeError(
+            "Initial evaluation aborted due to fatal board scores: " + ", ".join(failures)
+        )
+
     def optimize(self) -> dict:
         self._ensure_live_log()
         if self.real_detections is None:
@@ -4208,8 +6379,15 @@ class CameraCalibrator:
         self._print_run_summary()
         self._preflight_capture_aspect_ratio()
         self.preflight_script_control()
-        self.apply_params(self.params)
+        try:
+            self._apply_initial_value_map_with_retry(
+                self._snapshot_values(),
+                "Failed initial Script Control apply",
+            )
+        except RuntimeError as exc:
+            print(f"Initial Script Control apply skipped: {exc}")
         best_total_detail, best_img = self.evaluate("initial", baseline_metrics=None)
+        self._raise_if_initial_board_failures(best_total_detail)
         best_score = best_total_detail.total_score
         best_baseline = self._as_baseline_metrics(best_total_detail)
         best_values = {p.name: p.value for p in self.params}
@@ -4276,15 +6454,21 @@ class CameraCalibrator:
             base_values = self._snapshot_values()
             base_score = best_score
             candidate_moves: List[Dict[str, object]] = []
+            ordered_params = self._ordered_params_for_iteration()
+            iteration_strategy_stats = self._new_strategy_iteration_stats()
+            iteration_meta: Dict[str, object] = {
+                "phase": "iteration_start",
+            }
+            strategy_meta = self._strategy_iteration_meta(ordered_params)
+            if strategy_meta is not None:
+                iteration_meta["strategy"] = strategy_meta
             history.append(
                 self._make_history_entry(
                     it,
                     best_total_detail,
                     best_img,
                     True,
-                    meta={
-                        "phase": "iteration_start",
-                    },
+                    meta=iteration_meta,
                 )
             )
             self._flush_progress_if_needed(
@@ -4296,18 +6480,19 @@ class CameraCalibrator:
                 history=history,
             )
 
-            for p in self.params:
+            for p in ordered_params:
                 preferred_direction = self.preferred_directions.get(p.name, 1.0)
                 trial_directions: List[float] = [preferred_direction, -preferred_direction]
                 best_param_move: Optional[Dict[str, object]] = None
                 seen_trial_values: set[float] = set()
                 stop_param_search = False
+                effective_step = self._strategy_effective_step(p)
 
                 for direction in trial_directions:
                     for trial_multiplier in self._trial_multipliers_for_param(p.name):
                         trial_value = self._quantize_param_value(
                             p,
-                            base_values[p.name] + direction * p.step * trial_multiplier,
+                            base_values[p.name] + direction * effective_step * trial_multiplier,
                         )
                         if math.isclose(
                             trial_value,
@@ -4344,6 +6529,16 @@ class CameraCalibrator:
                                     total_detail,
                                     score,
                                 )
+                            self._record_strategy_trial(
+                                iteration_strategy_stats,
+                                param_name=p.name,
+                                accepted=accepted,
+                                joint_candidate=joint_candidate_reason is not None,
+                                score_delta=score - base_score,
+                                trial_multiplier=trial_multiplier,
+                                baseline_detail=best_total_detail,
+                                candidate_detail=total_detail,
+                            )
                             history.append(
                                 self._make_history_entry(
                                     it,
@@ -4382,7 +6577,7 @@ class CameraCalibrator:
                             )
                             self._apply_value_map({p.name: base_values[p.name]})
                         except RuntimeError as exc:
-                            restored = self._recover_after_runtime_error(base_values)
+                            restored = self._recover_after_runtime_error(base_values, exc)
                             history.append(
                                 self._make_history_entry(
                                     it,
@@ -4436,6 +6631,7 @@ class CameraCalibrator:
                                 "value": trial_value,
                                 "direction": direction,
                                 "score": score,
+                                "trial_multiplier": trial_multiplier,
                                 "total_detail": total_detail,
                                 "img_path": img_path,
                                 "baseline": self._as_baseline_metrics(total_detail),
@@ -4510,6 +6706,16 @@ class CameraCalibrator:
                             candidate_score=score,
                             candidate_detail=total_detail,
                         )
+                        self._record_strategy_trial(
+                            iteration_strategy_stats,
+                            param_name=name,
+                            accepted=accepted,
+                            joint_candidate=False,
+                            score_delta=score - joint_score,
+                            trial_multiplier=float(move.get("trial_multiplier", 1.0)),
+                            baseline_detail=joint_total_detail,
+                            candidate_detail=total_detail,
+                        )
                         history.append(
                             self._make_history_entry(
                                 it,
@@ -4554,7 +6760,7 @@ class CameraCalibrator:
                         else:
                             self._apply_value_map({name: previous_value})
                     except RuntimeError as exc:
-                        restored = self._recover_after_runtime_error(joint_values)
+                        restored = self._recover_after_runtime_error(joint_values, exc)
                         history.append(
                             self._make_history_entry(
                                 it,
@@ -4658,6 +6864,12 @@ class CameraCalibrator:
                     f"{self._top_board_summary(best_total_detail)}"
                 )
 
+            self._finalize_strategy_iteration(
+                it,
+                iteration_strategy_stats,
+                improved_in_iter=improved_in_iter,
+            )
+
             if best_score <= self.target_score:
                 print("Target score reached.")
                 break
@@ -4702,8 +6914,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--config",
-        required=True,
-        help="Path to JSON config, for example config.rear_tv.json",
+        required=False,
+        help="Path to runtime JSON config, for example camera.rear_tv.json; required except in bootstrap mode",
     )
     parser.add_argument(
         "--capture-initials",
@@ -4739,6 +6951,11 @@ def parse_args() -> argparse.Namespace:
         "--bootstrap-real-image",
         default=None,
         help="Real camera image used as the new config real_image",
+    )
+    parser.add_argument(
+        "--bootstrap-template-config",
+        default=None,
+        help="Path to standalone bootstrap template input; defaults to bootstrap.template.json next to the script",
     )
     parser.add_argument(
         "--bootstrap-annotated-image",
@@ -4815,6 +7032,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Optional legacy mode: resume parameter values from the last result before optimize",
     )
+    parser.add_argument(
+        "--campaign-rounds",
+        type=int,
+        default=1,
+        help="Repeat multi-start or explore-then-refine for N outer rounds, carrying previous best values and learned param order into the next round",
+    )
     return parser.parse_args()
 
 
@@ -4826,10 +7049,6 @@ def main() -> None:
         pass
 
     args = parse_args()
-    config_path = Path(args.config).resolve()
-    camera_name = _camera_name_from_config_path(config_path)
-    with open(config_path, "r", encoding="utf-8-sig") as f:
-        cfg = json.load(f)
 
     if args.multi_start_count < 0:
         raise ValueError("--multi-start-count must be >= 0")
@@ -4839,6 +7058,8 @@ def main() -> None:
         raise ValueError("--multi-start-jitter-steps must be >= 0")
     if args.refine_iters is not None and args.refine_iters <= 0:
         raise ValueError("--refine-iters must be > 0")
+    if args.campaign_rounds <= 0:
+        raise ValueError("--campaign-rounds must be > 0")
 
     if args.bootstrap_config_from_annotation:
         if not args.bootstrap_real_image or not args.bootstrap_annotated_image:
@@ -4853,8 +7074,13 @@ def main() -> None:
             raise ValueError(
                 "bootstrap-config-from-annotation cannot be combined with capture/propose/annotate commands"
             )
+        template_config_path = (
+            Path(args.bootstrap_template_config).resolve()
+            if args.bootstrap_template_config
+            else _default_bootstrap_template_path()
+        )
         bootstrap_config_from_annotation(
-            config_path=config_path,
+            template_config_path=template_config_path,
             real_image_path=Path(args.bootstrap_real_image),
             annotated_image_path=Path(args.bootstrap_annotated_image),
             output_path=Path(args.bootstrap_output) if args.bootstrap_output else None,
@@ -4863,6 +7089,14 @@ def main() -> None:
             capture_current_params=not args.bootstrap_skip_current_params,
         )
         return
+
+    if not args.config:
+        raise ValueError("--config is required unless --bootstrap-config-from-annotation is used")
+
+    config_path = Path(args.config).resolve()
+    camera_name = _camera_name_from_config_path(config_path)
+    with open(config_path, "r", encoding="utf-8-sig") as f:
+        cfg = json.load(f)
 
     base_output_dir = _resolve_config_output_dir(cfg, config_path)
     cfg["output_dir"] = str(base_output_dir)
@@ -4881,21 +7115,24 @@ def main() -> None:
             print("Explore-then-refine mode ignores --resume-from-result and always starts from config initial values.")
         campaign_start_count = args.multi_start_count or 4
         campaign_explore_iters = args.multi_start_iters or min(int(cfg.get("max_iters", 100)), 24)
-        summary = _run_explore_then_refine_campaign(
+        rounds_payload = _run_explore_then_refine_rounds(
             config_path=config_path,
             cfg=cfg,
             base_output_dir=base_output_dir,
+            camera_name=camera_name,
+            round_count=int(args.campaign_rounds),
             start_count=campaign_start_count,
             jitter_steps=float(args.multi_start_jitter_steps),
             seed=int(args.multi_start_seed),
             explore_max_iters=int(campaign_explore_iters),
             refine_max_iters=args.refine_iters,
         )
-        best_run = summary["best_run"]
-        refine = summary["refine"]
-        _write_initial_values_to_config(config_path, best_run["best_values"])
-        print("Explore summary JSON:", summary["explore"]["summary_json"])
-        print("Refine output dir:", refine["output_dir"])
+        best_round = rounds_payload["best_round"] or {}
+        best_run = best_round.get("best_run") or {}
+        print("Rounds summary JSON:", rounds_payload["summary_json"])
+        print("Rounds output dir:", rounds_payload["rounds_output_dir"])
+        print("Completed rounds:", rounds_payload["round_count_completed"])
+        print("Best round index:", best_round.get("round_index"))
         print("Campaign best stage:", best_run["stage"])
         print("Campaign best score:", best_run["best_score"])
         print("Campaign best image:", best_run["best_image"])
@@ -4914,18 +7151,23 @@ def main() -> None:
             raise ValueError("multi-start mode cannot be combined with capture/propose/annotate commands")
         if args.resume_from_result:
             print("Multi-start mode ignores --resume-from-result and always starts from config initial values.")
-        summary = _run_multi_start_campaign(
+        rounds_payload = _run_multi_start_rounds(
             config_path=config_path,
             cfg=cfg,
             base_output_dir=base_output_dir,
+            camera_name=camera_name,
+            round_count=int(args.campaign_rounds),
             start_count=args.multi_start_count,
             jitter_steps=float(args.multi_start_jitter_steps),
             seed=int(args.multi_start_seed),
             max_iters_override=args.multi_start_iters,
         )
-        best_run = summary["best_run"]
-        _write_initial_values_to_config(config_path, best_run["best_values"])
-        print("Multi-start output dir:", summary["output_dir"])
+        best_round = rounds_payload["best_round"] or {}
+        best_run = best_round.get("best_run") or {}
+        print("Rounds summary JSON:", rounds_payload["summary_json"])
+        print("Rounds output dir:", rounds_payload["rounds_output_dir"])
+        print("Completed rounds:", rounds_payload["round_count_completed"])
+        print("Best round index:", best_round.get("round_index"))
         print("Multi-start best score:", best_run["best_score"])
         print("Multi-start best image:", best_run["best_image"])
         print("Multi-start best result JSON:", best_run["result_json"])
@@ -4941,11 +7183,37 @@ def main() -> None:
     marker_path: Optional[Path] = None
     marker_payload: Optional[dict] = None
     resume_result_path: Optional[Path] = None
+    if should_optimize and args.campaign_rounds > 1:
+        rounds_payload = _run_plain_optimize_rounds(
+            config_path=config_path,
+            cfg=cfg,
+            base_output_dir=base_output_dir,
+            camera_name=camera_name,
+            round_count=int(args.campaign_rounds),
+            resume_from_result=bool(args.resume_from_result),
+        )
+        best_round = rounds_payload["best_round"] or {}
+        print("Rounds summary JSON:", rounds_payload["summary_json"])
+        print("Rounds output dir:", rounds_payload["rounds_output_dir"])
+        print("Completed rounds:", rounds_payload["round_count_completed"])
+        print("Best round index:", best_round.get("round_index"))
+        print("Best score:", best_round.get("best_score"))
+        print("Best image:", best_round.get("best_image"))
+        print("Best result JSON:", best_round.get("result_json"))
+        camera_history_summary_path, camera_history_summary = _write_camera_history_summary(camera_name)
+        camera_history_summary_compact_path = _write_camera_history_summary_compact(
+            camera_name,
+            camera_history_summary,
+        )
+        _print_camera_history_summary(camera_history_summary, camera_history_summary_path)
+        _print_camera_history_summary_compact(camera_history_summary_compact_path)
+        return
+
     if should_optimize:
         marker_path = _marker_path_for_output_dir(base_output_dir)
         if args.resume_from_result:
             resume_result_path = _read_latest_result_path(marker_path, base_output_dir)
-        cfg["output_dir"] = str(_build_isolated_output_dir(base_output_dir.name, camera_parent=base_output_dir.name))
+        cfg["output_dir"] = str(_build_isolated_output_dir("run", camera_parent=base_output_dir.name))
         marker_payload = {
             "started_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "config": str(config_path),
@@ -5005,7 +7273,12 @@ def main() -> None:
             )
 
         result = calib.optimize()
-        _write_initial_values_to_config(config_path, result["best_values"])
+        _write_initial_values_to_config_if_best(
+            config_path,
+            camera_name,
+            float(result["best_score"]),
+            result["best_values"],
+        )
         if marker_path is not None and marker_payload is not None:
             marker_payload.update(
                 {

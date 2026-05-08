@@ -2756,7 +2756,13 @@ class CameraCalibrator:
         configured_script_path = Path(cfg.get("script_control_script_path", str(default_command_path)))
         if not configured_script_path.is_absolute():
             configured_script_path = (self.repo_root / configured_script_path).resolve()
-        self.script_control_script_path = configured_script_path
+        self.script_control_template_path = configured_script_path
+        runtime_script_name = (
+            f"{configured_script_path.stem}.runtime{configured_script_path.suffix}"
+            if configured_script_path.suffix
+            else f"{configured_script_path.name}.runtime"
+        )
+        self.script_control_script_path = self.output_dir / runtime_script_name
         self.script_control_result_path = Path(
             cfg.get("script_control_result_path", str(default_result_path))
         )
@@ -3123,6 +3129,26 @@ class CameraCalibrator:
         return bool(detection.success and detection.point_count >= min_points)
 
     @staticmethod
+    def _effective_detection_min_points(board: BoardProfile, detection: DetectionResult) -> int:
+        min_points = max(1, int(board.min_detected_points))
+        if detection.success and detection.detector == "template_match":
+            if board.board_type == "checkerboard" or _is_custom_marker_board_type(board.board_type):
+                return min(min_points, 9)
+        return min_points
+
+    @classmethod
+    def _effective_scoring_min_points(
+        cls,
+        board: BoardProfile,
+        real_detection: DetectionResult,
+        sim_detection: DetectionResult,
+    ) -> int:
+        return min(
+            cls._effective_detection_min_points(board, real_detection),
+            cls._effective_detection_min_points(board, sim_detection),
+        )
+
+    @staticmethod
     def _order_params(
         params: List[ParameterSpec], optimization_order: Optional[List[str]]
     ) -> List[ParameterSpec]:
@@ -3255,6 +3281,10 @@ class CameraCalibrator:
                 str(board.template_image),
                 board.template_crop,
                 board.custom_detector,
+                board.board_type,
+                board.roi,
+                board.template_source_crop,
+                board.template_source_roi,
             )
             template_info = template_cache.get(cache_key)
             if template_info is None:
@@ -3278,6 +3308,16 @@ class CameraCalibrator:
                     raise RuntimeError(
                         f"Failed reading template_image for {board.board_id}: {board.template_image}"
                     ) from exc
+                if (
+                    board.board_type == "checkerboard"
+                    and board.template_crop is None
+                    and board.roi is not None
+                ):
+                    crop_x, crop_y, crop_w, crop_h = board.roi
+                    crop_x1 = crop_x + crop_w
+                    crop_y1 = crop_y + crop_h
+                    if crop_x1 <= template_gray.shape[1] and crop_y1 <= template_gray.shape[0]:
+                        template_gray = template_gray[crop_y:crop_y1, crop_x:crop_x1]
                 if board.template_crop is not None:
                     crop_x, crop_y, crop_w, crop_h = board.template_crop
                     crop_x1 = crop_x + crop_w
@@ -3287,7 +3327,7 @@ class CameraCalibrator:
                             f"template_crop is outside template image for {board.board_id}: {board.template_crop}"
                         )
                     template_gray = template_gray[crop_y:crop_y1, crop_x:crop_x1]
-                if board.custom_detector == "feature":
+                if board.custom_detector == "feature" and board.board_type != "checkerboard":
                     max_dim = max(template_gray.shape[:2])
                     if max_dim > self.template_feature_max_dim:
                         scale = float(self.template_feature_max_dim) / float(max_dim)
@@ -3317,7 +3357,7 @@ class CameraCalibrator:
                     "template": template_gray,
                     "anchors": anchor_points,
                 }
-                if board.custom_detector == "feature":
+                if board.custom_detector == "feature" and board.board_type != "checkerboard":
                     kp, des = self.orb.detectAndCompute(template_gray, None)
                     if des is None or len(kp) < 20:
                         raise RuntimeError(
@@ -3388,6 +3428,11 @@ class CameraCalibrator:
         return intersection / union
 
     @staticmethod
+    def _bbox_center(bbox: Tuple[int, int, int, int]) -> Tuple[float, float]:
+        x, y, width, height = bbox
+        return x + (width * 0.5), y + (height * 0.5)
+
+    @staticmethod
     def _load_params(param_cfg: Dict[str, dict]) -> List[ParameterSpec]:
         params: List[ParameterSpec] = []
         for name, p in param_cfg.items():
@@ -3423,11 +3468,13 @@ class CameraCalibrator:
         return params
 
     def preflight_script_control(self) -> None:
+        self.script_control_template_path.parent.mkdir(parents=True, exist_ok=True)
         self.script_control_script_path.parent.mkdir(parents=True, exist_ok=True)
         self.script_control_result_path.parent.mkdir(parents=True, exist_ok=True)
         print(
             "Script Control preflight: "
-            f"command_path={self.script_control_script_path}, "
+            f"template_path={self.script_control_template_path}, "
+            f"runtime_path={self.script_control_script_path}, "
             f"result_path={self.script_control_result_path}, "
             f"dde_service={self.script_control_dde_service}, "
             f"dde_topic={self.script_control_dde_topic}"
@@ -4510,6 +4557,155 @@ class CameraCalibrator:
             raise ValueError("roi is outside image bounds")
         return image[y0:y1, x0:x1], (x0, y0)
 
+    def _detect_roi_padding_attempts(self, board: BoardProfile) -> List[int]:
+        attempts = [0]
+        configured_padding = max(0, int(board.detect_roi_padding))
+        if configured_padding > 0:
+            attempts.append(configured_padding)
+
+        if board.roi is not None and configured_padding <= 0:
+            _, _, width, height = board.roi
+            base_span = max(1, int(max(width, height)))
+            image_h, image_w = self.real_img.shape[:2]
+            max_auto_padding = int(round(max(image_h, image_w) * 0.65))
+            auto_paddings: List[int] = []
+
+            if board.board_type == "checkerboard":
+                auto_paddings.extend(
+                    [
+                        max(120, int(round(base_span * 1.5))),
+                        max(220, int(round(base_span * 2.5))),
+                    ]
+                )
+            elif _is_custom_marker_board_type(board.board_type):
+                source_roi = board.template_source_roi or board.roi
+                _, _, source_w, source_h = source_roi
+                source_span = max(1, int(max(source_w, source_h)))
+                auto_paddings.extend(
+                    [
+                        max(240, int(round(source_span * 1.5))),
+                        max(480, int(round(source_span * 3.0))),
+                    ]
+                )
+
+            for padding_value in auto_paddings:
+                attempts.append(min(max_auto_padding, padding_value))
+
+        ordered_attempts: List[int] = []
+        seen: set[int] = set()
+        for padding in attempts:
+            normalized = max(0, int(padding))
+            if normalized in seen:
+                continue
+            ordered_attempts.append(normalized)
+            seen.add(normalized)
+        return ordered_attempts
+
+    def _template_match_threshold_attempts(self, board: BoardProfile) -> List[float]:
+        thresholds = [float(board.template_match_threshold)]
+        if _is_custom_marker_board_type(board.board_type):
+            thresholds.extend(
+                [
+                    max(0.45, float(board.template_match_threshold) * 0.85),
+                    max(0.35, float(board.template_match_threshold) * 0.70),
+                    0.25,
+                ]
+            )
+        elif board.board_type == "checkerboard" and board.template_image:
+            thresholds.extend(
+                [
+                    max(0.40, float(board.template_match_threshold) * 0.80),
+                    max(0.30, float(board.template_match_threshold) * 0.65),
+                ]
+            )
+
+        ordered_thresholds: List[float] = []
+        seen: set[float] = set()
+        for threshold in thresholds:
+            normalized = round(max(0.05, min(1.0, float(threshold))), 6)
+            if normalized in seen:
+                continue
+            ordered_thresholds.append(normalized)
+            seen.add(normalized)
+        return ordered_thresholds
+
+    @staticmethod
+    def _template_match_expected_bbox(board: BoardProfile) -> Optional[Tuple[int, int, int, int]]:
+        if board.board_type == "custom_maker" and board.template_source_roi is not None:
+            return board.template_source_roi
+        return board.roi
+
+    @staticmethod
+    def _template_match_candidate_geometry(
+        board: BoardProfile,
+        template_shape: Tuple[int, int],
+    ) -> Tuple[float, float, float, float]:
+        template_h, template_w = template_shape[:2]
+        anchor_shift_x = 0.0
+        anchor_shift_y = 0.0
+        candidate_w = float(template_w)
+        candidate_h = float(template_h)
+        if board.board_type == "custom_maker":
+            if board.template_source_roi is not None and board.template_source_crop is not None:
+                _, _, source_w, source_h = board.template_source_roi
+                crop_x, crop_y, crop_w, crop_h = board.template_source_crop
+                if crop_w > 0 and crop_h > 0:
+                    anchor_shift_x = -float(crop_x)
+                    anchor_shift_y = -float(crop_y)
+                    candidate_w = float(source_w)
+                    candidate_h = float(source_h)
+        return anchor_shift_x, anchor_shift_y, candidate_w, candidate_h
+
+    def _template_match_best_local_candidate(
+        self,
+        board: BoardProfile,
+        response: np.ndarray,
+        offset: Tuple[int, int],
+        template_shape: Tuple[int, int],
+        image_shape: Tuple[int, int],
+    ) -> Optional[Tuple[float, Tuple[int, int]]]:
+        expected_bbox = self._template_match_expected_bbox(board)
+        if expected_bbox is None:
+            _, max_value, _, max_location = cv2.minMaxLoc(response)
+            return float(max_value), (int(max_location[0]), int(max_location[1]))
+
+        expand_ratio = 0.12 if board.board_type == "checkerboard" else 0.06
+        expand_min_pad = 20 if board.board_type == "checkerboard" else 12
+        allowed_bbox = self._expand_bbox(
+            expected_bbox,
+            image_shape[:2],
+            ratio=expand_ratio,
+            min_pad=expand_min_pad,
+        )
+        allow_x, allow_y, allow_w, allow_h = allowed_bbox
+        shift_x, shift_y, cand_w, cand_h = self._template_match_candidate_geometry(
+            board,
+            template_shape,
+        )
+
+        response_h, response_w = response.shape[:2]
+        x_coords = offset[0] + np.arange(response_w, dtype=np.float32)
+        y_coords = offset[1] + np.arange(response_h, dtype=np.float32)
+        grid_x, grid_y = np.meshgrid(x_coords, y_coords)
+        center_x = grid_x + shift_x + (cand_w * 0.5)
+        center_y = grid_y + shift_y + (cand_h * 0.5)
+        valid_mask = (
+            (center_x >= allow_x)
+            & (center_x <= (allow_x + allow_w))
+            & (center_y >= allow_y)
+            & (center_y <= (allow_y + allow_h))
+        )
+        if not bool(np.any(valid_mask)):
+            return None
+
+        masked_response = np.where(valid_mask, response, -np.inf)
+        flat_index = int(np.argmax(masked_response))
+        max_value = float(masked_response.flat[flat_index])
+        if not np.isfinite(max_value):
+            return None
+        max_y, max_x = np.unravel_index(flat_index, masked_response.shape)
+        return max_value, (int(max_x), int(max_y))
+
     def _prepare_eval_image(self, image: np.ndarray) -> np.ndarray:
         source_h, source_w = image.shape[:2]
         target_h, target_w = self.real_img.shape[:2]
@@ -4641,6 +4837,65 @@ class CameraCalibrator:
             cv2.LINE_AA,
         )
 
+    @staticmethod
+    def _annotated_label_bounds(
+        image_shape: Tuple[int, ...],
+        text: str,
+        anchor: Tuple[int, int],
+        scale: float = 0.62,
+        thickness: int = 2,
+    ) -> Tuple[Tuple[int, int], Tuple[int, int], Tuple[int, int]]:
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        (text_w, text_h), baseline = cv2.getTextSize(text, font, scale, thickness)
+        image_h, image_w = image_shape[:2]
+        x = max(8, int(anchor[0]))
+        x = min(x, max(8, image_w - text_w - 8))
+        y = max(text_h + 12, int(anchor[1]))
+        y = min(y, max(text_h + 12, image_h - baseline + 2))
+        top_left = (x - 4, y - text_h - 8)
+        bottom_right = (x + text_w + 6, y + baseline - 2)
+        return top_left, bottom_right, (x, y)
+
+    @classmethod
+    def _resolve_annotated_label_anchor(
+        cls,
+        image_shape: Tuple[int, ...],
+        text: str,
+        preferred_anchor: Tuple[int, int],
+        occupied_boxes: List[Tuple[Tuple[int, int], Tuple[int, int]]],
+        scale: float = 0.62,
+        thickness: int = 2,
+    ) -> Tuple[Tuple[int, int], Tuple[Tuple[int, int], Tuple[int, int]]]:
+        offsets = [0, 24, -24, 48, -48, 72, -72, 96, -96]
+        for delta_y in offsets:
+            top_left, bottom_right, resolved_anchor = cls._annotated_label_bounds(
+                image_shape,
+                text,
+                (preferred_anchor[0], preferred_anchor[1] + delta_y),
+                scale=scale,
+                thickness=thickness,
+            )
+            overlaps = any(
+                not (
+                    bottom_right[0] < other_top_left[0]
+                    or other_bottom_right[0] < top_left[0]
+                    or bottom_right[1] < other_top_left[1]
+                    or other_bottom_right[1] < top_left[1]
+                )
+                for other_top_left, other_bottom_right in occupied_boxes
+            )
+            if not overlaps:
+                return resolved_anchor, (top_left, bottom_right)
+
+        top_left, bottom_right, resolved_anchor = cls._annotated_label_bounds(
+            image_shape,
+            text,
+            preferred_anchor,
+            scale=scale,
+            thickness=thickness,
+        )
+        return resolved_anchor, (top_left, bottom_right)
+
     def annotate_existing_image(
         self,
         image_path: Path,
@@ -4661,6 +4916,7 @@ class CameraCalibrator:
         sim_score_img = self._build_sim_eval_image(sim_gray)
         palette = self._get_annotation_palette()
         board_scores: List[BoardScoreDetail] = []
+        occupied_label_boxes: List[Tuple[Tuple[int, int], Tuple[int, int]]] = []
 
         for index, board in enumerate(self.boards):
             color = palette[index % len(palette)]
@@ -4674,14 +4930,14 @@ class CameraCalibrator:
                 mapped_points = self._map_eval_points_to_source(
                     sim_detection.ordered_points, transform
                 ).reshape(-1, 2)
-                bbox = self._expand_bbox(
-                    self._points_bbox(mapped_points),
-                    sim_gray.shape[:2],
-                    ratio=0.08,
-                    min_pad=10,
-                )
-                x, y, width, height = bbox
-                cv2.rectangle(sim_bgr, (x, y), (x + width, y + height), color, 2)
+                mapped_points_int = np.round(mapped_points).astype(np.int32)
+                if mapped_points_int.shape[0] >= 3:
+                    hull = cv2.convexHull(mapped_points_int.reshape(-1, 1, 2))
+                    cv2.polylines(sim_bgr, [hull], True, color, 2, cv2.LINE_AA)
+                    x, y, width, height = cv2.boundingRect(hull)
+                else:
+                    x, y, width, height = self._points_bbox(mapped_points)
+                    cv2.rectangle(sim_bgr, (x, y), (x + width, y + height), color, 2)
                 for point in mapped_points:
                     cv2.circle(
                         sim_bgr,
@@ -4690,12 +4946,19 @@ class CameraCalibrator:
                         color,
                         -1,
                     )
+                label_anchor, label_box = self._resolve_annotated_label_anchor(
+                    sim_bgr.shape,
+                    board.board_id,
+                    (x + 2, max(18, y - 10)),
+                    occupied_label_boxes,
+                )
                 self._draw_annotated_label(
                     sim_bgr,
                     board.board_id,
-                    (x + 2, max(18, y - 10)),
+                    label_anchor,
                     color,
                 )
+                occupied_label_boxes.append(label_box)
 
         total_detail = total_detail or self._aggregate_scores(board_scores, baseline_metrics=None)
 
@@ -4985,10 +5248,7 @@ class CameraCalibrator:
         self, gray_image: np.ndarray, board: BoardProfile
     ) -> DetectionResult:
         eval_image = self._prepare_eval_image(gray_image)
-        roi_attempts = [0]
-        detect_roi_padding = max(0, int(board.detect_roi_padding))
-        if detect_roi_padding > 0:
-            roi_attempts.append(detect_roi_padding)
+        roi_attempts = self._detect_roi_padding_attempts(board)
 
         found = False
         corners = None
@@ -5152,7 +5412,8 @@ class CameraCalibrator:
         self, gray_image: np.ndarray, board: BoardProfile
     ) -> DetectionResult:
         eval_image = self._prepare_eval_image(gray_image)
-        roi_img, offset = self._extract_roi(eval_image, board.roi)
+        roi_attempts = self._detect_roi_padding_attempts(board)
+        threshold_attempts = self._template_match_threshold_attempts(board)
 
         template_info = self.custom_templates.get(board.board_id)
         if template_info is None:
@@ -5168,26 +5429,51 @@ class CameraCalibrator:
             )
 
         template_gray = template_info["template"]
-        if (
-            roi_img.shape[0] < template_gray.shape[0]
-            or roi_img.shape[1] < template_gray.shape[1]
-        ):
-            return DetectionResult(
-                board_id=board.board_id,
-                success=False,
-                point_count=0,
-                ordered_points=np.empty((0, 2), dtype=np.float32),
-                board_type=board.board_type,
-                roi_used=board.roi,
-                detector="template_match",
-                error_message="search roi smaller than template",
-            )
-
-        search_image = self._preprocess_template_match_image(roi_img, board)
         template_image = self._preprocess_template_match_image(template_gray, board)
-        response = cv2.matchTemplate(search_image, template_image, cv2.TM_CCOEFF_NORMED)
-        _, max_value, _, max_location = cv2.minMaxLoc(response)
-        if max_value < board.template_match_threshold:
+        best_failure_message = "search roi smaller than template"
+        best_failure_value: Optional[float] = None
+        match_x: Optional[float] = None
+        match_y: Optional[float] = None
+        offset = (0, 0)
+
+        for padding in roi_attempts:
+            roi_img, current_offset = self._extract_roi(eval_image, board.roi, padding=padding)
+            if (
+                roi_img.shape[0] < template_gray.shape[0]
+                or roi_img.shape[1] < template_gray.shape[1]
+            ):
+                continue
+
+            search_image = self._preprocess_template_match_image(roi_img, board)
+            response = cv2.matchTemplate(search_image, template_image, cv2.TM_CCOEFF_NORMED)
+            best_candidate = self._template_match_best_local_candidate(
+                board,
+                response,
+                current_offset,
+                template_gray.shape,
+                eval_image.shape,
+            )
+            if best_candidate is None:
+                continue
+            current_max_value, current_max_location = best_candidate
+            for threshold in threshold_attempts:
+                if best_failure_value is None or current_max_value > best_failure_value:
+                    best_failure_value = float(current_max_value)
+                    best_failure_message = (
+                        f"template match below threshold: {current_max_value:.3f} < "
+                        f"{threshold:.3f}"
+                    )
+                if current_max_value < threshold:
+                    continue
+
+                offset = current_offset
+                match_x = float(offset[0] + current_max_location[0])
+                match_y = float(offset[1] + current_max_location[1])
+                break
+            if match_x is not None and match_y is not None:
+                break
+
+        if match_x is None or match_y is None:
             return DetectionResult(
                 board_id=board.board_id,
                 success=False,
@@ -5196,14 +5482,9 @@ class CameraCalibrator:
                 board_type=board.board_type,
                 roi_used=board.roi,
                 detector="template_match",
-                error_message=(
-                    f"template match below threshold: {max_value:.3f} < "
-                    f"{board.template_match_threshold:.3f}"
-                ),
+                error_message=best_failure_message,
             )
 
-        match_x = float(offset[0] + max_location[0])
-        match_y = float(offset[1] + max_location[1])
         template_h, template_w = template_gray.shape[:2]
         anchor_x = match_x
         anchor_y = match_y
@@ -5252,15 +5533,35 @@ class CameraCalibrator:
     def _detect_board(self, gray_image: np.ndarray, board: BoardProfile) -> DetectionResult:
         if board.board_type == "checkerboard":
             primary = self._detect_checkerboard(gray_image, board)
+            if board.template_image:
+                fallback_detectors = [self._detect_template_match_board]
+                if primary.success and board.roi is not None:
+                    primary_bbox = self._points_bbox(primary.ordered_points)
+                    expected_bbox = self._expand_bbox(
+                        board.roi,
+                        self.real_img.shape[:2],
+                        ratio=0.20,
+                        min_pad=24,
+                    )
+                    primary_center_x, primary_center_y = self._bbox_center(primary_bbox)
+                    exp_x, exp_y, exp_w, exp_h = expected_bbox
+                    primary_matches_roi = (
+                        self._bbox_iou(primary_bbox, expected_bbox) > 0.0
+                        or (
+                            exp_x <= primary_center_x <= (exp_x + exp_w)
+                            and exp_y <= primary_center_y <= (exp_y + exp_h)
+                        )
+                    )
+                    if primary_matches_roi:
+                        return primary
+                elif primary.success:
+                    return primary
+                for detector in fallback_detectors:
+                    fallback = detector(gray_image, board)
+                    if fallback.success:
+                        return fallback
             if primary.success:
                 return primary
-            if board.template_image:
-                if board.custom_detector == "template_match":
-                    fallback = self._detect_template_match_board(gray_image, board)
-                else:
-                    fallback = self._detect_template_board(gray_image, board)
-                if fallback.success:
-                    return fallback
             return primary
         if _is_custom_marker_board_type(board.board_type):
             return self._detect_custom_groundmaker(gray_image, board)
@@ -5529,7 +5830,7 @@ class CameraCalibrator:
         visible_count = 0
         for board in self.boards:
             detection = self._detect_board(self.real_img, board)
-            if self._is_visible(detection, board.min_detected_points):
+            if self._is_visible(detection, self._effective_detection_min_points(board, detection)):
                 visible_count += 1
             detections[board.board_id] = detection
         if visible_count == 0:
@@ -5542,7 +5843,14 @@ class CameraCalibrator:
     def _score_board(
         self, board: BoardProfile, real_detection: DetectionResult, sim_detection: DetectionResult
     ) -> BoardScoreDetail:
-        real_visible = self._is_visible(real_detection, board.min_detected_points)
+        real_min_points = self._effective_detection_min_points(board, real_detection)
+        sim_min_points = self._effective_detection_min_points(board, sim_detection)
+        scoring_min_points = self._effective_scoring_min_points(
+            board,
+            real_detection,
+            sim_detection,
+        )
+        real_visible = self._is_visible(real_detection, real_min_points)
 
         if self.compare_only_if_reference_visible and not real_visible:
             return BoardScoreDetail(
@@ -5551,7 +5859,7 @@ class CameraCalibrator:
                 success=True,
                 compared=False,
                 reference_visible=False,
-                sim_visible=self._is_visible(sim_detection, board.min_detected_points),
+                sim_visible=self._is_visible(sim_detection, sim_min_points),
                 total_score=0.0,
                 rmse=0.0,
                 mean_error=0.0,
@@ -5585,7 +5893,7 @@ class CameraCalibrator:
                 success=False,
                 compared=True,
                 reference_visible=False,
-                sim_visible=self._is_visible(sim_detection, board.min_detected_points),
+                sim_visible=self._is_visible(sim_detection, sim_min_points),
                 total_score=board.fail_penalty,
                 rmse=board.fail_penalty,
                 mean_error=board.fail_penalty,
@@ -5596,7 +5904,7 @@ class CameraCalibrator:
             )
 
         matched_points = min(real_detection.point_count, sim_detection.point_count)
-        if matched_points < board.min_detected_points:
+        if matched_points < scoring_min_points:
             miss_rate = 1.0 - (matched_points / max(1, real_detection.point_count))
             return BoardScoreDetail(
                 board_id=board.board_id,
@@ -5604,7 +5912,7 @@ class CameraCalibrator:
                 success=False,
                 compared=True,
                 reference_visible=real_visible,
-                sim_visible=self._is_visible(sim_detection, board.min_detected_points),
+            sim_visible=self._is_visible(sim_detection, sim_min_points),
                 total_score=board.fail_penalty,
                 rmse=board.fail_penalty,
                 mean_error=board.fail_penalty,

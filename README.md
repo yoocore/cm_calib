@@ -17,6 +17,7 @@
 - camera.<camera>.json：每个摄像头维护一份运行输入配置，例如 camera.rear_tv.json
 - bootstrap.template.json：独立的 bootstrap 模板输入配置，用于在第一个摄像头还没有现成 camera config 时生成新配置；文件里尽量只保留项目相关的板原型和少量覆盖项
 - script_control_apply.tcl：唯一维护的 Script Control 命令脚本
+- ipgmovie_control_workflow.md：IPG-MOVIE 控制流程、菜单项映射、刷新行为与最小化行为的持续记录文档
 
 依赖
 - Python 3.9+

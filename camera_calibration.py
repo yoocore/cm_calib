@@ -1419,6 +1419,9 @@ def _canonical_camera_group_name(name: str) -> str:
     raw_name = str(name).strip()
     if not raw_name:
         return raw_name
+    round_resume_match = re.match(r"^(.*)_round\d+_resume$", raw_name)
+    if round_resume_match and round_resume_match.group(1):
+        return round_resume_match.group(1)
     for suffix in (
         "_baseline_compare",
         "_bootstrap_auto",
@@ -1451,8 +1454,13 @@ def _load_json_if_exists(path: Path) -> Optional[dict]:
         return None
 
 
-def _build_run_digest_from_result_payload(payload: dict, result_path: Path) -> Optional[dict]:
-    if payload.get("in_progress"):
+def _build_run_digest_from_result_payload(
+    payload: dict,
+    result_path: Path,
+    *,
+    include_in_progress: bool = False,
+) -> Optional[dict]:
+    if payload.get("in_progress") and not include_in_progress:
         return None
 
     summary = payload.get("summary")
@@ -1785,6 +1793,39 @@ def _read_latest_result_path(marker_path: Path, fallback_output_dir: Path) -> Pa
     return _find_latest_result_path(fallback_output_dir)
 
 
+def _load_history_best_run_for_config(
+    config_path: Path,
+    camera_name: Optional[str] = None,
+) -> Optional[dict]:
+    config_camera_name = _camera_name_from_config_path(config_path)
+    history_camera_name = _canonical_camera_group_name(config_camera_name)
+    if not history_camera_name and camera_name:
+        history_camera_name = _canonical_camera_group_name(camera_name)
+    if not history_camera_name:
+        return None
+    history_dirs = _iter_camera_history_dirs(history_camera_name)
+    best_run: Optional[dict] = None
+    for history_dir in history_dirs:
+        for result_path in sorted(history_dir.rglob("result.json")):
+            payload = _load_json_if_exists(result_path)
+            if not isinstance(payload, dict):
+                continue
+            digest = _build_run_digest_from_result_payload(
+                payload,
+                result_path,
+                include_in_progress=True,
+            )
+            if digest is None:
+                continue
+            if best_run is None or float(digest.get("final_score", float("inf"))) < float(
+                best_run.get("final_score", float("inf"))
+            ):
+                best_run = digest
+    if isinstance(best_run, dict):
+        return dict(best_run)
+    return None
+
+
 def _write_initial_values_to_config(config_path: Path, values: Dict[str, float]) -> None:
     with open(config_path, "r", encoding="utf-8-sig") as f:
         cfg = json.load(f)
@@ -1807,22 +1848,24 @@ def _write_initial_values_to_config_if_best(
     values: Dict[str, float],
     tolerance: float = 1e-6,
 ) -> bool:
-    summary_path = _camera_history_summary_path(camera_name)
-    previous_best_score: Optional[float] = None
-    if summary_path.exists():
+    history_best_run = _load_history_best_run_for_config(config_path, camera_name)
+    history_best_score: Optional[float] = None
+    history_best_result_json: Optional[str] = None
+    if isinstance(history_best_run, dict):
         try:
-            summary = json.loads(summary_path.read_text(encoding="utf-8"))
-            best_run = summary.get("best_run")
-            if isinstance(best_run, dict):
-                previous_best_score = float(best_run.get("final_score"))
+            history_best_score = float(history_best_run.get("final_score"))
         except Exception:
-            previous_best_score = None
+            history_best_score = None
+        raw_result_json = history_best_run.get("result_json")
+        if isinstance(raw_result_json, str) and raw_result_json.strip():
+            history_best_result_json = raw_result_json
 
-    if previous_best_score is not None and float(best_score) > previous_best_score + tolerance:
+    if history_best_score is not None and float(best_score) > history_best_score + tolerance:
         print(
             "Skipped config initial update: "
             f"path={config_path}, current_best={float(best_score):.6f}, "
-            f"history_best={previous_best_score:.6f}"
+            f"history_best={history_best_score:.6f}, "
+            f"history_result={history_best_result_json or 'n/a'}"
         )
         return False
 
@@ -2075,6 +2118,103 @@ def _cfg_with_initial_values(cfg: dict, initial_values: Dict[str, float]) -> dic
         next_initial = float(initial_values.get(name, param_cfg["initial"]))
         parameters[name] = _build_explicit_parameter_config(param_cfg, next_initial)
     return run_cfg
+
+
+def _extract_initial_values_from_cfg(cfg: dict) -> Dict[str, float]:
+    parameters = cfg.get("parameters")
+    if not isinstance(parameters, dict) or not parameters:
+        raise ValueError("parameters must be a non-empty object")
+
+    initial_values: Dict[str, float] = {}
+    for name, param_cfg in parameters.items():
+        if not isinstance(param_cfg, dict) or "initial" not in param_cfg:
+            continue
+        initial_values[str(name)] = float(param_cfg["initial"])
+    return initial_values
+
+
+def _resolve_round_seed_policy(cfg: dict) -> dict:
+    payload = cfg.get("round_seeding")
+    if not isinstance(payload, dict):
+        return {
+            "enabled": False,
+            "prefer_history_best": True,
+            "carry_forward_only_if_improved": True,
+            "score_tolerance": 1e-6,
+        }
+
+    return {
+        "enabled": bool(payload.get("enabled", False)),
+        "prefer_history_best": bool(payload.get("prefer_history_best", True)),
+        "carry_forward_only_if_improved": bool(payload.get("carry_forward_only_if_improved", True)),
+        "score_tolerance": float(payload.get("score_tolerance", 1e-6)),
+    }
+
+
+def _resolve_round_seed_anchor(
+    config_path: Path,
+    camera_name: str,
+    cfg: dict,
+    policy: dict,
+) -> Tuple[Dict[str, float], Optional[float], str]:
+    anchor_values = _extract_initial_values_from_cfg(cfg)
+    anchor_score: Optional[float] = None
+    anchor_source = "config_initial"
+
+    if not bool(policy.get("prefer_history_best", True)):
+        return anchor_values, anchor_score, anchor_source
+
+    history_best_run = _load_history_best_run_for_config(config_path, camera_name)
+    if not isinstance(history_best_run, dict):
+        return anchor_values, anchor_score, anchor_source
+
+    history_values = history_best_run.get("final_values")
+    if isinstance(history_values, dict) and history_values:
+        anchor_values = {
+            name: float(value)
+            for name, value in history_values.items()
+            if isinstance(value, (int, float))
+        }
+        anchor_source = "history_best"
+
+    try:
+        anchor_score = float(history_best_run.get("final_score"))
+    except Exception:
+        anchor_score = None
+    return anchor_values, anchor_score, anchor_source
+
+
+def _choose_next_round_seed_values(
+    best_score: float,
+    best_values: Dict[str, float],
+    *,
+    policy: dict,
+    anchor_values: Dict[str, float],
+    anchor_score: Optional[float],
+    anchor_source: str,
+) -> Tuple[Dict[str, float], Optional[float], str]:
+    if not bool(policy.get("enabled", False)):
+        return dict(best_values), float(best_score), "round_best"
+
+    tolerance = float(policy.get("score_tolerance", 1e-6))
+    carry_forward_only_if_improved = bool(policy.get("carry_forward_only_if_improved", True))
+    candidate_values = dict(best_values)
+    candidate_score = float(best_score)
+
+    if (
+        carry_forward_only_if_improved
+        and anchor_values
+        and anchor_score is not None
+        and candidate_score > anchor_score + tolerance
+    ):
+        print(
+            "Round seed guard: "
+            f"keeping {anchor_source} for next round because round_best={candidate_score:.6f} "
+            f"is worse than anchor_score={anchor_score:.6f}"
+        )
+        return dict(anchor_values), anchor_score, anchor_source
+
+    return candidate_values, candidate_score, "round_best"
 
 
 def _select_campaign_best_run(explore_best_run: dict, refine_run: dict) -> dict:
@@ -2345,6 +2485,15 @@ def _run_plain_optimize_rounds(
     rounds_root = _build_isolated_output_dir("rounds", camera_parent=base_output_dir.name)
     active_cfg = copy.deepcopy(cfg)
     target_score = float(cfg.get("target_score", 5.0))
+    round_seed_policy = _resolve_round_seed_policy(cfg)
+    anchor_values, anchor_score, anchor_source = _resolve_round_seed_anchor(
+        config_path,
+        camera_name,
+        cfg,
+        round_seed_policy,
+    )
+    if round_seed_policy["enabled"]:
+        active_cfg = _cfg_with_initial_values(active_cfg, anchor_values)
     round_summaries: List[dict] = []
     best_round: Optional[dict] = None
 
@@ -2383,11 +2532,22 @@ def _run_plain_optimize_rounds(
         round_summaries.append(round_entry)
         if best_round is None or float(round_entry["best_score"]) < float(best_round["best_score"]):
             best_round = round_entry
+        next_seed_values, next_anchor_score, next_seed_source = _choose_next_round_seed_values(
+            float(result["best_score"]),
+            dict(result["best_values"]),
+            policy=round_seed_policy,
+            anchor_values=anchor_values,
+            anchor_score=anchor_score,
+            anchor_source=anchor_source,
+        )
         active_cfg = _cfg_with_round_guidance(
             active_cfg,
-            dict(result["best_values"]),
+            next_seed_values,
             strategy_payload if isinstance(strategy_payload, dict) else None,
         )
+        anchor_values = dict(next_seed_values)
+        anchor_score = next_anchor_score
+        anchor_source = next_seed_source
         if float(result["best_score"]) <= target_score:
             print(
                 f"Plain optimize rounds: stop early at round {round_no} because target_score was reached"
@@ -2425,6 +2585,15 @@ def _run_multi_start_rounds(
     rounds_root = _build_isolated_output_dir("rounds", camera_parent=base_output_dir.name)
     active_cfg = copy.deepcopy(cfg)
     target_score = float(cfg.get("target_score", 5.0))
+    round_seed_policy = _resolve_round_seed_policy(cfg)
+    anchor_values, anchor_score, anchor_source = _resolve_round_seed_anchor(
+        config_path,
+        camera_name,
+        cfg,
+        round_seed_policy,
+    )
+    if round_seed_policy["enabled"]:
+        active_cfg = _cfg_with_initial_values(active_cfg, anchor_values)
     round_summaries: List[dict] = []
     best_round: Optional[dict] = None
 
@@ -2469,7 +2638,18 @@ def _run_multi_start_rounds(
         round_summaries.append(round_entry)
         if best_round is None or float(best_run["best_score"]) < float(best_round["best_run"]["best_score"]):
             best_round = round_entry
-        active_cfg = _cfg_with_round_guidance(active_cfg, dict(best_run["best_values"]), strategy_payload)
+        next_seed_values, next_anchor_score, next_seed_source = _choose_next_round_seed_values(
+            float(best_run["best_score"]),
+            dict(best_run["best_values"]),
+            policy=round_seed_policy,
+            anchor_values=anchor_values,
+            anchor_score=anchor_score,
+            anchor_source=anchor_source,
+        )
+        active_cfg = _cfg_with_round_guidance(active_cfg, next_seed_values, strategy_payload)
+        anchor_values = dict(next_seed_values)
+        anchor_score = next_anchor_score
+        anchor_source = next_seed_source
         if float(best_run["best_score"]) <= target_score:
             print(
                 f"Multi-start rounds: stop early at round {round_no} because target_score was reached"
@@ -2508,6 +2688,15 @@ def _run_explore_then_refine_rounds(
     rounds_root = _build_isolated_output_dir("rounds", camera_parent=base_output_dir.name)
     active_cfg = copy.deepcopy(cfg)
     target_score = float(cfg.get("target_score", 5.0))
+    round_seed_policy = _resolve_round_seed_policy(cfg)
+    anchor_values, anchor_score, anchor_source = _resolve_round_seed_anchor(
+        config_path,
+        camera_name,
+        cfg,
+        round_seed_policy,
+    )
+    if round_seed_policy["enabled"]:
+        active_cfg = _cfg_with_initial_values(active_cfg, anchor_values)
     round_summaries: List[dict] = []
     best_round: Optional[dict] = None
 
@@ -2553,7 +2742,18 @@ def _run_explore_then_refine_rounds(
         round_summaries.append(round_entry)
         if best_round is None or float(best_run["best_score"]) < float(best_round["best_run"]["best_score"]):
             best_round = round_entry
-        active_cfg = _cfg_with_round_guidance(active_cfg, dict(best_run["best_values"]), strategy_payload)
+        next_seed_values, next_anchor_score, next_seed_source = _choose_next_round_seed_values(
+            float(best_run["best_score"]),
+            dict(best_run["best_values"]),
+            policy=round_seed_policy,
+            anchor_values=anchor_values,
+            anchor_score=anchor_score,
+            anchor_source=anchor_source,
+        )
+        active_cfg = _cfg_with_round_guidance(active_cfg, next_seed_values, strategy_payload)
+        anchor_values = dict(next_seed_values)
+        anchor_score = next_anchor_score
+        anchor_source = next_seed_source
         if float(best_run["best_score"]) <= target_score:
             print(
                 f"Explore-then-refine rounds: stop early at round {round_no} because target_score was reached"
@@ -3357,6 +3557,31 @@ class CameraCalibrator:
                     "template": template_gray,
                     "anchors": anchor_points,
                 }
+                if _is_custom_marker_board_type(board.board_type):
+                    match_template, match_crop = _select_auto_template_crop(
+                        template_gray,
+                        int(board.template_binary_threshold),
+                    )
+                    template_info["match_template"] = match_template
+                    template_info["match_crop"] = match_crop
+                    _, content_mask = cv2.threshold(
+                        template_gray,
+                        0,
+                        255,
+                        cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU,
+                    )
+                    content_points = np.column_stack(np.where(content_mask > 0))
+                    if content_points.size > 0:
+                        min_y = int(np.min(content_points[:, 0]))
+                        max_y = int(np.max(content_points[:, 0]))
+                        min_x = int(np.min(content_points[:, 1]))
+                        max_x = int(np.max(content_points[:, 1]))
+                        template_info["content_bbox"] = (
+                            min_x,
+                            min_y,
+                            max_x - min_x + 1,
+                            max_y - min_y + 1,
+                        )
                 if board.custom_detector == "feature" and board.board_type != "checkerboard":
                     kp, des = self.orb.detectAndCompute(template_gray, None)
                     if des is None or len(kp) < 20:
@@ -3431,6 +3656,101 @@ class CameraCalibrator:
     def _bbox_center(bbox: Tuple[int, int, int, int]) -> Tuple[float, float]:
         x, y, width, height = bbox
         return x + (width * 0.5), y + (height * 0.5)
+
+    def _custom_board_content_geometry(self, board: BoardProfile) -> Tuple[float, float, float, float]:
+        template_info = self.custom_templates.get(board.board_id, {})
+        content_bbox = template_info.get("content_bbox")
+        if content_bbox is not None:
+            offset_x, offset_y, width, height = content_bbox
+            return float(offset_x), float(offset_y), float(width), float(height)
+
+        reference_bbox = board.template_source_roi or board.roi
+        if reference_bbox is None:
+            return 0.0, 0.0, 1.0, 1.0
+        return 0.0, 0.0, float(reference_bbox[2]), float(reference_bbox[3])
+
+    @staticmethod
+    def _anchors_from_bbox(bbox: Tuple[int, int, int, int]) -> np.ndarray:
+        x, y, width, height = bbox
+        anchor_x = float(x)
+        anchor_y = float(y)
+        anchor_w = float(width)
+        anchor_h = float(height)
+        return np.array(
+            [
+                [anchor_x, anchor_y],
+                [anchor_x + anchor_w - 1.0, anchor_y],
+                [anchor_x + anchor_w - 1.0, anchor_y + anchor_h - 1.0],
+                [anchor_x, anchor_y + anchor_h - 1.0],
+                [anchor_x + anchor_w * 0.5, anchor_y + anchor_h * 0.5],
+                [anchor_x + anchor_w * 0.25, anchor_y + anchor_h * 0.25],
+                [anchor_x + anchor_w * 0.75, anchor_y + anchor_h * 0.25],
+                [anchor_x + anchor_w * 0.75, anchor_y + anchor_h * 0.75],
+                [anchor_x + anchor_w * 0.25, anchor_y + anchor_h * 0.75],
+            ],
+            dtype=np.float32,
+        )
+
+    @staticmethod
+    def _checkerboard_outline(
+        points: np.ndarray,
+        board_size: Optional[Tuple[int, int]],
+    ) -> Optional[np.ndarray]:
+        if board_size is None:
+            return None
+        cols, rows = int(board_size[0]), int(board_size[1])
+        reshaped = points.reshape(-1, 2).astype(np.float32)
+        if reshaped.shape[0] != cols * rows or cols < 2 or rows < 2:
+            return None
+        grid = reshaped.reshape(rows, cols, 2)
+
+        top_left = grid[0, 0]
+        top_right = grid[0, -1]
+        bottom_right = grid[-1, -1]
+        bottom_left = grid[-1, 0]
+
+        top_step = grid[0, 1] - grid[0, 0]
+        right_step = grid[1, -1] - grid[0, -1]
+        bottom_step = grid[-1, -1] - grid[-1, -2]
+        left_step = grid[-1, 0] - grid[-2, 0]
+
+        outline = np.array(
+            [
+                top_left - top_step - (grid[1, 0] - grid[0, 0]),
+                top_right + (grid[0, -1] - grid[0, -2]) - right_step,
+                bottom_right + bottom_step + (grid[-1, -1] - grid[-2, -1]),
+                bottom_left - (grid[-1, 1] - grid[-1, 0]) + left_step,
+            ],
+            dtype=np.float32,
+        )
+        return outline
+
+    def _reference_detection_from_board_geometry(
+        self,
+        board: BoardProfile,
+    ) -> Optional[DetectionResult]:
+        if not _is_custom_marker_board_type(board.board_type):
+            return None
+        reference_bbox = board.template_source_roi or board.roi
+        if reference_bbox is None:
+            return None
+        offset_x, offset_y, width, height = self._custom_board_content_geometry(board)
+        reference_bbox = (
+            int(round(reference_bbox[0] + offset_x)),
+            int(round(reference_bbox[1] + offset_y)),
+            max(1, int(round(width))),
+            max(1, int(round(height))),
+        )
+        anchors = self._anchors_from_bbox(reference_bbox)
+        return DetectionResult(
+            board_id=board.board_id,
+            success=True,
+            point_count=int(anchors.shape[0]),
+            ordered_points=anchors,
+            board_type=board.board_type,
+            roi_used=reference_bbox,
+            detector="reference_roi",
+        )
 
     @staticmethod
     def _load_params(param_cfg: Dict[str, dict]) -> List[ParameterSpec]:
@@ -3925,8 +4245,16 @@ class CameraCalibrator:
     def _run_script_control_script(self, script_text: str) -> str:
         self.script_control_script_path.parent.mkdir(parents=True, exist_ok=True)
         self.script_control_result_path.parent.mkdir(parents=True, exist_ok=True)
+        result_suffix = self.script_control_result_path.suffix or ".txt"
+        invocation_result_path = self.script_control_result_path.with_name(
+            f"{self.script_control_result_path.stem}.{uuid.uuid4().hex}{result_suffix}"
+        )
+        script_text = script_text.replace(
+            self.script_control_result_path.as_posix(),
+            invocation_result_path.as_posix(),
+        )
         self.script_control_script_path.write_text(script_text, encoding="utf-8")
-        self._unlink_script_control_result_file(required=True)
+        self._unlink_script_control_result_file(invocation_result_path, required=True)
 
         last_runtime_error: Optional[RuntimeError] = None
         attempt_count = 6
@@ -3940,15 +4268,18 @@ class CameraCalibrator:
             else:
                 deadline = time.time() + self.script_control_timeout_sec
                 while time.time() < deadline:
-                    if self.script_control_result_path.exists():
-                        text = self.script_control_result_path.read_text(encoding="utf-8", errors="replace")
+                    if invocation_result_path.exists():
+                        text = invocation_result_path.read_text(encoding="utf-8", errors="replace")
                         if self._is_script_control_result_complete(text):
                             rc, msg = self._parse_script_control_result_text(text)
                             if rc != 0:
                                 attempt_runtime_error = RuntimeError(
                                     f"Script Control apply failed: {msg}"
                                 )
-                                self._unlink_script_control_result_file(required=True)
+                                self._unlink_script_control_result_file(
+                                    invocation_result_path,
+                                    required=True,
+                                )
                                 break
                             self._log_dde_retry_event(
                                 "script_control_apply",
@@ -3957,6 +4288,7 @@ class CameraCalibrator:
                                 "success",
                                 time.perf_counter() - attempt_started,
                             )
+                            self._unlink_script_control_result_file(invocation_result_path)
                             return msg
                     time.sleep(0.1)
 
@@ -3988,21 +4320,28 @@ class CameraCalibrator:
             f"Script Control did not execute {self.script_control_script_path}."
         )
 
-    def _unlink_script_control_result_file(self, required: bool = False) -> bool:
-        for attempt in range(5):
+    def _unlink_script_control_result_file(
+        self,
+        result_path: Optional[Path] = None,
+        required: bool = False,
+    ) -> bool:
+        target_path = result_path or self.script_control_result_path
+        attempt_count = 10 if required else 5
+        retry_base_sec = max(self.script_control_settle_sec, 0.1)
+        for attempt in range(attempt_count):
             try:
-                self.script_control_result_path.unlink()
+                target_path.unlink()
                 return True
             except FileNotFoundError:
                 return True
             except PermissionError as exc:
-                if attempt == 4:
+                if attempt == attempt_count - 1:
                     if required:
                         raise RuntimeError(
-                            f"Script Control result file is busy: {self.script_control_result_path}"
+                            f"Script Control result file is busy: {target_path}"
                         ) from exc
                     return False
-                time.sleep(0.05 * (attempt + 1))
+                time.sleep(min(retry_base_sec * (attempt + 1), 1.0))
         return False
 
     def _runtime_error_needs_dde_recovery_probe(self, exc: BaseException) -> bool:
@@ -4635,10 +4974,11 @@ class CameraCalibrator:
             return board.template_source_roi
         return board.roi
 
-    @staticmethod
     def _template_match_candidate_geometry(
+        self,
         board: BoardProfile,
         template_shape: Tuple[int, int],
+        match_crop: Optional[Tuple[int, int, int, int]] = None,
     ) -> Tuple[float, float, float, float]:
         template_h, template_w = template_shape[:2]
         anchor_shift_x = 0.0
@@ -4646,14 +4986,18 @@ class CameraCalibrator:
         candidate_w = float(template_w)
         candidate_h = float(template_h)
         if board.board_type == "custom_maker":
-            if board.template_source_roi is not None and board.template_source_crop is not None:
-                _, _, source_w, source_h = board.template_source_roi
-                crop_x, crop_y, crop_w, crop_h = board.template_source_crop
-                if crop_w > 0 and crop_h > 0:
-                    anchor_shift_x = -float(crop_x)
-                    anchor_shift_y = -float(crop_y)
-                    candidate_w = float(source_w)
-                    candidate_h = float(source_h)
+            content_x, content_y, candidate_w, candidate_h = self._custom_board_content_geometry(board)
+            effective_match_crop = match_crop
+            if effective_match_crop is None:
+                template_info = self.custom_templates.get(board.board_id, {})
+                effective_match_crop = template_info.get("match_crop")
+            if effective_match_crop is not None:
+                crop_x, crop_y, _, _ = effective_match_crop
+                anchor_shift_x = content_x - float(crop_x)
+                anchor_shift_y = content_y - float(crop_y)
+            else:
+                anchor_shift_x = content_x
+                anchor_shift_y = content_y
         return anchor_shift_x, anchor_shift_y, candidate_w, candidate_h
 
     def _template_match_best_local_candidate(
@@ -4663,6 +5007,7 @@ class CameraCalibrator:
         offset: Tuple[int, int],
         template_shape: Tuple[int, int],
         image_shape: Tuple[int, int],
+        match_crop: Optional[Tuple[int, int, int, int]] = None,
     ) -> Optional[Tuple[float, Tuple[int, int]]]:
         expected_bbox = self._template_match_expected_bbox(board)
         if expected_bbox is None:
@@ -4681,6 +5026,7 @@ class CameraCalibrator:
         shift_x, shift_y, cand_w, cand_h = self._template_match_candidate_geometry(
             board,
             template_shape,
+            match_crop,
         )
 
         response_h, response_w = response.shape[:2]
@@ -4704,7 +5050,53 @@ class CameraCalibrator:
         if not np.isfinite(max_value):
             return None
         max_y, max_x = np.unravel_index(flat_index, masked_response.shape)
+
+        expected_center_x = allow_x + (allow_w * 0.5)
+        expected_center_y = allow_y + (allow_h * 0.5)
+        score_band_tolerance = 0.03 if _is_custom_marker_board_type(board.board_type) else 0.01
+        near_best_mask = valid_mask & (response >= (max_value - score_band_tolerance))
+        if bool(np.any(near_best_mask)):
+            center_distance = np.square(center_x - expected_center_x) + np.square(
+                center_y - expected_center_y
+            )
+            center_distance = np.where(near_best_mask, center_distance, np.inf)
+            nearest_index = int(np.argmin(center_distance))
+            nearest_y, nearest_x = np.unravel_index(nearest_index, center_distance.shape)
+            nearest_value = float(response[nearest_y, nearest_x])
+            if np.isfinite(nearest_value):
+                return nearest_value, (int(nearest_x), int(nearest_y))
+
         return max_value, (int(max_x), int(max_y))
+
+    def _custom_board_image_penalty(
+        self,
+        board: BoardProfile,
+        real_detection: DetectionResult,
+        sim_detection: DetectionResult,
+        sim_eval_image: Optional[np.ndarray],
+    ) -> float:
+        if sim_eval_image is None:
+            return 0.0
+
+        real_bbox = self._points_bbox(real_detection.ordered_points)
+        sim_bbox = self._points_bbox(sim_detection.ordered_points)
+        rx, ry, rw, rh = real_bbox
+        sx, sy, sw, sh = sim_bbox
+        real_patch = self.real_img[ry : ry + rh, rx : rx + rw]
+        sim_patch = sim_eval_image[sy : sy + sh, sx : sx + sw]
+        if real_patch.size == 0 or sim_patch.size == 0:
+            return 0.0
+
+        target_w = max(8, min(real_patch.shape[1], sim_patch.shape[1]))
+        target_h = max(8, min(real_patch.shape[0], sim_patch.shape[0]))
+        real_patch = cv2.resize(real_patch, (target_w, target_h), interpolation=cv2.INTER_AREA)
+        sim_patch = cv2.resize(sim_patch, (target_w, target_h), interpolation=cv2.INTER_AREA)
+        real_processed = self._preprocess_template_match_image(real_patch, board)
+        sim_processed = self._preprocess_template_match_image(sim_patch, board)
+        mae = float(
+            np.mean(np.abs(real_processed.astype(np.float32) - sim_processed.astype(np.float32)))
+        ) / 255.0
+        return mae * 100.0
 
     def _prepare_eval_image(self, image: np.ndarray) -> np.ndarray:
         source_h, source_w = image.shape[:2]
@@ -4923,7 +5315,7 @@ class CameraCalibrator:
             detection_img = sim_prepared if _is_custom_marker_board_type(board.board_type) else sim_score_img
             sim_detection = self._detect_board(detection_img, board)
             real_detection = self.real_detections[board.board_id]
-            score = self._score_board(board, real_detection, sim_detection)
+            score = self._score_board(board, real_detection, sim_detection, sim_prepared)
             board_scores.append(score)
 
             if sim_detection.success and sim_detection.ordered_points.size > 0:
@@ -4931,7 +5323,17 @@ class CameraCalibrator:
                     sim_detection.ordered_points, transform
                 ).reshape(-1, 2)
                 mapped_points_int = np.round(mapped_points).astype(np.int32)
-                if mapped_points_int.shape[0] >= 3:
+                checkerboard_outline = None
+                if board.board_type == "checkerboard":
+                    checkerboard_outline = self._checkerboard_outline(
+                        mapped_points,
+                        board.board_size,
+                    )
+                if checkerboard_outline is not None:
+                    outline_int = np.round(checkerboard_outline).astype(np.int32).reshape(-1, 1, 2)
+                    cv2.polylines(sim_bgr, [outline_int], True, color, 2, cv2.LINE_AA)
+                    x, y, width, height = cv2.boundingRect(outline_int)
+                elif mapped_points_int.shape[0] >= 3:
                     hull = cv2.convexHull(mapped_points_int.reshape(-1, 1, 2))
                     cv2.polylines(sim_bgr, [hull], True, color, 2, cv2.LINE_AA)
                     x, y, width, height = cv2.boundingRect(hull)
@@ -5429,47 +5831,63 @@ class CameraCalibrator:
             )
 
         template_gray = template_info["template"]
-        template_image = self._preprocess_template_match_image(template_gray, board)
+        template_variants: List[Tuple[np.ndarray, Tuple[int, int, int, int]]] = []
+        match_template_gray = template_info.get("match_template")
+        match_crop = template_info.get("match_crop")
+        if match_template_gray is not None and match_crop is not None:
+            template_variants.append((match_template_gray, match_crop))
+        template_variants.append(
+            (template_gray, (0, 0, int(template_gray.shape[1]), int(template_gray.shape[0])))
+        )
         best_failure_message = "search roi smaller than template"
         best_failure_value: Optional[float] = None
         match_x: Optional[float] = None
         match_y: Optional[float] = None
+        matched_crop: Tuple[int, int, int, int] = (0, 0, int(template_gray.shape[1]), int(template_gray.shape[0]))
+        matched_template_shape: Tuple[int, int] = (int(template_gray.shape[0]), int(template_gray.shape[1]))
         offset = (0, 0)
 
         for padding in roi_attempts:
             roi_img, current_offset = self._extract_roi(eval_image, board.roi, padding=padding)
-            if (
-                roi_img.shape[0] < template_gray.shape[0]
-                or roi_img.shape[1] < template_gray.shape[1]
-            ):
-                continue
-
             search_image = self._preprocess_template_match_image(roi_img, board)
-            response = cv2.matchTemplate(search_image, template_image, cv2.TM_CCOEFF_NORMED)
-            best_candidate = self._template_match_best_local_candidate(
-                board,
-                response,
-                current_offset,
-                template_gray.shape,
-                eval_image.shape,
-            )
-            if best_candidate is None:
-                continue
-            current_max_value, current_max_location = best_candidate
-            for threshold in threshold_attempts:
-                if best_failure_value is None or current_max_value > best_failure_value:
-                    best_failure_value = float(current_max_value)
-                    best_failure_message = (
-                        f"template match below threshold: {current_max_value:.3f} < "
-                        f"{threshold:.3f}"
-                    )
-                if current_max_value < threshold:
+            for variant_gray, variant_crop in template_variants:
+                if (
+                    roi_img.shape[0] < variant_gray.shape[0]
+                    or roi_img.shape[1] < variant_gray.shape[1]
+                ):
                     continue
 
-                offset = current_offset
-                match_x = float(offset[0] + current_max_location[0])
-                match_y = float(offset[1] + current_max_location[1])
-                break
+                template_image = self._preprocess_template_match_image(variant_gray, board)
+                response = cv2.matchTemplate(search_image, template_image, cv2.TM_CCOEFF_NORMED)
+                best_candidate = self._template_match_best_local_candidate(
+                    board,
+                    response,
+                    current_offset,
+                    variant_gray.shape,
+                    eval_image.shape,
+                    variant_crop,
+                )
+                if best_candidate is None:
+                    continue
+                current_max_value, current_max_location = best_candidate
+                for threshold in threshold_attempts:
+                    if best_failure_value is None or current_max_value > best_failure_value:
+                        best_failure_value = float(current_max_value)
+                        best_failure_message = (
+                            f"template match below threshold: {current_max_value:.3f} < "
+                            f"{threshold:.3f}"
+                        )
+                    if current_max_value < threshold:
+                        continue
+
+                    offset = current_offset
+                    match_x = float(offset[0] + current_max_location[0])
+                    match_y = float(offset[1] + current_max_location[1])
+                    matched_crop = variant_crop
+                    matched_template_shape = (int(variant_gray.shape[0]), int(variant_gray.shape[1]))
+                    break
+                if match_x is not None and match_y is not None:
+                    break
             if match_x is not None and match_y is not None:
                 break
 
@@ -5485,20 +5903,18 @@ class CameraCalibrator:
                 error_message=best_failure_message,
             )
 
-        template_h, template_w = template_gray.shape[:2]
+        template_h, template_w = matched_template_shape
         anchor_x = match_x
         anchor_y = match_y
         anchor_w = float(template_w)
         anchor_h = float(template_h)
         if board.board_type == "custom_maker":
-            if board.template_source_roi is not None and board.template_source_crop is not None:
-                _, _, source_w, source_h = board.template_source_roi
-                crop_x, crop_y, crop_w, crop_h = board.template_source_crop
-                if crop_w > 0 and crop_h > 0:
-                    anchor_x = match_x - float(crop_x)
-                    anchor_y = match_y - float(crop_y)
-                    anchor_w = float(source_w)
-                    anchor_h = float(source_h)
+            content_x, content_y, content_w, content_h = self._custom_board_content_geometry(board)
+            crop_x, crop_y, _, _ = matched_crop
+            anchor_x = match_x - float(crop_x) + content_x
+            anchor_y = match_y - float(crop_y) + content_y
+            anchor_w = float(content_w)
+            anchor_h = float(content_h)
         anchors = np.array(
             [
                 [anchor_x, anchor_y],
@@ -5829,7 +6245,9 @@ class CameraCalibrator:
         detections: Dict[str, DetectionResult] = {}
         visible_count = 0
         for board in self.boards:
-            detection = self._detect_board(self.real_img, board)
+            detection = self._reference_detection_from_board_geometry(board)
+            if detection is None:
+                detection = self._detect_board(self.real_img, board)
             if self._is_visible(detection, self._effective_detection_min_points(board, detection)):
                 visible_count += 1
             detections[board.board_id] = detection
@@ -5841,7 +6259,11 @@ class CameraCalibrator:
         return detections
 
     def _score_board(
-        self, board: BoardProfile, real_detection: DetectionResult, sim_detection: DetectionResult
+        self,
+        board: BoardProfile,
+        real_detection: DetectionResult,
+        sim_detection: DetectionResult,
+        sim_eval_image: Optional[np.ndarray] = None,
     ) -> BoardScoreDetail:
         real_min_points = self._effective_detection_min_points(board, real_detection)
         sim_min_points = self._effective_detection_min_points(board, sim_detection)
@@ -5912,7 +6334,7 @@ class CameraCalibrator:
                 success=False,
                 compared=True,
                 reference_visible=real_visible,
-            sim_visible=self._is_visible(sim_detection, sim_min_points),
+                sim_visible=self._is_visible(sim_detection, sim_min_points),
                 total_score=board.fail_penalty,
                 rmse=board.fail_penalty,
                 mean_error=board.fail_penalty,
@@ -5929,6 +6351,16 @@ class CameraCalibrator:
         rmse = float(np.sqrt(np.mean(np.square(distances))))
         mean_error = float(np.mean(distances))
         max_error = float(np.max(distances))
+        if _is_custom_marker_board_type(board.board_type):
+            image_penalty = self._custom_board_image_penalty(
+                board,
+                real_detection,
+                sim_detection,
+                sim_eval_image,
+            )
+            rmse = max(rmse, image_penalty)
+            mean_error = max(mean_error, image_penalty)
+            max_error = max(max_error, image_penalty)
         miss_rate = 1.0 - (matched_points / max(1, real_detection.point_count))
         total_score = rmse + board.alpha * miss_rate + board.beta * max_error
 
@@ -6512,7 +6944,7 @@ class CameraCalibrator:
             real_detection = self.real_detections[board.board_id]
             detection_img = sim_prepared if _is_custom_marker_board_type(board.board_type) else sim_score_img
             sim_detection = self._detect_board(detection_img, board)
-            board_scores.append(self._score_board(board, real_detection, sim_detection))
+            board_scores.append(self._score_board(board, real_detection, sim_detection, sim_prepared))
 
         total_detail = self._aggregate_scores(board_scores, baseline_metrics)
         return total_detail, sim_path

@@ -219,6 +219,133 @@ c:/CM_Projects/CMO141_Calibration/.venv/Scripts/python.exe Data/Script/CameraCal
 3. 启动后立刻跑 DDE 健康检查
 4. 如果 `send IPG-MOVIE` 仍然坏，直接在恢复阶段失败，而不是等到标定中途才暴露
 
+## 8.2 2026-05-09 当前健康基线快照
+
+后续如果用户说“现在又不正常了”，优先按下面这一组基线做对比。
+
+### 8.2.1 send 健康口径
+
+同一口径下，当前健康态满足：
+
+1. `WInfoInterps "IPG-MOVIE"` 成功返回 `IPG-MOVIE`
+2. 最小 `send IPG-MOVIE` 成功
+3. 返回 payload 里能读到 Tcl 版本和当前 camera
+
+2026-05-09 的实测结果是：
+
+```text
+winterps_rc 0
+winterps_msg IPG-MOVIE
+send_rc 0
+send_msg {ok 8.6.9 camera {CAMERA_RSI-SENSOR Vhcl.Side_Right_Rear}}
+```
+
+对应探针结果文件：
+
+`SimOutput/dde_recovery_probe/probe_send_ipgmovie_compare.txt`
+
+### 8.2.2 当前进程层快照
+
+2026-05-09 当前健康态下，相关进程是：
+
+1. `CarMaker.win64.exe`
+2. `Movie.exe`，窗口标题 `GPUSensor - 'kel' online`
+3. `Movie.exe`，窗口标题 `IPGMovie - 'kel' online`
+
+对应启动时间快照：
+
+1. `CarMaker.win64.exe`：17:44:49
+2. `Movie.exe (GPUSensor)`：17:44:50
+3. `Movie.exe (IPGMovie)`：17:59:20
+
+二进制路径：
+
+1. `D:/IPG/carmaker/win64-14.1/bin/CarMaker.win64.exe`
+2. `D:/IPG/carmaker/win64-14.1/GUI/Movie.exe`
+
+文件版本：
+
+1. `Movie.exe`：`14,1,0,0`
+2. 当前 `CarMaker.win64.exe` 文件版本资源为空
+
+### 8.2.3 当前 Tcl/Tk 运行时快照
+
+通过 `TclEval -> send IPG-MOVIE` 读取到的当前健康基线如下：
+
+CarMaker 侧：
+
+```text
+cm_patchlevel 8.6.9
+cm_tk_patchLevel 8.6.9
+cm_windowingsystem win32
+cm_executable D:/IPG/carmaker/win64-14.1/GUI/HIL.exe
+cm_platform_os Windows NT
+cm_platform_osVersion 10.0
+cm_platform_platform windows
+cm_interps IPG-MOVIE
+```
+
+IPG-MOVIE 侧：
+
+```text
+ipg_patchlevel 8.6.9
+ipg_tk_patchLevel 8.6.9
+ipg_windowingsystem win32
+ipg_executable D:/IPG/carmaker/win64-14.1/GUI/Movie.exe
+ipg_platform_os Windows NT
+ipg_platform_osVersion 10.0
+ipg_platform_platform windows
+ipg_send_command_exists 1
+ipg_current_camera CAMERA_RSI-SENSOR Vhcl.Side_Right_Rear
+```
+
+对应探针结果文件：
+
+`SimOutput/dde_recovery_probe/probe_ipgmovie_runtime_baseline_retry.txt`
+
+### 8.2.4 当前驱动层快照
+
+当前系统枚举到的视频控制器/驱动版本：
+
+1. `NVIDIA GeForce RTX 4060 Laptop GPU`：`32.0.15.8195`
+2. `Intel(R) UHD Graphics`：`32.0.101.7084`
+3. `OrayIddDriver Device`：`17.50.19.949`
+
+这三项都建议纳入后续异常对比，尤其要注意远控/虚拟显示驱动 `OrayIddDriver Device` 是否参与了当前桌面会话。
+
+### 8.2.5 OpenGL 命令面快照
+
+当前运行时里 `gl` 命令存在，但直接尝试 `gl version` 或 `gl getstring ...` 都失败。
+
+这说明当前 IPG-MOVIE 暴露的是一组 Tcl 封装过的 `gl` 子命令，但并没有直接暴露标准 `glGetString` 风格接口。因此后续如果要对比 OpenGL 层，不能假设能直接从 Tcl 里拿到 `vendor` / `renderer` / `version` 字符串。
+
+对应探针结果文件：
+
+`SimOutput/dde_recovery_probe/probe_ipgmovie_gl_runtime.txt`
+
+### 8.2.6 一条额外诊断现象
+
+在记录这批基线时，曾出现过一次瞬时 `ConnectTo("TclEval", "CarMaker")` 失败；但紧接着复跑最小 `send IPG-MOVIE` 探针就恢复正常。
+
+当前把它记为“偶发 DDE 连接抖动”，不要直接等同于 `send IPG-MOVIE` 主链故障；后续若再遇到一次性 `ConnectTo failed`，应先立刻复跑最小健康探针，再判断是否真的脱离基线。
+
+### 8.2.7 后续对比建议
+
+如果后续再次失稳，先重复同一口径：
+
+1. `WInfoInterps "IPG-MOVIE"`
+2. 最小 `send IPG-MOVIE { list ok [info patchlevel] camera $Camera::v(Name) }`
+3. `CarMaker.win64.exe`、`Movie.exe (GPUSensor)`、`Movie.exe (IPGMovie)` 是否仍在，是否被重建，是否缺失某一个
+4. Tcl/Tk patchlevel、windowingsystem、executable 路径是否变化
+5. 显卡驱动与虚拟显示驱动是否变化
+
+如果再次出现：
+
+1. `WInfoInterps "IPG-MOVIE"` 仍然返回 `IPG-MOVIE`
+2. 但最小 `send IPG-MOVIE` 失败并报 `remote server cannot handle this command`
+
+则仍可判断故障点在 `IPG-MOVIE` 的 Tk send 执行面，而不是 Python 到 CarMaker 的 DDE 入口。
+
 ## 9. View -> Size -> Custom 控制结论
 
 ### 9.1 菜单项绑定

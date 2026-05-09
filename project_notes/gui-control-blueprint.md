@@ -1,0 +1,10 @@
+- 本项目本地单用户控制台优先方案：主控层用 exe gui，不做 web-first；web 若需要，只作为第二阶段的历史结果/图表展示层。
+- GUI 技术建议：PySide6 + QProcess。现有 Python CLI 脚本保持为唯一真实控制层，GUI 第一阶段只做本地编排与观测，不内嵌重写标定算法。
+- 底层优先复用 `Data/Script/CameraCalibration/cmapi_testrun_control.py`、`Data/Script/CameraCalibration/camera_calibration.py`、`Data/Script/CameraCalibration/dde_health_check.py`。
+- 第一阶段 GUI 目标：1) 管理 CarMaker 与 GUI IPG-MOVIE 单实例复用；2) 选择 TestRun、解析 Vehicle、切单 camera sensor；3) 启停并监控一次 calibration；4) 展示状态、日志、输出目录、最后一次 best result。
+- 建议新增目录：`Data/Script/CameraCalibration/gui_app/`，分为 `app.py`、`main_window.py`、`controllers/`、`services/`、`models/`、`widgets/`。
+- 推荐界面分三栏：Runtime（project/TestRun/Vehicle/sensor/CarMaker/Movie 状态与 prepare 控制）、Calibration（config/testrun/sensor/rounds 与 start/stop/smoke）、Output（实时日志、output_dir、best_score、best_values 摘要）。
+- 第一阶段关键交互流：runtime status 探测；prepare runtime；start calibration。先做运行态探测与准备，再接 calibration 启停。
+- GUI 内部建议显式状态机：`idle`、`runtime_unknown`、`runtime_ready`、`calibration_running`、`calibration_finished`、`calibration_failed`。
+- 为 GUI 干净接入，建议后续给 `cmapi_testrun_control.py` 增加 `status` / `prepare` 这类 machine-readable CLI 模式，并让 `camera_calibration.py` 在结束时额外输出一行 JSON summary。
+- 里程碑建议：M1 运行态面板；M2 prepare runtime；M3 标定任务托管；M4 配置选择/最近使用/输出目录/错误提示收口。

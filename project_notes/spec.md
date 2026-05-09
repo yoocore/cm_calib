@@ -2,7 +2,7 @@
 
 ## 1. 文档定位
 
-本文档是 [Data/Script/CameraCalibration/design.md](Data/Script/CameraCalibration/design.md) 的实现级拆解版本。
+本文档是 [Data/Script/CameraCalibration/project_notes/design.md](Data/Script/CameraCalibration/project_notes/design.md) 的实现级拆解版本。
 
 目标不是重新讨论方案，而是回答以下工程问题：
 - 系统应拆成哪些模块

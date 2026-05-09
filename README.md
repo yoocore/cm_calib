@@ -17,16 +17,21 @@
 - camera.<camera>.json：每个摄像头维护一份运行输入配置，例如 camera.rear_tv.json
 - bootstrap.template.json：独立的 bootstrap 模板输入配置，用于在第一个摄像头还没有现成 camera config 时生成新配置；文件里尽量只保留项目相关的板原型和少量覆盖项
 - script_control_apply.tcl：唯一维护的 Script Control 命令脚本
-- ipgmovie_control_workflow.md：IPG-MOVIE 控制流程、菜单项映射、刷新行为与最小化行为的持续记录文档
+- project_notes/ipgmovie_control_workflow.md：IPG-MOVIE 控制流程、菜单项映射、刷新行为与最小化行为的持续记录文档
+- project_notes/README.md：项目强相关知识文档索引，收纳长期笔记、设计文档、流程文档和依赖清单
+
+项目知识文档
+- `project_notes/` 目录用于存放与当前 CameraCalibration 工程强相关的长期记录和正式文档，例如 GUI 设计蓝图、运行健康基线、设计说明、流程记录与依赖清单。
+- 这些文档与 `/memories/repo/` 下的 repo memory 互为补充：memory 方便代理长期记忆，项目目录内文档方便版本管理、共享和人工检索。
 
 依赖
 - Python 3.9+
 - 使用当前维护的本地依赖文件安装：
-  - 在仓库根目录执行：python -m pip install -r Data/Script/CameraCalibration/requirements.txt
-  - 在 Data/Script/CameraCalibration 目录执行：python -m pip install -r requirements.txt
+  - 在仓库根目录执行：python -m pip install -r Data/Script/CameraCalibration/project_notes/requirements.txt
+  - 在 Data/Script/CameraCalibration 目录执行：python -m pip install -r project_notes/requirements.txt
 
 解释器与环境
-- 维护中的依赖文件位于 Data/Script/CameraCalibration/requirements.txt。
+- 维护中的依赖文件位于 Data/Script/CameraCalibration/project_notes/requirements.txt。
 - 当前工作区推荐使用项目本地虚拟环境 .venv/Scripts/python.exe。
 - 在 VS Code 中，选择一次工作区解释器后，固定到 .venv 即可。
 - 如果 cv2、numpy、PIL 等导入突然再次显示未解析，优先先检查当前解释器是否正确，而不是直接排查脚本本身。
@@ -42,7 +47,7 @@
 
 快速开始
 1. 编辑对应摄像头的配置文件，例如 camera.rear_tv.json。
-2. 创建或刷新本地虚拟环境，并根据 requirements.txt 安装依赖。
+2. 创建或刷新本地虚拟环境，并根据 project_notes/requirements.txt 安装依赖。
 3. 在 VS Code 中确认当前选择的解释器是 .venv/Scripts/python.exe。
 4. 设置 real_image 和 output_dir。
 5. 为所有可见标定板配置 boards[]。

@@ -277,7 +277,7 @@ script_control_camera_apply_result.txt 不是历史快照，而是 Script Contro
 
 这个条件不满足时，很多 Script Control 写参失败看起来像 DDE 问题，实际是目标控件还没初始化。
 
-这个坑后面被正式写进 [Data/Script/CameraCalibration/README.md](Data/Script/CameraCalibration/README.md)、[Data/Script/CameraCalibration/design.md](Data/Script/CameraCalibration/design.md) 和 [Data/Script/CameraCalibration/spec.md](Data/Script/CameraCalibration/spec.md)。
+这个坑后面被正式写进 [Data/Script/CameraCalibration/README.md](Data/Script/CameraCalibration/README.md)、[Data/Script/CameraCalibration/project_notes/design.md](Data/Script/CameraCalibration/project_notes/design.md) 和 [Data/Script/CameraCalibration/project_notes/spec.md](Data/Script/CameraCalibration/project_notes/spec.md)。
 
 而且在完成一次 lens 页面初始化后，短链路 smoke 已验证：
 
@@ -481,8 +481,8 @@ script_control_camera_apply_result.txt 看起来像结果归档，实际上只�
 2. 当前配置：[Data/Script/CameraCalibration/camera.rear_tv.json](Data/Script/CameraCalibration/camera.rear_tv.json)
 3. Script Control 脚本：[Data/Script/CameraCalibration/script_control_apply.tcl](Data/Script/CameraCalibration/script_control_apply.tcl)
 4. 使用说明：[Data/Script/CameraCalibration/README.md](Data/Script/CameraCalibration/README.md)
-5. 设计文档：[Data/Script/CameraCalibration/design.md](Data/Script/CameraCalibration/design.md)
-6. 实现规格：[Data/Script/CameraCalibration/spec.md](Data/Script/CameraCalibration/spec.md)
+5. 设计文档：[Data/Script/CameraCalibration/project_notes/design.md](Data/Script/CameraCalibration/project_notes/design.md)
+6. 实现规格：[Data/Script/CameraCalibration/project_notes/spec.md](Data/Script/CameraCalibration/project_notes/spec.md)
 
 ---
 

@@ -575,7 +575,7 @@ total_score_detail 至少包含：
 - 后续实现阶段应优先将评估模块重构为多检测器路由、单板评分与总分聚合三层结构。
 
 本设计文档对应文件：
-- [Data/Script/CameraCalibration/design.md](Data/Script/CameraCalibration/design.md)
+- [Data/Script/CameraCalibration/project_notes/design.md](Data/Script/CameraCalibration/project_notes/design.md)
 
 实现规格拆解文档：
-- [Data/Script/CameraCalibration/spec.md](Data/Script/CameraCalibration/spec.md)
+- [Data/Script/CameraCalibration/project_notes/spec.md](Data/Script/CameraCalibration/project_notes/spec.md)

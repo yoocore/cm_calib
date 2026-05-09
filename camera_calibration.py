@@ -128,10 +128,14 @@ def _configure_live_log(cfg: dict, resume_from_result: bool) -> Path:
 
 
 def _unlink_if_exists(path: Path) -> None:
-    try:
-        path.unlink()
-    except FileNotFoundError:
-        pass
+    for _ in range(3):
+        try:
+            path.unlink()
+            return
+        except FileNotFoundError:
+            return
+        except PermissionError:
+            time.sleep(0.05)
 
 
 def _default_sim_output_root() -> Path:
@@ -316,6 +320,8 @@ def _default_bootstrap_config() -> dict:
             "min_board_score_improvement": 0.75,
             "max_total_score_worsen": 1.0,
             "min_board_count": 1,
+            "min_total_board_score_improvement": 0.0,
+            "total_worsen_tradeoff_ratio": 0.0,
         },
         "joint_exploration": {
             "apply_to_all_params": True,
@@ -1454,6 +1460,34 @@ def _load_json_if_exists(path: Path) -> Optional[dict]:
         return None
 
 
+def _resolve_score_scope_from_cfg(cfg: Optional[dict]) -> Optional[str]:
+    if not isinstance(cfg, dict):
+        return None
+    raw_scope = cfg.get("score_scope")
+    if raw_scope is None:
+        raw_scope = cfg.get("history_score_scope")
+    if raw_scope is None:
+        raw_scope = cfg.get("scoring_scope")
+    if raw_scope is None:
+        return None
+    scope = str(raw_scope).strip()
+    return scope or None
+
+
+def _resolve_score_scope_from_payload(payload: Optional[dict]) -> Optional[str]:
+    if not isinstance(payload, dict):
+        return None
+    raw_scope = payload.get("score_scope")
+    if raw_scope is None:
+        raw_scope = payload.get("history_score_scope")
+    if raw_scope is None:
+        raw_scope = payload.get("scoring_scope")
+    if raw_scope is None:
+        return None
+    scope = str(raw_scope).strip()
+    return scope or None
+
+
 def _build_run_digest_from_result_payload(
     payload: dict,
     result_path: Path,
@@ -1502,6 +1536,7 @@ def _build_run_digest_from_result_payload(
 
     digest["result_json"] = str(result_path)
     digest["output_dir"] = payload.get("output_dir", str(result_path.parent))
+    digest["score_scope"] = _resolve_score_scope_from_payload(payload)
     digest["started_at"] = payload.get("started_at")
     digest["finished_at"] = payload.get("finished_at")
     digest["camera"] = _camera_name_from_output_dir(Path(digest["output_dir"]))
@@ -1797,6 +1832,8 @@ def _load_history_best_run_for_config(
     config_path: Path,
     camera_name: Optional[str] = None,
 ) -> Optional[dict]:
+    cfg_payload = _load_json_if_exists(config_path)
+    required_score_scope = _resolve_score_scope_from_cfg(cfg_payload)
     config_camera_name = _camera_name_from_config_path(config_path)
     history_camera_name = _canonical_camera_group_name(config_camera_name)
     if not history_camera_name and camera_name:
@@ -1817,6 +1854,10 @@ def _load_history_best_run_for_config(
             )
             if digest is None:
                 continue
+            if required_score_scope is not None:
+                digest_score_scope = _resolve_score_scope_from_payload(digest)
+                if digest_score_scope != required_score_scope:
+                    continue
             if best_run is None or float(digest.get("final_score", float("inf"))) < float(
                 best_run.get("final_score", float("inf"))
             ):
@@ -1933,6 +1974,382 @@ def _set_run_local_script_control_result_path(run_cfg: dict, output_dir: Path) -
     run_cfg["script_control_result_path"] = str((output_dir / result_name).resolve())
 
 
+def _merge_unique_parameter_names(*groups: List[str]) -> List[str]:
+    merged: List[str] = []
+    seen: set[str] = set()
+    for group in groups:
+        for raw_name in group:
+            name = str(raw_name).strip()
+            if not name or name in seen:
+                continue
+            merged.append(name)
+            seen.add(name)
+    return merged
+
+
+def _resolve_escape_exploration_policy(cfg: dict) -> dict:
+    default_board_param_groups = {
+        "S": ["lens_fov", "pitch", "yaw", "pos_z"],
+        "C": ["lens_fov", "yaw", "roll", "pos_x", "pos_y"],
+    }
+    default_profile_scale_map = {
+        "baseline": 1.0,
+        "expanded": 1.35,
+        "aggressive": 1.7,
+    }
+    payload = cfg.get("escape_exploration")
+    if not isinstance(payload, dict):
+        return {
+            "enabled": True,
+            "coarse_start_multipliers": [8.0, 16.0, 28.0],
+            "local_jitter_scale": 1.5,
+            "stagnation_round_scale_up": 0.35,
+            "activation_min_stagnation_rounds": 1,
+            "focus_param_budget": 4,
+            "focus_rank_decay": 0.2,
+            "board_focus_top_k": 2,
+            "global_param_order": ["lens_fov", "pos_z", "pitch", "yaw", "pos_x", "pos_y", "roll"],
+            "board_param_groups": default_board_param_groups,
+            "profile_scale_map": default_profile_scale_map,
+        }
+
+    raw_coarse_multipliers = payload.get("coarse_start_multipliers", [8.0, 16.0, 28.0])
+    coarse_start_multipliers: List[float] = []
+    if isinstance(raw_coarse_multipliers, list):
+        for raw_value in raw_coarse_multipliers:
+            try:
+                coarse_start_multipliers.append(max(0.0, float(raw_value)))
+            except Exception:
+                continue
+    if not coarse_start_multipliers:
+        coarse_start_multipliers = [8.0, 16.0, 28.0]
+
+    raw_global_param_order = payload.get(
+        "global_param_order",
+        ["lens_fov", "pos_z", "pitch", "yaw", "pos_x", "pos_y", "roll"],
+    )
+    global_param_order = []
+    if isinstance(raw_global_param_order, list):
+        global_param_order = [str(name).strip() for name in raw_global_param_order if str(name).strip()]
+    if not global_param_order:
+        global_param_order = ["lens_fov", "pos_z", "pitch", "yaw", "pos_x", "pos_y", "roll"]
+
+    board_param_groups = dict(default_board_param_groups)
+    raw_board_groups = payload.get("board_param_groups")
+    if isinstance(raw_board_groups, dict):
+        for raw_key, raw_names in raw_board_groups.items():
+            key = str(raw_key).strip().upper()
+            if not key or not isinstance(raw_names, list):
+                continue
+            names = [str(name).strip() for name in raw_names if str(name).strip()]
+            if names:
+                board_param_groups[key] = names
+
+    profile_scale_map = dict(default_profile_scale_map)
+    raw_profile_scale_map = payload.get("profile_scale_map")
+    if isinstance(raw_profile_scale_map, dict):
+        for raw_key, raw_value in raw_profile_scale_map.items():
+            key = str(raw_key).strip().lower()
+            if not key:
+                continue
+            try:
+                profile_scale_map[key] = max(0.1, float(raw_value))
+            except Exception:
+                continue
+
+    return {
+        "enabled": bool(payload.get("enabled", True)),
+        "coarse_start_multipliers": coarse_start_multipliers,
+        "local_jitter_scale": max(0.0, float(payload.get("local_jitter_scale", 1.5))),
+        "stagnation_round_scale_up": max(0.0, float(payload.get("stagnation_round_scale_up", 0.35))),
+        "activation_min_stagnation_rounds": max(0, int(payload.get("activation_min_stagnation_rounds", 1))),
+        "focus_param_budget": max(1, int(payload.get("focus_param_budget", 4))),
+        "focus_rank_decay": min(0.8, max(0.0, float(payload.get("focus_rank_decay", 0.2)))),
+        "board_focus_top_k": max(1, int(payload.get("board_focus_top_k", 2))),
+        "global_param_order": global_param_order,
+        "board_param_groups": board_param_groups,
+        "profile_scale_map": profile_scale_map,
+    }
+
+
+def _load_multi_start_guidance_from_result_json(
+    result_json: Optional[str],
+    strategy_payload: Optional[dict],
+    default_param_priority: List[str],
+    board_focus_top_k: int,
+) -> Optional[dict]:
+    guidance: dict = {}
+
+    if isinstance(strategy_payload, dict):
+        raw_order = strategy_payload.get("current_param_order")
+        if isinstance(raw_order, list):
+            guidance["param_priority"] = [
+                str(name).strip() for name in raw_order if str(name).strip()
+            ]
+        current_profile = strategy_payload.get("current_exploration_profile")
+        if isinstance(current_profile, dict):
+            profile_name = str(current_profile.get("name", "")).strip().lower()
+            if profile_name:
+                guidance["profile_name"] = profile_name
+
+    if result_json:
+        payload = _load_json_if_exists(Path(result_json))
+        if isinstance(payload, dict):
+            raw_board_scores = ((payload.get("best_metrics") or {}).get("board_scores") or [])
+            scored_boards: List[Tuple[float, str]] = []
+            if isinstance(raw_board_scores, list):
+                for raw_board_score in raw_board_scores:
+                    if not isinstance(raw_board_score, dict):
+                        continue
+                    if not bool(raw_board_score.get("compared", False)):
+                        continue
+                    board_id = str(raw_board_score.get("board_id", "")).strip()
+                    if not board_id:
+                        continue
+                    try:
+                        score_value = float(raw_board_score.get("score", 0.0))
+                    except Exception:
+                        continue
+                    scored_boards.append((score_value, board_id))
+            if scored_boards:
+                scored_boards.sort(key=lambda item: item[0], reverse=True)
+                guidance["worst_boards"] = [
+                    board_id for _, board_id in scored_boards[: max(1, int(board_focus_top_k))]
+                ]
+                guidance["source_result_json"] = result_json
+
+    if "param_priority" not in guidance and default_param_priority:
+        guidance["param_priority"] = list(default_param_priority)
+    if not guidance:
+        return None
+    return guidance
+
+
+def _resolve_auto_objective_board_focus_policy(cfg: dict) -> dict:
+    payload = cfg.get("auto_objective_board_focus")
+    if not isinstance(payload, dict):
+        return {
+            "enabled": False,
+            "activation_min_stagnation_rounds": 2,
+            "score_threshold": 10.0,
+            "top_k": 3,
+            "min_focus_board_count": 2,
+            "restrict_to_priority_boards": False,
+            "max_non_priority_top_boards": 0,
+            "require_same_family": True,
+            "rank_multipliers": [1.12, 1.08, 1.04],
+            "priority_board_multiplier": 1.02,
+        }
+
+    return {
+        "enabled": bool(payload.get("enabled", False)),
+        "activation_min_stagnation_rounds": max(
+            1, int(payload.get("activation_min_stagnation_rounds", 2))
+        ),
+        "score_threshold": float(payload.get("score_threshold", 10.0)),
+        "top_k": max(1, int(payload.get("top_k", 3))),
+        "min_focus_board_count": max(
+            1,
+            int(
+                payload.get(
+                    "min_focus_board_count",
+                    payload.get("min_priority_board_count", 2),
+                )
+            ),
+        ),
+        "restrict_to_priority_boards": bool(
+            payload.get("restrict_to_priority_boards", False)
+        ),
+        "max_non_priority_top_boards": max(
+            0, int(payload.get("max_non_priority_top_boards", 0))
+        ),
+        "require_same_family": bool(payload.get("require_same_family", True)),
+        "rank_multipliers": CameraCalibrator._normalize_trial_multiplier_values(
+            payload.get("rank_multipliers", [1.12, 1.08, 1.04]),
+            [1.12, 1.08, 1.04],
+        ),
+        "priority_board_multiplier": max(
+            1.0, float(payload.get("priority_board_multiplier", 1.02))
+        ),
+    }
+
+
+def _board_focus_family(board_id: str) -> str:
+    normalized = "".join(ch for ch in str(board_id).strip().upper() if ch.isalpha())
+    if normalized:
+        return normalized[:1]
+    board_id = str(board_id).strip().upper()
+    return board_id[:1] if board_id else ""
+
+
+def _build_auto_objective_board_focus_config(
+    cfg: dict,
+    result_json: Optional[str],
+    stagnation_rounds: int,
+) -> Optional[dict]:
+    explicit_focus_cfg = cfg.get("objective_board_focus")
+    if isinstance(explicit_focus_cfg, dict):
+        return dict(explicit_focus_cfg)
+
+    policy = _resolve_auto_objective_board_focus_policy(cfg)
+    if not bool(policy.get("enabled", False)):
+        return None
+    if max(0, int(stagnation_rounds)) < int(policy.get("activation_min_stagnation_rounds", 2)):
+        return None
+    if not result_json:
+        return None
+
+    restrict_to_priority_boards = bool(policy.get("restrict_to_priority_boards", False))
+    priority_accept_cfg = cfg.get("priority_board_acceptance", {})
+    priority_board_ids = {
+        str(board_id).strip()
+        for board_id in priority_accept_cfg.get("board_ids", [])
+        if str(board_id).strip()
+    }
+    if restrict_to_priority_boards and not priority_board_ids:
+        return None
+
+    payload = _load_json_if_exists(Path(result_json))
+    if not isinstance(payload, dict):
+        return None
+
+    best_metrics = payload.get("best_metrics") or {}
+    raw_board_scores = best_metrics.get("board_scores") or []
+    isolated_outlier_boards = {
+        str(board_id).strip()
+        for board_id in (best_metrics.get("isolated_outlier_boards") or [])
+        if str(board_id).strip()
+    }
+    if not isinstance(raw_board_scores, list):
+        return None
+
+    candidates: List[Dict[str, object]] = []
+    for raw_board_score in raw_board_scores:
+        if not isinstance(raw_board_score, dict):
+            continue
+        if not bool(raw_board_score.get("compared", False)):
+            continue
+        board_id = str(raw_board_score.get("board_id", "")).strip()
+        if not board_id or board_id in isolated_outlier_boards:
+            continue
+        try:
+            score_value = float(raw_board_score.get("total_score", raw_board_score.get("score", 0.0)))
+        except Exception:
+            continue
+        if score_value < float(policy.get("score_threshold", 10.0)):
+            continue
+        candidates.append(
+            {
+                "board_id": board_id,
+                "board_type": str(raw_board_score.get("board_type", "")).strip().lower(),
+                "score": score_value,
+            }
+        )
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda item: float(item["score"]), reverse=True)
+    focus_candidates = candidates[: max(1, int(policy.get("top_k", 3)))]
+    selected_focus = list(focus_candidates)
+    if restrict_to_priority_boards:
+        priority_focus = [
+            item for item in focus_candidates if str(item["board_id"]) in priority_board_ids
+        ]
+        non_priority_count = len(focus_candidates) - len(priority_focus)
+        if non_priority_count > int(policy.get("max_non_priority_top_boards", 0)):
+            return None
+        selected_focus = priority_focus
+
+    if not selected_focus:
+        return None
+
+    if bool(policy.get("require_same_family", True)):
+        family_groups: Dict[str, List[Dict[str, object]]] = {}
+        for item in selected_focus:
+            family = _board_focus_family(str(item["board_id"]))
+            if not family:
+                continue
+            family_groups.setdefault(family, []).append(item)
+        if not family_groups:
+            return None
+        selected_focus = max(
+            family_groups.values(),
+            key=lambda items: (
+                len(items),
+                sum(float(item["score"]) for item in items),
+            ),
+        )
+
+    if len(selected_focus) < int(policy.get("min_focus_board_count", 2)):
+        return None
+
+    return {
+        "enabled": True,
+        "top_k": len(selected_focus),
+        "score_threshold": float(policy.get("score_threshold", 10.0)),
+        "rank_multipliers": list(policy.get("rank_multipliers", [1.12, 1.08, 1.04])),
+        "priority_board_multiplier": float(policy.get("priority_board_multiplier", 1.02)),
+        "auto_generated": True,
+        "source_result_json": result_json,
+        "focus_board_ids": [str(item["board_id"]) for item in selected_focus],
+        "stagnation_rounds": max(0, int(stagnation_rounds)),
+    }
+
+
+def _resolve_multi_start_focus_params(
+    policy: dict,
+    guidance: Optional[dict],
+    available_param_names: List[str],
+) -> List[str]:
+    available_set = set(available_param_names)
+    guided_priority: List[str] = []
+    worst_boards: List[str] = []
+    if isinstance(guidance, dict):
+        raw_priority = guidance.get("param_priority")
+        if isinstance(raw_priority, list):
+            guided_priority = [
+                str(name).strip() for name in raw_priority if str(name).strip() in available_set
+            ]
+        raw_boards = guidance.get("worst_boards")
+        if isinstance(raw_boards, list):
+            worst_boards = [str(board_id).strip().upper() for board_id in raw_boards if str(board_id).strip()]
+
+    board_param_groups = policy.get("board_param_groups", {})
+    board_focus_params: List[str] = []
+    for board_id in worst_boards:
+        group = board_param_groups.get(board_id)
+        if group is None and board_id:
+            group = board_param_groups.get(board_id[:1])
+        if not isinstance(group, list):
+            continue
+        board_focus_params.extend(
+            str(name).strip() for name in group if str(name).strip() in available_set
+        )
+
+    global_param_order = [
+        str(name).strip() for name in policy.get("global_param_order", []) if str(name).strip() in available_set
+    ]
+    return _merge_unique_parameter_names(
+        board_focus_params,
+        guided_priority,
+        global_param_order,
+        available_param_names,
+    )
+
+
+def _next_escape_stagnation_rounds(
+    best_score: float,
+    anchor_score: Optional[float],
+    tolerance: float,
+    previous_count: int,
+) -> int:
+    if anchor_score is None:
+        return 0
+    if float(best_score) <= float(anchor_score) - float(tolerance):
+        return 0
+    return max(0, int(previous_count)) + 1
+
+
 def _build_multi_start_run_configs(
     cfg: dict,
     base_output_dir: Path,
@@ -1954,6 +2371,36 @@ def _build_multi_start_run_configs(
     )
     rng = random.Random(seed)
     run_cfgs: List[dict] = []
+    escape_policy = _resolve_escape_exploration_policy(cfg)
+    raw_multi_start_guidance = cfg.get("multi_start_guidance")
+    multi_start_guidance = dict(raw_multi_start_guidance) if isinstance(raw_multi_start_guidance, dict) else {}
+    available_param_names = [str(name) for name in base_parameters.keys()]
+    focus_param_order = _resolve_multi_start_focus_params(
+        escape_policy,
+        multi_start_guidance,
+        available_param_names,
+    )
+    focus_param_budget = min(len(focus_param_order), int(escape_policy.get("focus_param_budget", 4)))
+    focus_param_ranks = {
+        name: index for index, name in enumerate(focus_param_order[:focus_param_budget])
+    }
+    guidance_profile_name = str(multi_start_guidance.get("profile_name", "baseline")).strip().lower()
+    profile_scale_map = escape_policy.get("profile_scale_map", {})
+    profile_scale = float(profile_scale_map.get(guidance_profile_name, 1.0))
+    stagnation_rounds = max(0, int(multi_start_guidance.get("stagnation_rounds", 0)))
+    round_escape_scale = 1.0 + (
+        float(escape_policy.get("stagnation_round_scale_up", 0.35)) * float(stagnation_rounds)
+    )
+    coarse_start_multipliers = [
+        max(0.0, float(multiplier)) * profile_scale * round_escape_scale
+        for multiplier in escape_policy.get("coarse_start_multipliers", [8.0, 16.0, 28.0])
+    ]
+    if not coarse_start_multipliers:
+        coarse_start_multipliers = [max(1.0, float(jitter_steps) or 1.0)]
+    coarse_escape_active = (
+        bool(escape_policy.get("enabled", False))
+        and stagnation_rounds >= int(escape_policy.get("activation_min_stagnation_rounds", 1))
+    )
 
     for start_index in range(start_count):
         run_cfg = copy.deepcopy(cfg)
@@ -1965,6 +2412,15 @@ def _build_multi_start_run_configs(
 
         run_parameters: Dict[str, dict] = {}
         initial_values: Dict[str, float] = {}
+        escape_variant: Optional[dict] = None
+        if coarse_escape_active and start_index > 0:
+            escape_index = start_index - 1
+            escape_variant = {
+                "mode": ["coarse_positive", "coarse_negative", "focused_escape"][escape_index % 3],
+                "coarse_multiplier": coarse_start_multipliers[
+                    min(escape_index // 3, len(coarse_start_multipliers) - 1)
+                ],
+            }
 
         for name, base_param in base_parameters.items():
             initial_value = float(base_param["initial"])
@@ -1974,8 +2430,26 @@ def _build_multi_start_run_configs(
             decimals = int(base_param.get("decimals", 4))
             start_value = initial_value
             unlocked = not math.isclose(min_value, max_value, rel_tol=0.0, abs_tol=1e-12)
-            if start_index > 0 and unlocked and step > 0.0 and jitter_steps > 0.0:
-                delta = rng.uniform(-jitter_steps, jitter_steps) * step
+            if start_index > 0 and unlocked and step > 0.0:
+                delta = 0.0
+                if jitter_steps > 0.0:
+                    delta += (
+                        rng.uniform(-jitter_steps, jitter_steps)
+                        * step
+                        * max(1.0, float(escape_policy.get("local_jitter_scale", 1.0)))
+                    )
+                if escape_variant is not None:
+                    focus_rank = focus_param_ranks.get(name)
+                    if focus_rank is not None:
+                        focus_rank_decay = float(escape_policy.get("focus_rank_decay", 0.2))
+                        rank_scale = max(0.35, 1.0 - (focus_rank * focus_rank_decay))
+                        if escape_variant["mode"] == "focused_escape":
+                            direction = 1.0 if ((start_index + focus_rank) % 2 == 0) else -1.0
+                            delta += direction * float(escape_variant["coarse_multiplier"]) * step * rank_scale * 0.75
+                        else:
+                            base_direction = 1.0 if escape_variant["mode"] == "coarse_positive" else -1.0
+                            direction = base_direction if focus_rank % 2 == 0 else -base_direction
+                            delta += direction * float(escape_variant["coarse_multiplier"]) * step * rank_scale
                 start_value = float(np.clip(initial_value + delta, min_value, max_value))
             start_value = _quantize_float(start_value, decimals)
 
@@ -1984,12 +2458,24 @@ def _build_multi_start_run_configs(
             initial_values[name] = start_value
 
         run_cfg["parameters"] = run_parameters
-        run_cfg["multi_start"] = {
+        multi_start_meta = {
             "index": start_index,
             "seed": seed,
             "jitter_steps": jitter_steps,
             "initial_values": initial_values,
         }
+        if escape_variant is not None:
+            multi_start_meta.update(
+                {
+                    "strategy": str(escape_variant["mode"]),
+                    "coarse_step_multiplier": float(escape_variant["coarse_multiplier"]),
+                    "focus_params": focus_param_order[:focus_param_budget],
+                    "focus_boards": list(multi_start_guidance.get("worst_boards", [])),
+                    "profile_name": guidance_profile_name,
+                    "stagnation_rounds": stagnation_rounds,
+                }
+            )
+        run_cfg["multi_start"] = multi_start_meta
         run_cfgs.append(run_cfg)
 
     return root_output_dir, run_cfgs
@@ -2032,10 +2518,21 @@ def _run_multi_start_campaign(
         output_dir = Path(run_cfg["output_dir"])
         live_log_path = _configure_live_log(run_cfg, False)
         initial_values = multi_cfg.get("initial_values", {})
+        strategy_label = str(multi_cfg.get("strategy", "baseline")).strip()
+        focus_boards = multi_cfg.get("focus_boards") or []
+        focus_params = multi_cfg.get("focus_params") or []
+        meta_suffix = ""
+        if strategy_label and strategy_label != "baseline":
+            meta_suffix = (
+                f" strategy={strategy_label}"
+                f" coarse_step_multiplier={float(multi_cfg.get('coarse_step_multiplier', 0.0)):.2f}"
+                f" focus_boards={focus_boards}"
+                f" focus_params={focus_params}"
+            )
         print(
             f"Multi-start run {start_index + 1}/{start_count}: "
             f"output_dir={output_dir} "
-            f"initials={_format_scalar_value_map(initial_values)}"
+            f"initials={_format_scalar_value_map(initial_values)}{meta_suffix}"
         )
 
         calib = CameraCalibrator(run_cfg)
@@ -2346,30 +2843,55 @@ def _cfg_with_round_guidance(
     cfg: dict,
     best_values: Dict[str, float],
     strategy_payload: Optional[dict],
+    *,
+    result_json: Optional[str] = None,
+    escape_stagnation_rounds: int = 0,
 ) -> dict:
     next_cfg = _cfg_with_initial_values(cfg, best_values)
-    if not isinstance(strategy_payload, dict):
-        return next_cfg
-
-    raw_order = strategy_payload.get("current_param_order")
-    if not isinstance(raw_order, list):
-        return next_cfg
-
     current_params = next_cfg.get("parameters") or {}
     guided_order: List[str] = []
     seen: set[str] = set()
-    for raw_name in raw_order:
-        name = str(raw_name).strip()
-        if not name or name in seen or name not in current_params:
-            continue
-        guided_order.append(name)
-        seen.add(name)
+    if isinstance(strategy_payload, dict):
+        raw_order = strategy_payload.get("current_param_order")
+        if isinstance(raw_order, list):
+            for raw_name in raw_order:
+                name = str(raw_name).strip()
+                if not name or name in seen or name not in current_params:
+                    continue
+                guided_order.append(name)
+                seen.add(name)
     for name in current_params.keys():
         if name not in seen:
             guided_order.append(name)
 
     if guided_order:
         next_cfg["optimization_order"] = guided_order
+
+    objective_board_focus_cfg = _build_auto_objective_board_focus_config(
+        next_cfg,
+        result_json,
+        escape_stagnation_rounds,
+    )
+    if objective_board_focus_cfg is None:
+        next_cfg.pop("objective_board_focus", None)
+    else:
+        next_cfg["objective_board_focus"] = objective_board_focus_cfg
+
+    escape_policy = _resolve_escape_exploration_policy(next_cfg)
+    if not bool(escape_policy.get("enabled", False)):
+        next_cfg.pop("multi_start_guidance", None)
+        return next_cfg
+
+    multi_start_guidance = _load_multi_start_guidance_from_result_json(
+        result_json,
+        strategy_payload if isinstance(strategy_payload, dict) else None,
+        guided_order,
+        int(escape_policy.get("board_focus_top_k", 2)),
+    ) or {"param_priority": guided_order}
+    multi_start_guidance["stagnation_rounds"] = max(0, int(escape_stagnation_rounds))
+    if guided_order:
+        multi_start_guidance["param_priority"] = guided_order
+    next_cfg["multi_start_guidance"] = multi_start_guidance
     return next_cfg
 
 
@@ -2496,6 +3018,8 @@ def _run_plain_optimize_rounds(
         active_cfg = _cfg_with_initial_values(active_cfg, anchor_values)
     round_summaries: List[dict] = []
     best_round: Optional[dict] = None
+    escape_stagnation_rounds = 0
+    escape_tolerance = float(round_seed_policy.get("score_tolerance", 1e-6))
 
     for round_index in range(round_count):
         round_no = round_index + 1
@@ -2532,6 +3056,12 @@ def _run_plain_optimize_rounds(
         round_summaries.append(round_entry)
         if best_round is None or float(round_entry["best_score"]) < float(best_round["best_score"]):
             best_round = round_entry
+        escape_stagnation_rounds = _next_escape_stagnation_rounds(
+            float(result["best_score"]),
+            anchor_score,
+            escape_tolerance,
+            escape_stagnation_rounds,
+        )
         next_seed_values, next_anchor_score, next_seed_source = _choose_next_round_seed_values(
             float(result["best_score"]),
             dict(result["best_values"]),
@@ -2544,6 +3074,8 @@ def _run_plain_optimize_rounds(
             active_cfg,
             next_seed_values,
             strategy_payload if isinstance(strategy_payload, dict) else None,
+            result_json=run_payload["result_json"],
+            escape_stagnation_rounds=escape_stagnation_rounds,
         )
         anchor_values = dict(next_seed_values)
         anchor_score = next_anchor_score
@@ -2596,6 +3128,8 @@ def _run_multi_start_rounds(
         active_cfg = _cfg_with_initial_values(active_cfg, anchor_values)
     round_summaries: List[dict] = []
     best_round: Optional[dict] = None
+    escape_stagnation_rounds = 0
+    escape_tolerance = float(round_seed_policy.get("score_tolerance", 1e-6))
 
     for round_index in range(round_count):
         round_no = round_index + 1
@@ -2638,6 +3172,12 @@ def _run_multi_start_rounds(
         round_summaries.append(round_entry)
         if best_round is None or float(best_run["best_score"]) < float(best_round["best_run"]["best_score"]):
             best_round = round_entry
+        escape_stagnation_rounds = _next_escape_stagnation_rounds(
+            float(best_run["best_score"]),
+            anchor_score,
+            escape_tolerance,
+            escape_stagnation_rounds,
+        )
         next_seed_values, next_anchor_score, next_seed_source = _choose_next_round_seed_values(
             float(best_run["best_score"]),
             dict(best_run["best_values"]),
@@ -2646,7 +3186,13 @@ def _run_multi_start_rounds(
             anchor_score=anchor_score,
             anchor_source=anchor_source,
         )
-        active_cfg = _cfg_with_round_guidance(active_cfg, next_seed_values, strategy_payload)
+        active_cfg = _cfg_with_round_guidance(
+            active_cfg,
+            next_seed_values,
+            strategy_payload,
+            result_json=best_run.get("result_json"),
+            escape_stagnation_rounds=escape_stagnation_rounds,
+        )
         anchor_values = dict(next_seed_values)
         anchor_score = next_anchor_score
         anchor_source = next_seed_source
@@ -2699,6 +3245,8 @@ def _run_explore_then_refine_rounds(
         active_cfg = _cfg_with_initial_values(active_cfg, anchor_values)
     round_summaries: List[dict] = []
     best_round: Optional[dict] = None
+    escape_stagnation_rounds = 0
+    escape_tolerance = float(round_seed_policy.get("score_tolerance", 1e-6))
 
     for round_index in range(round_count):
         round_no = round_index + 1
@@ -2742,6 +3290,12 @@ def _run_explore_then_refine_rounds(
         round_summaries.append(round_entry)
         if best_round is None or float(best_run["best_score"]) < float(best_round["best_run"]["best_score"]):
             best_round = round_entry
+        escape_stagnation_rounds = _next_escape_stagnation_rounds(
+            float(best_run["best_score"]),
+            anchor_score,
+            escape_tolerance,
+            escape_stagnation_rounds,
+        )
         next_seed_values, next_anchor_score, next_seed_source = _choose_next_round_seed_values(
             float(best_run["best_score"]),
             dict(best_run["best_values"]),
@@ -2750,7 +3304,13 @@ def _run_explore_then_refine_rounds(
             anchor_score=anchor_score,
             anchor_source=anchor_source,
         )
-        active_cfg = _cfg_with_round_guidance(active_cfg, next_seed_values, strategy_payload)
+        active_cfg = _cfg_with_round_guidance(
+            active_cfg,
+            next_seed_values,
+            strategy_payload,
+            result_json=best_run.get("result_json"),
+            escape_stagnation_rounds=escape_stagnation_rounds,
+        )
         anchor_values = dict(next_seed_values)
         anchor_score = next_anchor_score
         anchor_source = next_seed_source
@@ -2845,9 +3405,11 @@ class BoardScoreDetail:
 class TotalScoreDetail:
     success: bool
     total_score: float
+    raw_total_score: float
     degrade_penalty: float
     has_critical_degrade: bool
     degraded_boards: List[str]
+    isolated_outlier_boards: List[str]
     compared_board_count: int
     board_scores: List[BoardScoreDetail]
     failed_reason: Optional[str] = None
@@ -2913,6 +3475,7 @@ class CameraCalibrator:
         self.cfg = cfg
         self.config_path = config_path
         self.repo_root = Path(__file__).resolve().parents[3]
+        self.score_scope = _resolve_score_scope_from_cfg(cfg)
         self.output_dir = _resolve_config_output_dir(cfg, config_path)
         cfg["output_dir"] = str(self.output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -2994,8 +3557,63 @@ class CameraCalibrator:
         self.priority_board_accept_max_total_worsen = float(
             priority_accept_cfg.get("max_total_score_worsen", 0.0)
         )
+        self.priority_board_accept_min_total_improvement = float(
+            priority_accept_cfg.get("min_total_board_score_improvement", 0.0)
+        )
+        self.priority_board_accept_worsen_tradeoff_ratio = max(
+            0.0, float(priority_accept_cfg.get("total_worsen_tradeoff_ratio", 0.0))
+        )
         self.priority_board_accept_min_count = max(
             1, int(priority_accept_cfg.get("min_board_count", 1))
+        )
+        objective_board_focus_cfg = cfg.get("objective_board_focus", {})
+        self.objective_board_focus_enabled = bool(
+            objective_board_focus_cfg.get("enabled", False)
+        )
+        self.objective_board_focus_top_k = max(
+            1, int(objective_board_focus_cfg.get("top_k", 3))
+        )
+        self.objective_board_focus_score_threshold = float(
+            objective_board_focus_cfg.get("score_threshold", 8.0)
+        )
+        self.objective_board_focus_rank_multipliers = self._normalize_trial_multiplier_values(
+            objective_board_focus_cfg.get("rank_multipliers", [1.35, 1.2, 1.1]),
+            [1.35, 1.2, 1.1],
+        )
+        raw_type_multipliers = objective_board_focus_cfg.get("board_type_multipliers", {})
+        self.objective_board_focus_type_multipliers: Dict[str, float] = {}
+        if isinstance(raw_type_multipliers, dict):
+            for raw_type, raw_value in raw_type_multipliers.items():
+                board_type = str(raw_type).strip().lower()
+                if not board_type:
+                    continue
+                try:
+                    self.objective_board_focus_type_multipliers[board_type] = max(
+                        1.0, float(raw_value)
+                    )
+                except Exception:
+                    continue
+        self.objective_board_focus_priority_board_multiplier = max(
+            1.0, float(objective_board_focus_cfg.get("priority_board_multiplier", 1.05))
+        )
+        isolated_board_guard_cfg = cfg.get("isolated_board_guard", {})
+        self.isolated_board_guard_enabled = bool(
+            isolated_board_guard_cfg.get("enabled", True)
+        )
+        self.isolated_board_guard_abs_score_threshold = float(
+            isolated_board_guard_cfg.get("abs_score_threshold", 60.0)
+        )
+        self.isolated_board_guard_baseline_ratio = max(
+            1.0, float(isolated_board_guard_cfg.get("baseline_ratio_threshold", 6.0))
+        )
+        self.isolated_board_guard_peer_ratio = max(
+            1.0, float(isolated_board_guard_cfg.get("peer_ratio_threshold", 4.0))
+        )
+        self.isolated_board_guard_min_other_boards = max(
+            2, int(isolated_board_guard_cfg.get("min_other_boards", 5))
+        )
+        self.isolated_board_guard_max_boards = max(
+            1, int(isolated_board_guard_cfg.get("max_quarantined_boards", 1))
         )
         self.degrade_lambda = float(cfg.get("degrade_lambda", 100.0))
         self.compare_only_if_reference_visible = bool(
@@ -3953,6 +4571,7 @@ class CameraCalibrator:
             "compared_board_count": decision.compared_board_count,
             "max_board_score": decision.max_board_score,
             "avg_board_score": decision.avg_board_score,
+            "isolated_outlier_boards": total_detail.isolated_outlier_boards,
         }
 
     def _print_acceptance_summary(self, total_detail: TotalScoreDetail) -> None:
@@ -4525,35 +5144,6 @@ class CameraCalibrator:
         self._apply_script_control_params(params)
 
     def _get_movie_dde_view_size(self, allow_cached_fallback: bool = True) -> Tuple[int, int]:
-        script_path = self.output_dir / "movie_size_probe_dde.tcl"
-        result_path = self.output_dir / "movie_size_probe_dde.txt"
-        script_text = "\n".join(
-            [
-                f'set out [open "{result_path.as_posix()}" w]',
-                "proc emit {text} {",
-                "    global out",
-                "    puts $out $text",
-                "}",
-                "set rc [catch {send IPG-MOVIE {",
-                "    set vno $View(ev.view)",
-                "    set wi [dict get $View($vno) Width]",
-                "    set he [dict get $View($vno) Height]",
-                "    list $wi $he",
-                "}} msg]",
-                'emit "rc=$rc"',
-                'emit "msg_begin"',
-                "emit $msg",
-                'emit "msg_end"',
-                "close $out",
-                "",
-            ]
-        )
-        script_path.write_text(script_text, encoding="utf-8")
-        try:
-            result_path.unlink()
-        except FileNotFoundError:
-            pass
-
         try:
             import win32ui  # noqa: F401
             import dde  # type: ignore
@@ -4567,10 +5157,33 @@ class CameraCalibrator:
             attempt_no = attempt + 1
             attempt_started = time.perf_counter()
             attempt_runtime_error: Optional[RuntimeError] = None
-            try:
-                result_path.unlink()
-            except FileNotFoundError:
-                pass
+
+            invocation_id = uuid.uuid4().hex
+            script_path = self.output_dir / f"movie_size_probe_dde.{invocation_id}.tcl"
+            result_path = self.output_dir / f"movie_size_probe_dde.{invocation_id}.txt"
+            script_text = "\n".join(
+                [
+                    f'set out [open "{result_path.as_posix()}" w]',
+                    "proc emit {text} {",
+                    "    global out",
+                    "    puts $out $text",
+                    "}",
+                    "set rc [catch {send IPG-MOVIE {",
+                    "    set vno $View(ev.view)",
+                    "    set wi [dict get $View($vno) Width]",
+                    "    set he [dict get $View($vno) Height]",
+                    "    list $wi $he",
+                    "}} msg]",
+                    'emit "rc=$rc"',
+                    'emit "msg_begin"',
+                    "emit $msg",
+                    'emit "msg_end"',
+                    "close $out",
+                    "",
+                ]
+            )
+            script_path.write_text(script_text, encoding="utf-8")
+            _unlink_if_exists(result_path)
 
             server = None
             try:
@@ -4637,6 +5250,8 @@ class CameraCalibrator:
                 detail=attempt_runtime_error,
                 retry_sleep_sec=retry_sleep_sec,
             )
+            _unlink_if_exists(script_path)
+            _unlink_if_exists(result_path)
             if retry_sleep_sec is not None:
                 time.sleep(retry_sleep_sec)
 
@@ -4655,8 +5270,6 @@ class CameraCalibrator:
                         "Movie size probe fallback: "
                         f"using cached size {width}x{height} from {self.movie_size_cache_path}"
                     )
-                    _unlink_if_exists(script_path)
-                    _unlink_if_exists(result_path)
                     return width, height
 
         if last_runtime_error is not None:
@@ -4682,53 +5295,7 @@ class CameraCalibrator:
         )
 
     def _capture_movie_via_dde_fbo(self, tag: str) -> Path:
-        script_path = self.output_dir / f"{tag}_movie_capture_dde.tcl"
-        result_path = self.output_dir / f"{tag}_movie_capture_dde.txt"
         out_path = self.output_dir / f"{tag}.png"
-
-        script_text = "\n".join(
-            [
-                f'set out [open "{result_path.as_posix()}" w]',
-                "proc emit {text} {",
-                "    global out",
-                "    puts $out $text",
-                "}",
-                "set rc [catch {send IPG-MOVIE {",
-                "    set vno $View(ev.view)",
-                "    set wi [dict get $View($vno) Width]",
-                "    set he [dict get $View($vno) Height]",
-                "    set captureFBO [FBO new $wi $he -tex rgb -noclear]",
-                "    set update_rc [catch {",
-                "        FBO begin $captureFBO",
-                "        UpdateView $vno",
-                "        FBO end",
-                "    } update_msg]",
-                "    catch {FBO end}",
-                "    if {$update_rc != 0} {",
-                "        catch {FBO delete $captureFBO}",
-                "        error $update_msg",
-                "    }",
-                "    catch {image delete probeImg}",
-                "    image create photo probeImg -width $wi -height $he",
-                "    gl bindframebuffer_read $captureFBO",
-                "    gl readpixels 0 0 probeImg",
-                f'    probeImg write "{out_path.as_posix()}" -format png',
-                "    catch {gl bindframebuffer_read 0}",
-                "    catch {FBO delete $captureFBO}",
-                "}} msg]",
-                'emit "rc=$rc"',
-                'emit "msg_begin"',
-                "emit $msg",
-                'emit "msg_end"',
-                "close $out",
-                "",
-            ]
-        )
-        script_path.write_text(script_text, encoding="utf-8")
-        try:
-            result_path.unlink()
-        except FileNotFoundError:
-            pass
 
         try:
             import win32ui  # noqa: F401
@@ -4743,10 +5310,50 @@ class CameraCalibrator:
             attempt_no = attempt + 1
             attempt_started = time.perf_counter()
             attempt_runtime_error: Optional[RuntimeError] = None
-            try:
-                result_path.unlink()
-            except FileNotFoundError:
-                pass
+
+            invocation_id = uuid.uuid4().hex
+            script_path = self.output_dir / f"{tag}_movie_capture_dde.{invocation_id}.tcl"
+            result_path = self.output_dir / f"{tag}_movie_capture_dde.{invocation_id}.txt"
+            script_text = "\n".join(
+                [
+                    f'set out [open "{result_path.as_posix()}" w]',
+                    "proc emit {text} {",
+                    "    global out",
+                    "    puts $out $text",
+                    "}",
+                    "set rc [catch {send IPG-MOVIE {",
+                    "    set vno $View(ev.view)",
+                    "    set wi [dict get $View($vno) Width]",
+                    "    set he [dict get $View($vno) Height]",
+                    "    set captureFBO [FBO new $wi $he -tex rgb -noclear]",
+                    "    set update_rc [catch {",
+                    "        FBO begin $captureFBO",
+                    "        UpdateView $vno",
+                    "        FBO end",
+                    "    } update_msg]",
+                    "    catch {FBO end}",
+                    "    if {$update_rc != 0} {",
+                    "        catch {FBO delete $captureFBO}",
+                    "        error $update_msg",
+                    "    }",
+                    "    catch {image delete probeImg}",
+                    "    image create photo probeImg -width $wi -height $he",
+                    "    gl bindframebuffer_read $captureFBO",
+                    "    gl readpixels 0 0 probeImg",
+                    f'    probeImg write "{out_path.as_posix()}" -format png',
+                    "    catch {gl bindframebuffer_read 0}",
+                    "    catch {FBO delete $captureFBO}",
+                    "}} msg]",
+                    'emit "rc=$rc"',
+                    'emit "msg_begin"',
+                    "emit $msg",
+                    'emit "msg_end"',
+                    "close $out",
+                    "",
+                ]
+            )
+            script_path.write_text(script_text, encoding="utf-8")
+            _unlink_if_exists(result_path)
 
             server = None
             try:
@@ -4800,6 +5407,8 @@ class CameraCalibrator:
                 detail=attempt_runtime_error,
                 retry_sleep_sec=retry_sleep_sec,
             )
+            _unlink_if_exists(script_path)
+            _unlink_if_exists(result_path)
             if retry_sleep_sec is not None:
                 if self._runtime_error_needs_dde_recovery_probe(attempt_runtime_error):
                     if self._wait_for_dde_service_recovery():
@@ -4842,10 +5451,12 @@ class CameraCalibrator:
         entry: Dict[str, object] = {
             "iter": iteration,
             "total_score": total_detail.total_score,
+            "raw_total_score": total_detail.raw_total_score,
             "compared_board_count": total_detail.compared_board_count,
             "degrade_penalty": total_detail.degrade_penalty,
             "has_critical_degrade": total_detail.has_critical_degrade,
             "degraded_boards": total_detail.degraded_boards,
+            "isolated_outlier_boards": total_detail.isolated_outlier_boards,
             "board_scores": [
                 {
                     "board_id": s.board_id,
@@ -6385,8 +6996,16 @@ class CameraCalibrator:
         baseline_metrics: Optional[Dict[str, Dict[str, float]]],
     ) -> TotalScoreDetail:
         total_score = 0.0
+        raw_total_score = 0.0
         degrade_penalty = 0.0
+        raw_degrade_penalty = 0.0
         degraded_boards: List[str] = []
+        isolated_outlier_boards = self._isolated_outlier_board_ids(board_scores, baseline_metrics)
+        isolated_outlier_board_set = set(isolated_outlier_boards)
+        objective_focus_multipliers = self._objective_focus_multiplier_map(
+            board_scores,
+            isolated_outlier_board_set,
+        )
         has_critical_degrade = False
         compared_board_count = 0
         board_map = {b.board_id: b for b in self.boards}
@@ -6397,8 +7016,11 @@ class CameraCalibrator:
                 continue
 
             compared_board_count += 1
-            weighted = board.weight * score.total_score
-            total_score += weighted
+            effective_weight = board.weight * objective_focus_multipliers.get(score.board_id, 1.0)
+            weighted = effective_weight * score.total_score
+            raw_total_score += weighted
+            if score.board_id not in isolated_outlier_board_set:
+                total_score += weighted
 
             if baseline_metrics is None:
                 continue
@@ -6410,7 +7032,9 @@ class CameraCalibrator:
             degraded = False
             if not score.success:
                 degraded = True
-                degrade_penalty += 1.0
+                raw_degrade_penalty += 1.0
+                if score.board_id not in isolated_outlier_board_set:
+                    degrade_penalty += 1.0
             else:
                 rmse_delta = score.rmse - float(baseline.get("rmse", score.rmse))
                 max_delta = score.max_error - float(
@@ -6426,9 +7050,16 @@ class CameraCalibrator:
                 if miss_delta > board.degrade_threshold_miss_rate:
                     degraded = True
                 if degraded:
-                    degrade_penalty += max(0.0, rmse_delta) + max(0.0, max_delta) + max(0.0, miss_delta)
+                    degrade_delta = (
+                        max(0.0, rmse_delta)
+                        + max(0.0, max_delta)
+                        + max(0.0, miss_delta)
+                    )
+                    raw_degrade_penalty += degrade_delta
+                    if score.board_id not in isolated_outlier_board_set:
+                        degrade_penalty += degrade_delta
 
-            if degraded:
+            if degraded and score.board_id not in isolated_outlier_board_set:
                 degraded_boards.append(score.board_id)
                 if board.critical:
                     has_critical_degrade = True
@@ -6437,22 +7068,27 @@ class CameraCalibrator:
             return TotalScoreDetail(
                 success=False,
                 total_score=self.no_signal_penalty,
+                raw_total_score=self.no_signal_penalty,
                 degrade_penalty=0.0,
                 has_critical_degrade=False,
                 degraded_boards=[],
+                isolated_outlier_boards=[],
                 compared_board_count=0,
                 board_scores=board_scores,
                 failed_reason="no comparable boards in current frame",
             )
 
+        raw_total_score += self.degrade_lambda * raw_degrade_penalty
         total_score += self.degrade_lambda * degrade_penalty
 
         return TotalScoreDetail(
             success=not has_critical_degrade,
             total_score=total_score,
+            raw_total_score=raw_total_score,
             degrade_penalty=degrade_penalty,
             has_critical_degrade=has_critical_degrade,
             degraded_boards=degraded_boards,
+            isolated_outlier_boards=isolated_outlier_boards,
             compared_board_count=compared_board_count,
             board_scores=board_scores,
             failed_reason="critical board degraded" if has_critical_degrade else None,
@@ -6466,11 +7102,96 @@ class CameraCalibrator:
             if not score.compared:
                 continue
             baseline[score.board_id] = {
+                "total_score": score.total_score,
                 "rmse": score.rmse,
                 "max_error": score.max_error,
                 "miss_rate": score.miss_rate,
             }
         return baseline
+
+    def _isolated_outlier_board_ids(
+        self,
+        board_scores: List[BoardScoreDetail],
+        baseline_metrics: Optional[Dict[str, Dict[str, float]]],
+    ) -> List[str]:
+        if not self.isolated_board_guard_enabled or not baseline_metrics:
+            return []
+
+        compared_scores = [score for score in board_scores if score.compared]
+        if len(compared_scores) < self.isolated_board_guard_min_other_boards + 1:
+            return []
+
+        candidates: List[Tuple[float, str]] = []
+        for score in compared_scores:
+            baseline = baseline_metrics.get(score.board_id)
+            if not isinstance(baseline, dict):
+                continue
+            try:
+                baseline_total_score = float(baseline.get("total_score", score.total_score))
+            except Exception:
+                baseline_total_score = float(score.total_score)
+            if baseline_total_score <= 0.0:
+                baseline_total_score = max(1e-6, float(score.total_score))
+
+            peer_scores = [
+                float(peer.total_score)
+                for peer in compared_scores
+                if peer.board_id != score.board_id
+            ]
+            if len(peer_scores) < self.isolated_board_guard_min_other_boards:
+                continue
+            peer_median_score = float(np.median(np.asarray(peer_scores, dtype=np.float64)))
+            if peer_median_score <= 0.0:
+                continue
+
+            current_score = float(score.total_score)
+            if current_score < self.isolated_board_guard_abs_score_threshold:
+                continue
+            if current_score < baseline_total_score * self.isolated_board_guard_baseline_ratio:
+                continue
+            if current_score < peer_median_score * self.isolated_board_guard_peer_ratio:
+                continue
+            candidates.append((current_score, score.board_id))
+
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        return [
+            board_id
+            for _, board_id in candidates[: self.isolated_board_guard_max_boards]
+        ]
+
+    def _objective_focus_multiplier_map(
+        self,
+        board_scores: List[BoardScoreDetail],
+        isolated_outlier_board_set: set[str],
+    ) -> Dict[str, float]:
+        if not self.objective_board_focus_enabled:
+            return {}
+
+        candidates = [
+            score
+            for score in board_scores
+            if score.compared
+            and score.board_id not in isolated_outlier_board_set
+            and float(score.total_score) >= self.objective_board_focus_score_threshold
+        ]
+        if not candidates:
+            return {}
+
+        board_type_multipliers = self.objective_board_focus_type_multipliers
+        rank_multipliers = self.objective_board_focus_rank_multipliers
+        focus_map: Dict[str, float] = {}
+        candidates.sort(key=lambda score: float(score.total_score), reverse=True)
+        for index, score in enumerate(candidates[: self.objective_board_focus_top_k]):
+            rank_multiplier = rank_multipliers[min(index, len(rank_multipliers) - 1)]
+            board_type_multiplier = board_type_multipliers.get(
+                str(score.board_type).strip().lower(),
+                1.0,
+            )
+            multiplier = rank_multiplier * board_type_multiplier
+            if score.board_id in self.priority_board_accept_ids:
+                multiplier *= self.objective_board_focus_priority_board_multiplier
+            focus_map[score.board_id] = max(1.0, float(multiplier))
+        return focus_map
 
     def _priority_board_improvements(
         self,
@@ -6502,6 +7223,10 @@ class CameraCalibrator:
                 improvements.append((board_id, improvement))
         return improvements
 
+    @staticmethod
+    def _priority_board_total_improvement(improvements: List[Tuple[str, float]]) -> float:
+        return float(sum(improvement for _, improvement in improvements))
+
     def _acceptance_decision(
         self,
         baseline_score: float,
@@ -6531,10 +7256,24 @@ class CameraCalibrator:
         if len(improvements) < self.priority_board_accept_min_count:
             return False, "priority_board_improvement_insufficient"
 
+        total_priority_improvement = self._priority_board_total_improvement(improvements)
+        if total_priority_improvement < self.priority_board_accept_min_total_improvement:
+            return False, "priority_total_improvement_insufficient"
+        if (
+            score_worsen > 0.0
+            and self.priority_board_accept_worsen_tradeoff_ratio > 0.0
+            and total_priority_improvement
+            < score_worsen * self.priority_board_accept_worsen_tradeoff_ratio
+        ):
+            return False, "priority_tradeoff_ratio_insufficient"
+
         improvement_summary = ",".join(
             f"{board_id}:{improvement:.3f}" for board_id, improvement in improvements
         )
-        return True, f"priority_board_override[{improvement_summary}]"
+        return True, (
+            "priority_board_override["
+            f"total={total_priority_improvement:.3f};{improvement_summary}]"
+        )
 
     def _is_joint_exploration_param(self, param_name: str) -> bool:
         return (
@@ -6988,15 +7727,18 @@ class CameraCalibrator:
                 for b in self.boards
             ],
             "comparison_mode": self.comparison_mode,
+            "score_scope": self.score_scope,
             "output_dir": str(self.output_dir),
             "best_score": best_score,
             "best_values": best_values,
             "acceptance": acceptance,
             "best_metrics": {
+                "raw_total_score": best_total_detail.raw_total_score,
                 "compared_board_count": best_total_detail.compared_board_count,
                 "degrade_penalty": best_total_detail.degrade_penalty,
                 "has_critical_degrade": best_total_detail.has_critical_degrade,
                 "degraded_boards": best_total_detail.degraded_boards,
+                "isolated_outlier_boards": best_total_detail.isolated_outlier_boards,
                 "board_scores": [
                     {
                         "board_id": s.board_id,

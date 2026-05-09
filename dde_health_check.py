@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import time
 import uuid
 from datetime import datetime
@@ -101,16 +102,16 @@ def render_result_script(result_path: Path, body_lines: List[str]) -> str:
     return "\n".join(lines)
 
 
-def render_movie_send_script(result_path: Path, movie_body_lines: List[str]) -> str:
+def render_send_script(result_path: Path, target_appname: str, body_lines: List[str]) -> str:
     lines = [
         f'set out [open "{result_path.as_posix()}" w]',
         "proc emit {text} {",
         "    global out",
         "    puts $out $text",
         "}",
-        "set rc [catch {send IPG-MOVIE {",
+        f"set rc [catch {{send {target_appname} {{",
     ]
-    lines.extend(f"    {line}" for line in movie_body_lines)
+    lines.extend(f"    {line}" for line in body_lines)
     lines.extend(
         [
             "}} msg]",
@@ -270,9 +271,35 @@ def build_checks(output_dir: Path) -> List[Tuple[str, str]]:
             ),
         ),
         (
+            "interpreter_probe",
+            render_result_script(
+                output_dir / "interpreter_probe.txt",
+                [
+                    'set all [WInfoInterps "*"]',
+                    'set movie [WInfoInterps "*MOVIE*"]',
+                    'set exact [WInfoInterps "IPG-MOVIE"]',
+                    'list all $all movie $movie exact $exact',
+                ],
+            ),
+        ),
+        (
+            "movie_command_probe",
+            render_result_script(
+                output_dir / "movie_command_probe.txt",
+                [
+                    'set movie_cmds [info commands Movie]',
+                    'set interps_before [WInfoInterps "*MOVIE*"]',
+                    'set start_rc [catch {Movie start} start_msg]',
+                    'set interps_after [WInfoInterps "*MOVIE*"]',
+                    'list movie_cmds $movie_cmds interps_before $interps_before start_rc $start_rc start_msg $start_msg interps_after $interps_after',
+                ],
+            ),
+        ),
+        (
             "movie_ping",
-            render_movie_send_script(
+            render_send_script(
                 output_dir / "movie_ping.txt",
+                "IPG-MOVIE",
                 [
                     'list ok [info patchlevel]',
                 ],
@@ -280,8 +307,9 @@ def build_checks(output_dir: Path) -> List[Tuple[str, str]]:
         ),
         (
             "movie_view_probe",
-            render_movie_send_script(
+            render_send_script(
                 output_dir / "movie_view_probe.txt",
+                "IPG-MOVIE",
                 [
                     'set vno $View(ev.view)',
                     'set wi [dict get $View($vno) Width]',
@@ -290,7 +318,212 @@ def build_checks(output_dir: Path) -> List[Tuple[str, str]]:
                 ],
             ),
         ),
+        (
+            "gpusensor_ping",
+            render_send_script(
+                output_dir / "gpusensor_ping.txt",
+                "GPUSensor_1_0",
+                [
+                    'list ok [info patchlevel]',
+                ],
+            ),
+        ),
     ]
+
+
+def _get_check(summary: Dict[str, Any], name: str) -> Optional[Dict[str, Any]]:
+    for check in summary.get("checks", []):
+        if check.get("name") == name:
+            return check
+    return None
+
+
+def _get_check_detail(check: Optional[Dict[str, Any]]) -> str:
+    if not isinstance(check, dict):
+        return ""
+    for attempt in check.get("attempts", []):
+        if attempt.get("ok"):
+            return str(attempt.get("detail", "")).strip()
+    attempts = check.get("attempts", [])
+    if attempts:
+        return str(attempts[-1].get("detail", "")).strip()
+    return ""
+
+
+def classify_health_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
+    tcleval_ping = _get_check(summary, "tcleval_ping")
+    interpreter_probe = _get_check(summary, "interpreter_probe")
+    movie_command_probe = _get_check(summary, "movie_command_probe")
+    movie_ping = _get_check(summary, "movie_ping")
+    movie_view_probe = _get_check(summary, "movie_view_probe")
+    gpusensor_ping = _get_check(summary, "gpusensor_ping")
+
+    interpreter_detail = _get_check_detail(interpreter_probe)
+    movie_command_detail = _get_check_detail(movie_command_probe)
+    exact_registered = bool(re.search(r"\bexact\b\s+\{?IPG-MOVIE\}?", interpreter_detail))
+    gpu_registered = "GPUSensor_1_0" in interpreter_detail
+    movie_command_ok = isinstance(movie_command_probe, dict) and bool(movie_command_probe.get("ok"))
+    gpu_ping_ok = isinstance(gpusensor_ping, dict) and bool(gpusensor_ping.get("ok"))
+    movie_ping_ok = isinstance(movie_ping, dict) and bool(movie_ping.get("ok"))
+
+    target_status = {
+        "movie_command_ok": movie_command_ok,
+        "ipg_movie_registered": exact_registered,
+        "ipg_movie_send_ok": movie_ping_ok,
+        "gpusensor_registered": gpu_registered,
+        "gpusensor_send_ok": gpu_ping_ok,
+    }
+
+    if bool(summary.get("all_ok")):
+        return {
+            "code": "ok",
+            "message": "TclEval and send IPG-MOVIE checks all passed.",
+            "interpreter_probe": interpreter_detail or None,
+            "movie_command_probe": movie_command_detail or None,
+            "exact_ipg_movie_registered": exact_registered,
+            "target_status": target_status,
+        }
+
+    if not (isinstance(tcleval_ping, dict) and tcleval_ping.get("ok")):
+        return {
+            "code": "tcleval_unavailable",
+            "message": "CarMaker RunScript/TclEval is unavailable, so Movie send health cannot be verified.",
+            "interpreter_probe": interpreter_detail or None,
+            "movie_command_probe": movie_command_detail or None,
+            "exact_ipg_movie_registered": exact_registered,
+            "target_status": target_status,
+        }
+
+    if movie_command_ok and exact_registered and not movie_ping_ok and gpu_registered and not gpu_ping_ok:
+        return {
+            "code": "movie_commands_alive_but_tk_send_surface_failed",
+            "message": (
+                "CarMaker-side Movie commands still execute, but send to both IPG-MOVIE and GPUSensor_1_0 is rejected. "
+                "This isolates the fault to the Movie-side Tk send surface rather than the CarMaker Movie control API."
+            ),
+            "interpreter_probe": interpreter_detail or None,
+            "movie_command_probe": movie_command_detail or None,
+            "exact_ipg_movie_registered": True,
+            "target_status": target_status,
+        }
+
+    if exact_registered and not movie_ping_ok and gpu_registered and gpu_ping_ok:
+        return {
+            "code": "ipg_movie_target_only_unresponsive",
+            "message": (
+                "CarMaker can send to GPUSensor_1_0 but not to IPG-MOVIE. The failure is isolated to the "
+                "GUI Movie interpreter/registration rather than the whole Tk send surface."
+            ),
+            "interpreter_probe": interpreter_detail or None,
+            "movie_command_probe": movie_command_detail or None,
+            "exact_ipg_movie_registered": True,
+            "target_status": target_status,
+        }
+
+    if exact_registered and not movie_ping_ok and gpu_registered and not gpu_ping_ok:
+        return {
+            "code": "movie_send_targets_unresponsive",
+            "message": (
+                "CarMaker resolves both IPG-MOVIE and GPUSensor_1_0, but send fails for both targets. "
+                "This points to a broader Tk send failure in the Movie-side interpreters, not just the GUI window."
+            ),
+            "interpreter_probe": interpreter_detail or None,
+            "movie_command_probe": movie_command_detail or None,
+            "exact_ipg_movie_registered": True,
+            "target_status": target_status,
+        }
+
+    if exact_registered and not movie_ping_ok:
+        return {
+            "code": "movie_send_target_registered_but_unresponsive",
+            "message": (
+                "CarMaker can still resolve appname IPG-MOVIE via WInfoInterps, but even minimal "
+                "send commands are rejected. This points to a wedged Tk send target/registration state, "
+                "not a missing Movie process."
+            ),
+            "interpreter_probe": interpreter_detail or None,
+            "movie_command_probe": movie_command_detail or None,
+            "exact_ipg_movie_registered": True,
+            "target_status": target_status,
+        }
+
+    if not exact_registered and not movie_ping_ok:
+        return {
+            "code": "movie_interpreter_missing",
+            "message": "CarMaker cannot resolve appname IPG-MOVIE via WInfoInterps.",
+            "interpreter_probe": interpreter_detail or None,
+            "movie_command_probe": movie_command_detail or None,
+            "exact_ipg_movie_registered": False,
+            "target_status": target_status,
+        }
+
+    if not (isinstance(movie_view_probe, dict) and movie_view_probe.get("ok")):
+        return {
+            "code": "movie_view_probe_failed",
+            "message": "send IPG-MOVIE partially works, but the active Movie view probe did not succeed.",
+            "interpreter_probe": interpreter_detail or None,
+            "movie_command_probe": movie_command_detail or None,
+            "exact_ipg_movie_registered": exact_registered,
+            "target_status": target_status,
+        }
+
+    return {
+        "code": "partial_failure",
+        "message": "DDE health checks are partially failing; inspect individual check attempts.",
+        "interpreter_probe": interpreter_detail or None,
+        "movie_command_probe": movie_command_detail or None,
+        "exact_ipg_movie_registered": exact_registered,
+        "target_status": target_status,
+    }
+
+
+def run_health_suite(
+    *,
+    service: str,
+    topic: str,
+    output_dir: Path,
+    attempts: int,
+    timeout_sec: float,
+    settle_sec: float,
+) -> Dict[str, Any]:
+    summary: Dict[str, Any] = {
+        "started_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "service": service,
+        "topic": topic,
+        "attempts": attempts,
+        "timeout_sec": timeout_sec,
+        "settle_sec": settle_sec,
+        "output_dir": str(output_dir),
+        "checks": [],
+    }
+
+    print(
+        "DDE health check: "
+        f"service={service}, topic={topic}, attempts={attempts}, "
+        f"timeout_sec={timeout_sec}, output_dir={output_dir}"
+    )
+
+    for name, script_text in build_checks(output_dir):
+        summary["checks"].append(
+            run_check(
+                name=name,
+                service=service,
+                topic=topic,
+                output_dir=output_dir,
+                script_text=script_text,
+                attempts=max(attempts, 1),
+                timeout_sec=max(timeout_sec, 0.1),
+                settle_sec=max(settle_sec, 0.0),
+            )
+        )
+
+    summary["finished_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+    summary["all_ok"] = all(check.get("ok") for check in summary["checks"])
+    summary["classification"] = classify_health_summary(summary)
+    summary_path = output_dir / "summary.json"
+    summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    summary["summary_path"] = str(summary_path)
+    return summary
 
 
 def main() -> int:
@@ -298,43 +531,21 @@ def main() -> int:
     output_dir = args.output_dir or default_output_dir()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    summary: Dict[str, Any] = {
-        "started_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-        "service": args.service,
-        "topic": args.topic,
-        "attempts": args.attempts,
-        "timeout_sec": args.timeout_sec,
-        "settle_sec": args.settle_sec,
-        "output_dir": str(output_dir),
-        "checks": [],
-    }
-
-    print(
-        "DDE health check: "
-        f"service={args.service}, topic={args.topic}, attempts={args.attempts}, "
-        f"timeout_sec={args.timeout_sec}, output_dir={output_dir}"
+    summary = run_health_suite(
+        service=args.service,
+        topic=args.topic,
+        output_dir=output_dir,
+        attempts=max(args.attempts, 1),
+        timeout_sec=max(args.timeout_sec, 0.1),
+        settle_sec=max(args.settle_sec, 0.0),
     )
 
-    for name, script_text in build_checks(output_dir):
-        summary["checks"].append(
-            run_check(
-                name=name,
-                service=args.service,
-                topic=args.topic,
-                output_dir=output_dir,
-                script_text=script_text,
-                attempts=max(args.attempts, 1),
-                timeout_sec=max(args.timeout_sec, 0.1),
-                settle_sec=max(args.settle_sec, 0.0),
-            )
-        )
-
-    summary["finished_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
-    summary["all_ok"] = all(check.get("ok") for check in summary["checks"])
-    summary_path = output_dir / "summary.json"
-    summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
-
-    print(f"DDE health summary: {summary_path}")
+    print(f"DDE health summary: {summary['summary_path']}")
+    classification = summary.get("classification") or {}
+    print(
+        "DDE health classification: "
+        f"{classification.get('code', 'unknown')} | {classification.get('message', '')}"
+    )
     print(f"DDE health all_ok: {summary['all_ok']}")
     return 0 if summary["all_ok"] else 1
 

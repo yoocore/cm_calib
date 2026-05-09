@@ -184,6 +184,41 @@ update idletasks
 
 后续如果还有新的 IPG-MOVIE 控制问题、菜单项映射、刷新行为差异、最小化行为验证、其它 Show 项控制方式，都继续追加在这里。
 
+## 8.1 send IPG-MOVIE 长期失稳的已知故障型态
+
+截至 2026-05-09，已经能稳定区分下面这类故障：
+
+1. `TclEval` / `RunScript` 仍然正常
+2. `WInfoInterps "IPG-MOVIE"` 仍然能返回 `IPG-MOVIE`
+3. 但最小 `send IPG-MOVIE { list ok [info patchlevel] }` 也会失败，错误为 `remote server cannot handle this command`
+
+这说明故障点不在 Python 到 CarMaker 的 DDE，也不在“系统里完全找不到 Movie 解释器名”，而是在 `IPG-MOVIE` 的 Tk send 执行面本身已经挂住。
+
+当前经验结论：
+
+1. 只重开可见的 CarMaker / IPG-MOVIE 窗口不一定能清掉这个状态
+2. 需要做“全栈硬重建”，至少把 `CarMaker.win64.exe`、GUI `Movie.exe` 和 headless `Movie.exe -mode GPUSensor` 一起清掉再拉起
+3. 仅在重启电脑后恢复，通常意味着会话里还有更底层的残留进程/注册状态没有被可见窗口重启覆盖
+
+当前推荐恢复动作，不要再只做手工重开窗口：
+
+```powershell
+c:/CM_Projects/CMO141_Calibration/.venv/Scripts/python.exe Data/Script/CameraCalibration/cmapi_testrun_control.py \
+    --testrun vctc_ngxpro \
+    --open-movie \
+    --clean-existing-processes \
+    --health-check-after-start \
+    --keep-carmaker-open \
+    --keep-movie-open
+```
+
+这条链的作用是：
+
+1. 先清掉现有 CarMaker / Movie 进程栈，而不是只重开前台窗口
+2. 重新拉起 CarMaker 和 IPG-MOVIE
+3. 启动后立刻跑 DDE 健康检查
+4. 如果 `send IPG-MOVIE` 仍然坏，直接在恢复阶段失败，而不是等到标定中途才暴露
+
 ## 9. View -> Size -> Custom 控制结论
 
 ### 9.1 菜单项绑定

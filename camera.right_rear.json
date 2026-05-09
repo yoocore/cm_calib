@@ -10,6 +10,7 @@
     "comparison_mode": "direct",
     "overlay_residual_threshold": 12,
     "overlay_residual_blur": 0,
+    "score_scope": "right_rear_direct_v2_20260508",
     "keep_aspect_resize": true,
     "verify_all_coordinate_fields": false,
     "stop_after_first_accepted_direction": true,
@@ -31,8 +32,25 @@
             "C4"
         ],
         "min_board_score_improvement": 0.75,
-        "max_total_score_worsen": 1.0,
+        "max_total_score_worsen": 1.5,
+        "min_total_board_score_improvement": 1.0,
+        "total_worsen_tradeoff_ratio": 1.25,
         "min_board_count": 1
+    },
+    "auto_objective_board_focus": {
+        "enabled": true,
+        "activation_min_stagnation_rounds": 2,
+        "score_threshold": 10.0,
+        "top_k": 3,
+        "min_focus_board_count": 2,
+        "restrict_to_priority_boards": false,
+        "require_same_family": true,
+        "rank_multipliers": [
+            1.12,
+            1.08,
+            1.04
+        ],
+        "priority_board_multiplier": 1.02
     },
     "joint_exploration": {
         "apply_to_all_params": true,
@@ -97,6 +115,48 @@
             }
         ]
     },
+    "escape_exploration": {
+        "enabled": true,
+        "coarse_start_multipliers": [
+            8.0,
+            16.0,
+            28.0
+        ],
+        "local_jitter_scale": 1.5,
+        "stagnation_round_scale_up": 0.35,
+        "focus_param_budget": 4,
+        "focus_rank_decay": 0.2,
+        "board_focus_top_k": 2,
+        "global_param_order": [
+            "lens_fov",
+            "pos_z",
+            "pitch",
+            "yaw",
+            "pos_x",
+            "pos_y",
+            "roll"
+        ],
+        "board_param_groups": {
+            "S": [
+                "lens_fov",
+                "pitch",
+                "yaw",
+                "pos_z"
+            ],
+            "C": [
+                "lens_fov",
+                "yaw",
+                "roll",
+                "pos_x",
+                "pos_y"
+            ]
+        },
+        "profile_scale_map": {
+            "baseline": 1.0,
+            "expanded": 1.35,
+            "aggressive": 1.7
+        }
+    },
     "round_seeding": {
         "enabled": true,
         "prefer_history_best": true,
@@ -117,7 +177,7 @@
     ],
     "parameters": {
         "pos_x": {
-            "initial": 3.397,
+            "initial": 3.4191,
             "step": 0.002,
             "min_offset": -0.02,
             "max_offset": 0.02,
@@ -125,7 +185,7 @@
             "decimals": 4
         },
         "pos_y": {
-            "initial": -1.0026,
+            "initial": -0.9829,
             "step": 0.001,
             "min_offset": -0.01,
             "max_offset": 0.01,
@@ -133,7 +193,7 @@
             "decimals": 4
         },
         "pos_z": {
-            "initial": 0.997,
+            "initial": 0.9793,
             "step": 0.002,
             "min_offset": -0.03,
             "max_offset": 0.03,
@@ -141,7 +201,7 @@
             "decimals": 4
         },
         "yaw": {
-            "initial": 227.9013,
+            "initial": 227.8662,
             "step": 0.01,
             "min_offset": -0.25,
             "max_offset": 0.25,
@@ -149,7 +209,7 @@
             "decimals": 4
         },
         "pitch": {
-            "initial": -0.61,
+            "initial": -0.7433,
             "step": 0.02,
             "min_offset": -0.45,
             "max_offset": 0.45,
@@ -157,7 +217,7 @@
             "decimals": 4
         },
         "roll": {
-            "initial": 0.023,
+            "initial": 0.27,
             "step": 0.01,
             "min_offset": -0.2,
             "max_offset": 0.2,
@@ -165,7 +225,7 @@
             "decimals": 4
         },
         "lens_fov": {
-            "initial": 121.4,
+            "initial": 125.4,
             "step": 0.2,
             "min_offset": -6.0,
             "max_offset": 6.0,

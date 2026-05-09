@@ -4,6 +4,8 @@ import copy
 import ctypes
 import json
 import math
+import msvcrt
+import os
 import random
 import re
 import sys
@@ -66,6 +68,9 @@ _LIVE_LOG_PRIMARY_STDERR: Optional[TextIO] = None
 _LIVE_LOG_STREAM: Optional[TextIO] = None
 _LIVE_LOG_PATH: Optional[Path] = None
 _LIVE_LOG_ATEXIT_REGISTERED = False
+_RUNTIME_SESSION_LOCK_STREAM: Optional[TextIO] = None
+_RUNTIME_SESSION_LOCK_PATH: Optional[Path] = None
+_RUNTIME_SESSION_LOCK_ATEXIT_REGISTERED = False
 
 
 def _cleanup_live_log() -> None:
@@ -91,6 +96,80 @@ def _cleanup_live_log() -> None:
         log_stream.close()
     except Exception:
         pass
+
+
+def _cleanup_runtime_session_lock() -> None:
+    global _RUNTIME_SESSION_LOCK_STREAM, _RUNTIME_SESSION_LOCK_PATH
+
+    lock_stream = _RUNTIME_SESSION_LOCK_STREAM
+    _RUNTIME_SESSION_LOCK_STREAM = None
+    _RUNTIME_SESSION_LOCK_PATH = None
+    if lock_stream is None:
+        return
+    try:
+        lock_stream.seek(0)
+        msvcrt.locking(lock_stream.fileno(), msvcrt.LK_UNLCK, 1)
+    except Exception:
+        pass
+    try:
+        lock_stream.close()
+    except Exception:
+        pass
+
+
+def _acquire_runtime_session_lock(output_dir: Path, config_path: Path) -> Path:
+    global _RUNTIME_SESSION_LOCK_STREAM, _RUNTIME_SESSION_LOCK_PATH
+    global _RUNTIME_SESSION_LOCK_ATEXIT_REGISTERED
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = output_dir / ".camera_calibration.runtime.lock"
+    if _RUNTIME_SESSION_LOCK_STREAM is not None and _RUNTIME_SESSION_LOCK_PATH == lock_path:
+        return lock_path
+
+    if _RUNTIME_SESSION_LOCK_STREAM is not None:
+        _cleanup_runtime_session_lock()
+
+    lock_stream = open(lock_path, "a+b")
+    existing_payload = ""
+    try:
+        lock_stream.seek(0)
+        existing_payload = lock_stream.read().decode("utf-8", errors="replace").strip()
+    except PermissionError:
+        existing_payload = "metadata unavailable (lock holder denied shared read)"
+    lock_stream.seek(0, 2)
+    if lock_stream.tell() == 0:
+        lock_stream.write(b"\n")
+        lock_stream.flush()
+    lock_stream.seek(0)
+
+    try:
+        msvcrt.locking(lock_stream.fileno(), msvcrt.LK_NBLCK, 1)
+    except OSError as exc:
+        lock_stream.close()
+        detail = existing_payload or "metadata unavailable"
+        raise RuntimeError(
+            "Another calibration session is already running for "
+            f"{output_dir.as_posix()}. Active lock metadata: {detail}"
+        ) from exc
+
+    payload = {
+        "pid": os.getpid(),
+        "started_at": datetime.now().isoformat(timespec="seconds"),
+        "config": str(config_path),
+        "output_dir": str(output_dir),
+        "argv": sys.argv,
+    }
+    lock_stream.seek(0)
+    lock_stream.truncate()
+    lock_stream.write(json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"))
+    lock_stream.flush()
+
+    if not _RUNTIME_SESSION_LOCK_ATEXIT_REGISTERED:
+        atexit.register(_cleanup_runtime_session_lock)
+        _RUNTIME_SESSION_LOCK_ATEXIT_REGISTERED = True
+    _RUNTIME_SESSION_LOCK_STREAM = lock_stream
+    _RUNTIME_SESSION_LOCK_PATH = lock_path
+    return lock_path
 
 
 def _configure_live_log_for_output_dir(output_dir: Path, resume_from_result: bool) -> Path:
@@ -8589,6 +8668,10 @@ def main() -> None:
             args.capture_initials,
         ]
     )
+    requires_runtime_session = bool(args.capture_initials) or should_optimize
+
+    if requires_runtime_session:
+        _acquire_runtime_session_lock(base_output_dir, config_path)
 
     if args.explore_then_refine:
         if not should_optimize:

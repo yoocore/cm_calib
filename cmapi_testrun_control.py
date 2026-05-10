@@ -7,17 +7,27 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import time
 from typing import Any, Optional
 
 import cmapi
-from dde_health_check import default_output_dir, render_result_script, run_check_attempt
+from dde_health_check import default_output_dir, render_result_script, render_send_script, run_check_attempt, run_read_only_health_suite
+
+
+if not hasattr(cmapi, "InvalidConfigurationException"):
+    invalid_configuration_error = getattr(getattr(cmapi, "error", None), "InvalidConfigurationError", None)
+    if invalid_configuration_error is not None:
+        cmapi.InvalidConfigurationException = invalid_configuration_error
 
 
 DEFAULT_PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CM_INSTALL = Path(os.environ.get("IPGHOME", "D:/IPG")) / "carmaker" / "win64-14.1"
+CARMAKER_PROCESS_NAMES = ("CarMaker.win64.exe", "HIL.exe", "CM_Office.exe")
+RUNTIME_CARMAKER_PROCESS_NAMES = ("CarMaker.win64.exe", "CM_Office.exe")
+DEFAULT_MOVIE_APPHOST = "kel"
 PROCESS_ENUMERATION_COMMAND = r"""
 $procs = Get-CimInstance Win32_Process |
-    Where-Object { $_.Name -in @('CarMaker.win64.exe', 'Movie.exe') } |
+    Where-Object { $_.Name -in @('CarMaker.win64.exe', 'HIL.exe', 'CM_Office.exe', 'Movie.exe') } |
     Select-Object ProcessId, Name, CommandLine
 if ($null -eq $procs) {
     '[]'
@@ -34,6 +44,8 @@ IPGMOVIE_SENSOR_PREFIX_RE = re.compile(
     re.IGNORECASE,
 )
 RUNTIME_PROJECTDIR_PROBE_NAME = "cmapi_testrun_control_projectdir_probe"
+MOVIE_SCENE_READY_PROBE_NAME = "cmapi_testrun_control_movie_scene_ready_probe"
+MOVIE_SEND_HEALTH_CHECK_NAME = "cmapi_testrun_control_movie_send_health"
 
 
 class VehicleSensorActivationError(RuntimeError):
@@ -63,7 +75,16 @@ def list_cm_processes() -> list[dict[str, Any]]:
 
 
 def list_carmaker_processes() -> list[dict[str, Any]]:
-    return [proc for proc in list_cm_processes() if proc.get("Name") == "CarMaker.win64.exe"]
+    return [proc for proc in list_cm_processes() if proc.get("Name") in CARMAKER_PROCESS_NAMES]
+
+
+def list_runtime_carmaker_processes(processes: Optional[list[dict[str, Any]]] = None) -> list[dict[str, Any]]:
+    source = list_carmaker_processes() if processes is None else processes
+    return [proc for proc in source if proc.get("Name") in RUNTIME_CARMAKER_PROCESS_NAMES]
+
+
+def summarize_processes(processes: list[dict[str, Any]]) -> str:
+    return ", ".join(f"{proc.get('Name')}[{proc.get('ProcessId')}]" for proc in processes) or "none"
 
 
 def is_gpusensor_movie_process(process: dict[str, Any]) -> bool:
@@ -86,6 +107,10 @@ def list_gui_movie_processes() -> list[dict[str, Any]]:
     return [proc for proc in list_cm_processes() if is_gui_movie_process(proc)]
 
 
+def list_gpusensor_movie_processes() -> list[dict[str, Any]]:
+    return [proc for proc in list_cm_processes() if is_gpusensor_movie_process(proc)]
+
+
 def kill_gui_movie_processes() -> list[dict[str, Any]]:
     gui_movies = list_gui_movie_processes()
     if not gui_movies:
@@ -101,13 +126,28 @@ def kill_gui_movie_processes() -> list[dict[str, Any]]:
     return gui_movies
 
 
+def kill_all_movie_processes() -> list[dict[str, Any]]:
+    movie_processes = [proc for proc in list_cm_processes() if proc.get("Name") == "Movie.exe"]
+    if not movie_processes:
+        return []
+
+    for proc in movie_processes:
+        subprocess.run(
+            ["taskkill", "/PID", str(proc["ProcessId"]), "/F", "/T"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    return movie_processes
+
+
 def kill_existing_cm_processes() -> list[dict[str, Any]]:
     processes = list_cm_processes()
     if not processes:
         return []
 
     # Reset the whole CarMaker/IPG-MOVIE stack so the next run starts from a known state.
-    for image_name in ("CarMaker.win64.exe", "Movie.exe"):
+    for image_name in (*CARMAKER_PROCESS_NAMES, "Movie.exe"):
         subprocess.run(
             ["taskkill", "/IM", image_name, "/F", "/T"],
             capture_output=True,
@@ -243,6 +283,11 @@ def parse_args() -> argparse.Namespace:
         help="Host used by CMAPI application objects.",
     )
     parser.add_argument(
+        "--movie-apphost",
+        default=DEFAULT_MOVIE_APPHOST,
+        help="Apphost used when launching GUI IPG-MOVIE.",
+    )
+    parser.add_argument(
         "--camera-sensor",
         default=None,
         help=(
@@ -268,7 +313,10 @@ def parse_args() -> argparse.Namespace:
         "--stop-after",
         type=float,
         default=None,
-        help="If set, stop the simulation after the given number of seconds.",
+        help=(
+            "If set without --open-movie, stop the simulation after the given number of seconds. "
+            "When --open-movie is enabled, the script follows the manual bootstrap flow instead."
+        ),
     )
     parser.add_argument(
         "--startup-settle-sec",
@@ -279,8 +327,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--movie-settle-sec",
         type=float,
-        default=2.0,
-        help="Seconds to wait after IPG-MOVIE startup.",
+        default=45.0,
+        help="Maximum seconds to wait until IPG-MOVIE reports the calibration scene is ready.",
+    )
+    parser.add_argument(
+        "--movie-ready-poll-sec",
+        type=float,
+        default=1.0,
+        help="Polling interval used while waiting for the IPG-MOVIE calibration scene to become ready.",
+    )
+    parser.add_argument(
+        "--bootstrap-running-timeout-sec",
+        type=float,
+        default=60.0,
+        help="Maximum seconds to wait for the bootstrap TestRun to reach running before opening IPG-MOVIE.",
+    )
+    parser.add_argument(
+        "--bootstrap-idle-timeout-sec",
+        type=float,
+        default=30.0,
+        help="Maximum seconds to wait for the bootstrap TestRun to return to idle after stop is requested.",
     )
     parser.add_argument(
         "--apo-connect-retries",
@@ -303,6 +369,30 @@ def parse_args() -> argparse.Namespace:
         "--keep-movie-open",
         action="store_true",
         help="Do not stop IPG-MOVIE during cleanup.",
+    )
+    parser.add_argument(
+        "--health-check-after-start",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Run a read-only send IPG-MOVIE health check after the startup chain finishes.",
+    )
+    parser.add_argument(
+        "--health-check-attempts",
+        type=int,
+        default=2,
+        help="Attempts per check when running the post-start Movie send health check.",
+    )
+    parser.add_argument(
+        "--health-check-timeout-sec",
+        type=float,
+        default=2.5,
+        help="Timeout per check attempt for the post-start Movie send health check.",
+    )
+    parser.add_argument(
+        "--health-check-settle-sec",
+        type=float,
+        default=0.3,
+        help="Retry delay between attempts for the post-start Movie send health check.",
     )
     return parser.parse_args()
 
@@ -349,19 +439,14 @@ def probe_running_carmaker_projectdir(timeout_sec: float = 2.0) -> Optional[Path
         output_dir=output_dir,
         script_text=render_result_script(
             output_dir / f"{RUNTIME_PROJECTDIR_PROBE_NAME}.txt",
-            ["emit [pwd]"],
+            ["set projectdir [pwd]"],
         ),
         timeout_sec=timeout_sec,
     )
     if not result.get("ok"):
         return None
 
-    result_path = Path(str(result["result_path"]))
-    lines = result_path.read_text(encoding="utf-8", errors="replace").splitlines()
-    if not lines:
-        return None
-
-    projectdir = lines[0].strip()
+    projectdir = str(result.get("detail") or "").strip()
     if not projectdir:
         return None
     return Path(projectdir).resolve()
@@ -370,6 +455,528 @@ def probe_running_carmaker_projectdir(timeout_sec: float = 2.0) -> Optional[Path
 def load_variation(project_root: Path, testrun_rel_path: Path) -> cmapi.Variation:
     testrun = load_testrun(project_root, testrun_rel_path)
     return cmapi.Variation.create_from_testrun(testrun)
+
+
+def sync_gui_testrun_selection(
+    project_root: Path,
+    testrun_rel_path: Path,
+    timeout_sec: float = 20.0,
+) -> str:
+    output_dir = default_output_dir()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    probe_name = "cmapi_testrun_control_load_testrun_probe"
+    expected_name = testrun_rel_path.name
+    escaped_testrun = testrun_rel_path.as_posix().replace("\\", "/").replace('"', '\\"')
+    result = run_check_attempt(
+        name=probe_name,
+        service="TclEval",
+        topic="CarMaker",
+        output_dir=output_dir,
+        script_text=render_result_script(
+            output_dir / f"{probe_name}.txt",
+            [
+                'if {[info exists TestRun(FName)]} {set selected_testrun $TestRun(FName)} else {set selected_testrun ""}',
+                f'if {{$selected_testrun ne "{expected_name}"}} {{LoadTestRun "{escaped_testrun}"; set selected_testrun $TestRun(FName)}}',
+                "set selected_testrun $TestRun(FName)",
+            ],
+        ),
+        timeout_sec=timeout_sec,
+    )
+    if not result.get("ok"):
+        raise RuntimeError(f"Failed to sync CarMaker GUI TestRun selection: {result.get('kind')} {result.get('detail')}")
+
+    selected_name = str(result.get("detail") or "").strip()
+    if selected_name != expected_name:
+        raise RuntimeError(
+            "CarMaker GUI TestRun selection did not match requested TestRun: "
+            f"expected {expected_name}, got {selected_name or '<empty>'}"
+        )
+    return selected_name
+
+
+def bootstrap_testrun_for_movie_via_tcl(
+    testrun_rel_path: Path,
+    running_timeout_sec: float,
+    idle_timeout_sec: float,
+) -> str:
+    output_dir = default_output_dir()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    probe_name = "cmapi_testrun_control_bootstrap_probe"
+    expected_name = testrun_rel_path.name
+    escaped_testrun = testrun_rel_path.as_posix().replace("\\", "/").replace('"', '\\"')
+    running_timeout_ms = max(1000, int(running_timeout_sec * 1000))
+    idle_timeout_ms = max(1000, int(idle_timeout_sec * 1000))
+    result = run_check_attempt(
+        name=probe_name,
+        service="TclEval",
+        topic="CarMaker",
+        output_dir=output_dir,
+        script_text=render_result_script(
+            output_dir / f"{probe_name}.txt",
+            [
+                "WaitForStatus idle 10000",
+                f'if {{$TestRun(FName) ne "{expected_name}"}} {{LoadTestRun "{escaped_testrun}"}}',
+                "set selected_testrun $TestRun(FName)",
+                "StartSim",
+                f"WaitForStatus running {running_timeout_ms}",
+                "StopSim",
+                f"WaitForStatus idle {idle_timeout_ms}",
+                'set bootstrap_result [list selected_testrun $selected_testrun status bootstrapped]',
+            ],
+        ),
+        timeout_sec=running_timeout_sec + idle_timeout_sec + 15.0,
+    )
+    if not result.get("ok"):
+        raise RuntimeError(f"Failed to bootstrap TestRun via CarMaker Tcl: {result.get('kind')} {result.get('detail')}")
+
+    detail = str(result.get("detail") or "").strip()
+    selected_name = expected_name
+    match = re.search(r"selected_testrun\s+([^\s]+)", detail)
+    if match is not None:
+        selected_name = match.group(1).strip()
+    if selected_name != expected_name:
+        raise RuntimeError(
+            "CarMaker Tcl bootstrap ran against an unexpected TestRun: "
+            f"expected {expected_name}, got {selected_name or '<empty>'}"
+        )
+    return selected_name
+
+
+def resolve_carmaker_executable(cm_install: Path) -> Path:
+    preferred_hil = cm_install / "GUI" / "HIL.exe"
+    if preferred_hil.exists():
+        return preferred_hil
+    return require_file(cm_install / "bin" / "CarMaker.win64.exe", "CarMaker executable")
+
+
+def wait_for_carmaker_tcleval_ready(
+    timeout_sec: float = 30.0,
+    poll_interval_sec: float = 0.5,
+) -> None:
+    output_dir = default_output_dir()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    probe_name = "cmapi_testrun_control_tcleval_ready_probe"
+    deadline = time.monotonic() + timeout_sec
+    last_detail = "not_ready"
+    while time.monotonic() < deadline:
+        result = run_check_attempt(
+            name=probe_name,
+            service="TclEval",
+            topic="CarMaker",
+            output_dir=output_dir,
+            script_text=render_result_script(
+                output_dir / f"{probe_name}.txt",
+                ["set ready ok"],
+            ),
+            timeout_sec=min(2.0, max(0.5, deadline - time.monotonic())),
+        )
+        if result.get("ok") and str(result.get("detail") or "").strip() == "ok":
+            return
+        last_detail = f"{result.get('kind')}: {result.get('detail')}"
+        time.sleep(poll_interval_sec)
+    raise RuntimeError(f"Timed out waiting for CarMaker TclEval readiness: {last_detail}")
+
+
+async def start_or_reuse_carmaker_for_open_movie(
+    cm_install: Path,
+    host: str,
+    project_root: Path,
+    clean_existing_processes: bool,
+) -> tuple[Optional[cmapi.CarMaker], Optional[int], bool, str]:
+    existing_carmakers = list_carmaker_processes()
+    runtime_carmakers = list_runtime_carmaker_processes(existing_carmakers)
+    expected_project_root = project_root.resolve()
+
+    if len(runtime_carmakers) == 1:
+        pid = int(runtime_carmakers[0]["ProcessId"])
+        running_project_root = probe_running_carmaker_projectdir()
+        if running_project_root == expected_project_root:
+            return attach_to_existing_carmaker(pid, host, expected_project_root), pid, False, (
+                f"reused existing PID {pid} for projectdir {expected_project_root.as_posix()}"
+            )
+
+    if len(runtime_carmakers) > 1:
+        if clean_existing_processes:
+            killed = kill_existing_cm_processes()
+            summary = summarize_processes(killed)
+            executable = resolve_carmaker_executable(cm_install)
+            subprocess.Popen(
+                [str(executable), "-projectdir", expected_project_root.as_posix()],
+                cwd=str(executable.parent),
+            )
+            wait_for_carmaker_tcleval_ready()
+            return None, None, True, f"cleared conflicting processes and started HIL GUI only: {summary}"
+        raise RuntimeError(
+            "Multiple CarMaker instances are running. Re-run with cleanup enabled to reset the stack."
+        )
+
+    if len(existing_carmakers) == 1 and existing_carmakers[0].get("Name") == "HIL.exe":
+        running_project_root = probe_running_carmaker_projectdir()
+        if running_project_root is None or running_project_root == expected_project_root:
+            wait_for_carmaker_tcleval_ready()
+            return None, None, False, f"reused existing HIL GUI for projectdir {expected_project_root.as_posix()}"
+        if clean_existing_processes:
+            killed = kill_existing_cm_processes()
+            summary = summarize_processes(killed)
+            executable = resolve_carmaker_executable(cm_install)
+            subprocess.Popen(
+                [str(executable), "-projectdir", expected_project_root.as_posix()],
+                cwd=str(executable.parent),
+            )
+            wait_for_carmaker_tcleval_ready()
+            return None, None, True, f"restarted HIL GUI after projectdir mismatch: {summary}"
+
+    if not existing_carmakers:
+        executable = resolve_carmaker_executable(cm_install)
+        subprocess.Popen(
+            [str(executable), "-projectdir", expected_project_root.as_posix()],
+            cwd=str(executable.parent),
+        )
+        wait_for_carmaker_tcleval_ready()
+        return None, None, True, "started new HIL GUI instance without prestarting runtime"
+
+    if clean_existing_processes:
+        killed = kill_existing_cm_processes()
+        summary = summarize_processes(killed)
+        executable = resolve_carmaker_executable(cm_install)
+        subprocess.Popen(
+            [str(executable), "-projectdir", expected_project_root.as_posix()],
+            cwd=str(executable.parent),
+        )
+        wait_for_carmaker_tcleval_ready()
+        return None, None, True, f"cleared conflicting processes and started HIL GUI only: {summary}"
+
+    raise RuntimeError(
+        f"Cannot reuse existing CarMaker GUI state for {expected_project_root.as_posix()}."
+    )
+
+
+def wait_for_runtime_carmaker_pid(
+    project_root: Path,
+    timeout_sec: float = 60.0,
+    poll_interval_sec: float = 0.5,
+) -> int:
+    expected_project_root = project_root.resolve()
+    deadline = time.monotonic() + timeout_sec
+    last_summary = "none"
+    while time.monotonic() < deadline:
+        processes = list_carmaker_processes()
+        last_summary = summarize_processes(processes)
+        runtime_processes = list_runtime_carmaker_processes(processes)
+        if len(runtime_processes) == 1:
+            running_project_root = probe_running_carmaker_projectdir(timeout_sec=1.0)
+            if running_project_root is None or running_project_root == expected_project_root:
+                return int(runtime_processes[0]["ProcessId"])
+        time.sleep(poll_interval_sec)
+
+    raise RuntimeError(
+        "Timed out waiting for CarMaker runtime process for "
+        f"{expected_project_root.as_posix()}. Visible processes: {last_summary}"
+    )
+
+
+def resolve_attached_carmaker_pid(carmaker: cmapi.CarMaker, project_root: Path) -> int:
+    pid = carmaker.get_pid()
+    if pid is not None:
+        return int(pid)
+    return wait_for_runtime_carmaker_pid(project_root, timeout_sec=20.0, poll_interval_sec=0.25)
+
+
+def build_gui_movie_command(
+    cm_install: Path,
+    movie_apphost: str,
+    project_root: Path,
+    carmaker_pid: int,
+) -> list[str]:
+    movie_executable = require_file(cm_install / "GUI" / "Movie.exe", "IPG-MOVIE executable")
+    return [
+        str(movie_executable),
+        "-CMInstance",
+        "0",
+        "-apphost",
+        movie_apphost,
+        "-apppid",
+        str(carmaker_pid),
+        "-projectdir",
+        project_root.resolve().as_posix(),
+        "-datapool",
+        cm_install.resolve().as_posix(),
+        "-cmgui",
+        "CarMaker",
+    ]
+
+
+def wait_for_gui_movie_pid(
+    existing_pids: set[int],
+    timeout_sec: float = 15.0,
+    poll_interval_sec: float = 0.25,
+) -> int:
+    deadline = time.monotonic() + timeout_sec
+    last_summary = "none"
+    while time.monotonic() < deadline:
+        processes = list_gui_movie_processes()
+        last_summary = summarize_processes(processes)
+        new_processes = [proc for proc in processes if int(proc["ProcessId"]) not in existing_pids]
+        if len(new_processes) == 1:
+            return int(new_processes[0]["ProcessId"])
+        time.sleep(poll_interval_sec)
+    raise RuntimeError(f"Timed out waiting for GUI IPG-MOVIE startup. Visible GUI Movie processes: {last_summary}")
+
+
+def restart_gui_movie_for_send_recovery(
+    cm_install: Path,
+    movie_apphost: str,
+    project_root: Path,
+    carmaker_pid: int,
+) -> int:
+    killed = kill_gui_movie_processes()
+    existing_pids = {int(proc["ProcessId"]) for proc in killed}
+    command = build_gui_movie_command(cm_install, movie_apphost, project_root, carmaker_pid)
+    subprocess.Popen(command, cwd=str((cm_install / "GUI").resolve()))
+    movie_pid = wait_for_gui_movie_pid(existing_pids)
+    return movie_pid
+
+
+def _parse_probe_detail(detail: str) -> dict[str, str]:
+    payload: dict[str, str] = {}
+    for chunk in detail.split(";"):
+        key, separator, value = chunk.partition("=")
+        if not separator:
+            continue
+        payload[key.strip()] = value.strip()
+    return payload
+
+
+def probe_movie_runtime_registration(timeout_sec: float) -> dict[str, str]:
+    output_dir = default_output_dir()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    result = run_check_attempt(
+        name=f"{MOVIE_SCENE_READY_PROBE_NAME}_runtime",
+        service="TclEval",
+        topic="CarMaker",
+        output_dir=output_dir,
+        script_text=render_result_script(
+            output_dir / f"{MOVIE_SCENE_READY_PROBE_NAME}_runtime.txt",
+            [
+                'set exact [WInfoInterps "IPG-MOVIE"]',
+                'set gpu [WInfoInterps "GPUSensor_*"]',
+                'format "exact=%s;gpu=%s" $exact $gpu',
+            ],
+        ),
+        timeout_sec=timeout_sec,
+    )
+    if not result.get("ok"):
+        raise RuntimeError(f"{result.get('kind')}: {result.get('detail')}")
+    return _parse_probe_detail(str(result.get("detail") or "").strip())
+
+
+def _get_health_check(summary: dict[str, Any], name: str) -> Optional[dict[str, Any]]:
+    for check in summary.get("checks", []):
+        if check.get("name") == name:
+            return check
+    return None
+
+
+def classify_gui_movie_send_health(summary: dict[str, Any]) -> dict[str, Any]:
+    tcleval_ping = _get_health_check(summary, "tcleval_ping")
+    interpreter_probe = _get_health_check(summary, "interpreter_probe")
+    movie_command_probe = _get_health_check(summary, "movie_command_probe")
+    movie_ping = _get_health_check(summary, "movie_ping")
+    movie_view_probe = _get_health_check(summary, "movie_view_probe")
+
+    interpreter_attempts = interpreter_probe.get("attempts", []) if isinstance(interpreter_probe, dict) else []
+    interpreter_detail = ""
+    if interpreter_attempts:
+        interpreter_detail = str(interpreter_attempts[-1].get("detail", "")).strip()
+    exact_registered = bool(re.search(r"\bexact\b\s+\{?IPG-MOVIE\}?", interpreter_detail))
+    tcleval_ok = isinstance(tcleval_ping, dict) and bool(tcleval_ping.get("ok"))
+    movie_command_ok = isinstance(movie_command_probe, dict) and bool(movie_command_probe.get("ok"))
+    movie_ping_ok = isinstance(movie_ping, dict) and bool(movie_ping.get("ok"))
+    movie_view_ok = isinstance(movie_view_probe, dict) and bool(movie_view_probe.get("ok"))
+
+    if tcleval_ok and exact_registered and movie_command_ok and movie_ping_ok and movie_view_ok:
+        return {
+            "all_ok": True,
+            "code": "ok",
+            "message": "GUI Movie send and active view probes both passed.",
+        }
+    if not tcleval_ok:
+        return {
+            "all_ok": False,
+            "code": "tcleval_unavailable",
+            "message": "CarMaker TclEval is unavailable.",
+        }
+    if exact_registered and movie_command_ok and not movie_ping_ok:
+        return {
+            "all_ok": False,
+            "code": "movie_send_target_registered_but_unresponsive",
+            "message": "IPG-MOVIE is registered but minimal send commands are still rejected.",
+        }
+    if not exact_registered:
+        return {
+            "all_ok": False,
+            "code": "movie_interpreter_missing",
+            "message": "IPG-MOVIE is not registered in WInfoInterps.",
+        }
+    return {
+        "all_ok": False,
+        "code": "movie_view_probe_failed",
+        "message": "Minimal send works partially, but the active Movie view probe is not healthy.",
+    }
+
+
+def run_movie_send_health_check(
+    attempts: int,
+    timeout_sec: float,
+    settle_sec: float,
+) -> dict[str, Any]:
+    output_dir = default_output_dir() / MOVIE_SEND_HEALTH_CHECK_NAME
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return run_read_only_health_suite(
+        service="TclEval",
+        topic="CarMaker",
+        output_dir=output_dir,
+        attempts=max(1, attempts),
+        timeout_sec=max(0.1, timeout_sec),
+        settle_sec=max(0.0, settle_sec),
+    )
+
+
+async def recover_movie_send_surface_after_health_failure(
+    cm_install: Path,
+    movie_apphost: str,
+    project_root: Path,
+    testrun_rel_path: Path,
+    carmaker_pid: int,
+    clean_existing_processes: bool,
+    running_timeout_sec: float,
+    idle_timeout_sec: float,
+    scene_timeout_sec: float,
+    scene_poll_interval_sec: float,
+    health_attempts: int,
+    health_timeout_sec: float,
+    health_settle_sec: float,
+) -> tuple[Optional[cmapi.IPGMovie], Optional[int], bool, str, dict[str, str], dict[str, Any]]:
+    killed_movies = kill_all_movie_processes()
+    killed_summary = summarize_processes(killed_movies)
+    bootstrap_testrun_for_movie_via_tcl(
+        testrun_rel_path,
+        running_timeout_sec,
+        idle_timeout_sec,
+    )
+    movie, movie_pid, movie_owned, movie_action = await start_or_reuse_movie(
+        cm_install,
+        movie_apphost,
+        project_root,
+        carmaker_pid,
+        clean_existing_processes,
+    )
+    movie_scene = wait_for_movie_scene_ready(
+        cm_install=cm_install,
+        movie_apphost=movie_apphost,
+        project_root=project_root,
+        carmaker_pid=carmaker_pid,
+        timeout_sec=scene_timeout_sec,
+        poll_interval_sec=scene_poll_interval_sec,
+    )
+    health_summary = run_movie_send_health_check(
+        attempts=health_attempts,
+        timeout_sec=health_timeout_sec,
+        settle_sec=health_settle_sec,
+    )
+    recovery_action = (
+        f"restarted full Movie stack after send health failure: killed={killed_summary}; movie_action={movie_action}"
+    )
+    return movie, movie_pid, movie_owned, recovery_action, movie_scene, health_summary
+
+
+def wait_for_movie_scene_ready(
+    cm_install: Path,
+    movie_apphost: str,
+    project_root: Path,
+    carmaker_pid: int,
+    timeout_sec: float,
+    poll_interval_sec: float,
+) -> dict[str, str]:
+    output_dir = default_output_dir()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + timeout_sec
+    last_detail = "not_ready"
+    send_failure_count = 0
+    restart_attempted = False
+    while time.monotonic() < deadline:
+        remaining_sec = max(0.5, min(3.0, deadline - time.monotonic()))
+        result = run_check_attempt(
+            name=MOVIE_SCENE_READY_PROBE_NAME,
+            service="TclEval",
+            topic="CarMaker",
+            output_dir=output_dir,
+            script_text=render_send_script(
+                output_dir / f"{MOVIE_SCENE_READY_PROBE_NAME}.txt",
+                "IPG-MOVIE",
+                [
+                    'if {![info exists View(ev.view)]} {error "missing View(ev.view)"}',
+                    'set vno $View(ev.view)',
+                    'set wi [dict get $View($vno) Width]',
+                    'set he [dict get $View($vno) Height]',
+                    'set camera_widget [expr {[winfo exists .camera] ? 1 : 0}]',
+                    'if {[info exists Camera::v(Name)]} {set camera_name $Camera::v(Name)} else {set camera_name ""}',
+                    'format "width=%s;height=%s;camera_widget=%s;camera_name=%s" $wi $he $camera_widget $camera_name',
+                ],
+            ),
+            timeout_sec=remaining_sec,
+        )
+        if result.get("ok"):
+            detail = str(result.get("detail") or "").strip()
+            payload = _parse_probe_detail(detail)
+            width = int(payload.get("width", "0") or "0")
+            height = int(payload.get("height", "0") or "0")
+            camera_name = payload.get("camera_name", "")
+            if width > 0 and height > 0 and camera_name:
+                payload["mode"] = "send_probe"
+                return payload
+            last_detail = detail or "scene_not_ready"
+        else:
+            last_detail = f"{result.get('kind')}: {result.get('detail')}"
+            send_failure_count += 1
+
+        if send_failure_count >= 2 and not restart_attempted:
+            try:
+                restarted_pid = restart_gui_movie_for_send_recovery(
+                    cm_install,
+                    movie_apphost,
+                    project_root,
+                    carmaker_pid,
+                )
+                restart_attempted = True
+                send_failure_count = 0
+                last_detail = f"restarted_gui_movie_pid={restarted_pid}; previous={last_detail}"
+                time.sleep(max(0.5, poll_interval_sec))
+                continue
+            except Exception as exc:
+                restart_attempted = True
+                last_detail = f"gui_movie_restart_failed: {exc}; previous={last_detail}"
+
+        if send_failure_count >= 2:
+            try:
+                runtime_payload = probe_movie_runtime_registration(timeout_sec=remaining_sec)
+                exact = runtime_payload.get("exact", "")
+                gpu = runtime_payload.get("gpu", "")
+                if exact == "IPG-MOVIE" and list_gui_movie_processes():
+                    runtime_payload["mode"] = "runtime_fallback"
+                    runtime_payload["runtime_scope"] = "gui_movie_plus_gpusensor" if gpu and list_gpusensor_movie_processes() else "gui_movie_only"
+                    runtime_payload["recovery"] = "gui_movie_restart" if restart_attempted else "none"
+                    runtime_payload["width"] = runtime_payload.get("width", "?")
+                    runtime_payload["height"] = runtime_payload.get("height", "?")
+                    runtime_payload["camera_name"] = runtime_payload.get("camera_name", "")
+                    runtime_payload["camera_widget"] = runtime_payload.get("camera_widget", "?")
+                    runtime_payload["detail"] = last_detail
+                    return runtime_payload
+            except Exception as exc:
+                last_detail = str(exc)
+        time.sleep(max(0.1, poll_interval_sec))
+
+    raise RuntimeError(f"Timed out waiting for IPG-MOVIE calibration scene readiness: {last_detail}")
 
 
 def attach_to_existing_carmaker(pid: int, host: str, project_root: Path) -> cmapi.CarMaker:
@@ -382,9 +989,18 @@ def attach_to_existing_carmaker(pid: int, host: str, project_root: Path) -> cmap
 
 
 async def start_carmaker(cm_install: Path, host: str, project_root: Path) -> cmapi.CarMaker:
+    executable = resolve_carmaker_executable(cm_install)
+    if executable.name.lower() == "hil.exe":
+        subprocess.Popen(
+            [str(executable), "-projectdir", project_root.resolve().as_posix()],
+            cwd=str(executable.parent),
+        )
+        runtime_pid = wait_for_runtime_carmaker_pid(project_root, timeout_sec=90.0, poll_interval_sec=0.5)
+        return attach_to_existing_carmaker(runtime_pid, host, project_root)
+
     carmaker = cmapi.CarMaker()
     carmaker.set_host(host)
-    carmaker.set_executable_path(require_file(cm_install / "bin" / "CarMaker.win64.exe", "CarMaker executable"))
+    carmaker.set_executable_path(executable)
     carmaker.set_arg("-projectdir", project_root.resolve().as_posix())
     await carmaker.start()
     return carmaker
@@ -397,10 +1013,11 @@ async def start_or_reuse_carmaker(
     clean_existing_processes: bool,
 ) -> tuple[cmapi.CarMaker, int, bool, str]:
     existing_carmakers = list_carmaker_processes()
+    runtime_carmakers = list_runtime_carmaker_processes(existing_carmakers)
     expected_project_root = project_root.resolve()
 
-    if len(existing_carmakers) == 1:
-        pid = int(existing_carmakers[0]["ProcessId"])
+    if len(runtime_carmakers) == 1:
+        pid = int(runtime_carmakers[0]["ProcessId"])
         running_project_root = probe_running_carmaker_projectdir()
         if running_project_root == expected_project_root:
             return attach_to_existing_carmaker(pid, host, expected_project_root), pid, False, (
@@ -417,9 +1034,9 @@ async def start_or_reuse_carmaker(
 
         if clean_existing_processes:
             killed = kill_existing_cm_processes()
-            summary = ", ".join(f"{proc['Name']}[{proc['ProcessId']}]" for proc in killed)
+            summary = summarize_processes(killed)
             carmaker = await start_carmaker(cm_install, host, expected_project_root)
-            return carmaker, int(carmaker.get_pid()), True, (
+            return carmaker, resolve_attached_carmaker_pid(carmaker, expected_project_root), True, (
                 f"restarted CarMaker for projectdir {expected_project_root.as_posix()} after validation failure: "
                 f"{mismatch_detail}; cleared conflicting processes: {summary}"
             )
@@ -428,33 +1045,46 @@ async def start_or_reuse_carmaker(
             f"{expected_project_root.as_posix()}."
         )
 
-    if len(existing_carmakers) > 1:
+    if len(runtime_carmakers) > 1:
         if clean_existing_processes:
             killed = kill_existing_cm_processes()
-            summary = ", ".join(f"{proc['Name']}[{proc['ProcessId']}]" for proc in killed)
+            summary = summarize_processes(killed)
             carmaker = await start_carmaker(cm_install, host, expected_project_root)
-            return carmaker, int(carmaker.get_pid()), True, f"cleared conflicting processes: {summary}"
+            return carmaker, resolve_attached_carmaker_pid(carmaker, expected_project_root), True, f"cleared conflicting processes: {summary}"
         raise RuntimeError(
             "Multiple CarMaker instances are running. Re-run with cleanup enabled to reset the stack."
         )
 
+    if len(existing_carmakers) == 1 and existing_carmakers[0].get("Name") == "HIL.exe":
+        try:
+            pid = wait_for_runtime_carmaker_pid(expected_project_root, timeout_sec=20.0)
+            return attach_to_existing_carmaker(pid, host, expected_project_root), pid, False, (
+                f"reused runtime PID {pid} that came up behind existing HIL for projectdir {expected_project_root.as_posix()}"
+            )
+        except RuntimeError:
+            pass
+
     carmaker = await start_carmaker(cm_install, host, expected_project_root)
-    return carmaker, int(carmaker.get_pid()), True, "started new CarMaker instance"
+    return carmaker, resolve_attached_carmaker_pid(carmaker, expected_project_root), True, "started new CarMaker instance"
 
 
-async def start_movie(cm_install: Path, host: str, carmaker: cmapi.CarMaker) -> cmapi.IPGMovie:
-    movie = cmapi.IPGMovie()
-    movie.set_host(host)
-    movie.set_executable_path(require_file(cm_install / "GUI" / "Movie.exe", "IPG-MOVIE executable"))
-    movie.attach_to_cm(carmaker)
-    await movie.start()
-    return movie
+async def start_movie(
+    cm_install: Path,
+    movie_apphost: str,
+    project_root: Path,
+    carmaker_pid: int,
+) -> int:
+    existing_pids = {int(proc["ProcessId"]) for proc in list_gui_movie_processes()}
+    command = build_gui_movie_command(cm_install, movie_apphost, project_root, carmaker_pid)
+    subprocess.Popen(command, cwd=str((cm_install / "GUI").resolve()))
+    return wait_for_gui_movie_pid(existing_pids)
 
 
 async def start_or_reuse_movie(
     cm_install: Path,
-    host: str,
-    carmaker: cmapi.CarMaker,
+    movie_apphost: str,
+    project_root: Path,
+    carmaker_pid: int,
     clean_existing_processes: bool,
 ) -> tuple[Optional[cmapi.IPGMovie], Optional[int], bool, str]:
     existing_gui_movies = list_gui_movie_processes()
@@ -467,37 +1097,54 @@ async def start_or_reuse_movie(
         if clean_existing_processes:
             killed = kill_gui_movie_processes()
             summary = ", ".join(f"Movie.exe[{proc['ProcessId']}]" for proc in killed)
-            movie = await start_movie(cm_install, host, carmaker)
-            return movie, int(movie.get_pid()), True, f"cleared conflicting GUI IPG-MOVIE processes: {summary}"
+            movie_pid = await start_movie(cm_install, movie_apphost, project_root, carmaker_pid)
+            return None, movie_pid, True, f"cleared conflicting GUI IPG-MOVIE processes: {summary}"
         raise RuntimeError(
             "Multiple GUI IPG-MOVIE instances are running. Re-run with cleanup enabled to reset them."
         )
 
-    movie = await start_movie(cm_install, host, carmaker)
-    return movie, int(movie.get_pid()), True, "started new GUI IPG-MOVIE instance"
+    movie_pid = await start_movie(cm_install, movie_apphost, project_root, carmaker_pid)
+    return None, movie_pid, True, "started new GUI IPG-MOVIE instance"
 
 
 async def connect_simcontrol(
-    carmaker_pid: int,
-    host: str,
+    carmaker: cmapi.CarMaker,
+    gpu_sensor_host: str,
     variation: cmapi.Variation,
     retries: int,
     delay_sec: float,
 ) -> cmapi.SimControlInteractive:
     last_error: Optional[Exception] = None
     for attempt in range(1, retries + 1):
+        simcontrol: Optional[cmapi.SimControlInteractive] = None
+        gpu_sensor: Optional[cmapi.GPUSensor] = None
         try:
-            sinfo = cmapi.ApoServerInfo(pid=carmaker_pid, description="Idle")
-            master = cmapi.ApoServer()
-            master.set_sinfo(sinfo)
-            master.set_host(host)
-
-            simcontrol = await cmapi.SimControlInteractive.create_with_master(master)
+            simcontrol = cmapi.SimControlInteractive()
+            await simcontrol.set_master(carmaker)
             simcontrol.set_variation(variation)
+            gpu_sensor = cmapi.GPUSensor()
+            gpu_sensor.set_host(gpu_sensor_host)
+            gpu_sensor.set_instance_id(0)
+            gpu_sensor.set_cm_instance_id(0)
+            await simcontrol.set_gpusensors([gpu_sensor])
             await simcontrol.connect()
+            gpu_sensor_start_task = asyncio.create_task(_start_gpusensor_background(gpu_sensor))
+            setattr(simcontrol, "_gpu_sensor_start_task", gpu_sensor_start_task)
+            setattr(simcontrol, "_gpu_sensor", gpu_sensor)
+            await wait_for_gpusensor_ready(gpu_sensor, timeout_sec=15.0)
             return simcontrol
         except Exception as exc:
             last_error = exc
+            if simcontrol is not None:
+                try:
+                    await simcontrol.disconnect()
+                except Exception:
+                    pass
+            if gpu_sensor is not None:
+                try:
+                    await gpu_sensor.stop()
+                except Exception:
+                    pass
             if attempt >= retries:
                 break
             await asyncio.sleep(delay_sec)
@@ -505,6 +1152,37 @@ async def connect_simcontrol(
     raise RuntimeError(
         f"Failed to connect SimControlInteractive after {retries} attempts"
     ) from last_error
+
+
+async def _start_gpusensor_background(gpu_sensor: cmapi.GPUSensor) -> None:
+    try:
+        await gpu_sensor.start()
+    except RuntimeError as exc:
+        if str(exc) == "Lock is not acquired." and gpu_sensor.get_pid() is not None:
+            return
+        raise
+
+
+async def wait_for_gpusensor_ready(gpu_sensor: cmapi.GPUSensor, timeout_sec: float) -> None:
+    deadline = time.monotonic() + timeout_sec
+    while time.monotonic() < deadline:
+        if gpu_sensor.get_pid() is not None:
+            return
+        await asyncio.sleep(0.25)
+    raise RuntimeError(f"Timed out waiting for GPUSensor startup after {timeout_sec:.1f} s")
+
+
+async def wait_for_simstate(
+    simcontrol: cmapi.SimControlInteractive,
+    sim_state: cmapi.ConditionSimState,
+    timeout_sec: float,
+    label: str,
+) -> None:
+    condition = simcontrol.create_simstate_condition(sim_state)
+    try:
+        await asyncio.wait_for(condition.wait(), timeout=timeout_sec)
+    except asyncio.TimeoutError as exc:
+        raise RuntimeError(f"Timed out waiting for simulation state {label} after {timeout_sec:.1f} s") from exc
 
 
 async def cleanup(
@@ -522,11 +1200,18 @@ async def cleanup(
         except Exception:
             pass
 
-    if movie is not None and movie_owned and not keep_movie_open:
-        try:
-            await movie.stop()
-        except Exception:
-            pass
+    if carmaker_owned and not keep_carmaker_open:
+        kill_existing_cm_processes()
+        return
+
+    if movie_owned and not keep_movie_open:
+        if movie is not None:
+            try:
+                await movie.stop()
+            except Exception:
+                pass
+        else:
+            kill_gui_movie_processes()
 
     if carmaker is not None and carmaker_owned and not keep_carmaker_open:
         try:
@@ -573,32 +1258,133 @@ async def main() -> None:
             print("Vehicle file already matched the requested single-sensor state")
 
     try:
-        carmaker, carmaker_pid, carmaker_owned, carmaker_action = await start_or_reuse_carmaker(
-            cm_install,
-            args.host,
-            project_root,
-            args.clean_existing_processes,
-        )
+        if args.open_movie:
+            carmaker, carmaker_pid, carmaker_owned, carmaker_action = await start_or_reuse_carmaker_for_open_movie(
+                cm_install,
+                args.host,
+                project_root,
+                args.clean_existing_processes,
+            )
+        else:
+            carmaker, carmaker_pid, carmaker_owned, carmaker_action = await start_or_reuse_carmaker(
+                cm_install,
+                args.host,
+                project_root,
+                args.clean_existing_processes,
+            )
         print(f"CarMaker action: {carmaker_action}")
-        print(f"CarMaker PID: {carmaker_pid}")
+        if carmaker_pid is not None:
+            print(f"CarMaker PID: {carmaker_pid}")
+
+        selected_testrun_name = sync_gui_testrun_selection(project_root, testrun_rel_path)
+        print(f"CarMaker GUI TestRun selected: {selected_testrun_name}")
 
         await asyncio.sleep(args.startup_settle_sec)
 
         if args.open_movie:
+            print("Bootstrap run: starting TestRun before IPG-MOVIE")
+            bootstrapped_testrun_name = bootstrap_testrun_for_movie_via_tcl(
+                testrun_rel_path,
+                args.bootstrap_running_timeout_sec,
+                args.bootstrap_idle_timeout_sec,
+            )
+            if carmaker_pid is None:
+                carmaker_pid = wait_for_runtime_carmaker_pid(project_root, timeout_sec=20.0, poll_interval_sec=0.25)
+                carmaker = attach_to_existing_carmaker(carmaker_pid, args.host, project_root)
+            print(
+                "Bootstrap run: CarMaker Tcl reached running state and returned to idle "
+                f"for TestRun {bootstrapped_testrun_name}"
+            )
+
             movie, movie_pid, movie_owned, movie_action = await start_or_reuse_movie(
                 cm_install,
-                args.host,
-                carmaker,
+                args.movie_apphost,
+                project_root,
+                carmaker_pid,
                 args.clean_existing_processes,
             )
             print(f"IPG-MOVIE action: {movie_action}")
             if movie_pid is not None:
                 print(f"IPG-MOVIE PID: {movie_pid}")
-            await asyncio.sleep(args.movie_settle_sec)
+            movie_scene = wait_for_movie_scene_ready(
+                cm_install=cm_install,
+                movie_apphost=args.movie_apphost,
+                project_root=project_root,
+                carmaker_pid=carmaker_pid,
+                timeout_sec=args.movie_settle_sec,
+                poll_interval_sec=args.movie_ready_poll_sec,
+            )
+            print(
+                "IPG-MOVIE scene ready: "
+                f"mode={movie_scene.get('mode', 'unknown')} "
+                f"recovery={movie_scene.get('recovery', 'none')} "
+                f"camera_name={movie_scene.get('camera_name', '<unknown>')} "
+                f"size={movie_scene.get('width', '?')}x{movie_scene.get('height', '?')} "
+                f"camera_widget={movie_scene.get('camera_widget', '?')}"
+            )
+            if args.health_check_after_start:
+                health_summary = run_movie_send_health_check(
+                    attempts=args.health_check_attempts,
+                    timeout_sec=args.health_check_timeout_sec,
+                    settle_sec=args.health_check_settle_sec,
+                )
+                classification = classify_gui_movie_send_health(health_summary)
+                print(
+                    "IPG-MOVIE health check: "
+                    f"all_ok={classification.get('all_ok')} "
+                    f"code={classification.get('code', 'unknown')}"
+                )
+                if not classification.get("all_ok"):
+                    recoverable_codes = {
+                        "movie_send_target_registered_but_unresponsive",
+                        "movie_view_probe_failed",
+                        "movie_interpreter_missing",
+                    }
+                    if classification.get("code") in recoverable_codes:
+                        print("IPG-MOVIE health recovery: restarting full Movie stack and re-running bootstrap")
+                        movie, movie_pid, movie_owned, recovery_action, movie_scene, health_summary = await recover_movie_send_surface_after_health_failure(
+                            cm_install=cm_install,
+                            movie_apphost=args.movie_apphost,
+                            project_root=project_root,
+                            testrun_rel_path=testrun_rel_path,
+                            carmaker_pid=carmaker_pid,
+                            clean_existing_processes=args.clean_existing_processes,
+                            running_timeout_sec=args.bootstrap_running_timeout_sec,
+                            idle_timeout_sec=args.bootstrap_idle_timeout_sec,
+                            scene_timeout_sec=args.movie_settle_sec,
+                            scene_poll_interval_sec=args.movie_ready_poll_sec,
+                            health_attempts=args.health_check_attempts,
+                            health_timeout_sec=args.health_check_timeout_sec,
+                            health_settle_sec=args.health_check_settle_sec,
+                        )
+                        classification = classify_gui_movie_send_health(health_summary)
+                        print(f"IPG-MOVIE recovery action: {recovery_action}")
+                        if movie_pid is not None:
+                            print(f"IPG-MOVIE recovery PID: {movie_pid}")
+                        print(
+                            "IPG-MOVIE recovery scene: "
+                            f"mode={movie_scene.get('mode', 'unknown')} "
+                            f"recovery={movie_scene.get('recovery', 'none')} "
+                            f"camera_name={movie_scene.get('camera_name', '<unknown>')} "
+                            f"size={movie_scene.get('width', '?')}x{movie_scene.get('height', '?')}"
+                        )
+                        print(
+                            "IPG-MOVIE recovery health check: "
+                            f"all_ok={classification.get('all_ok')} "
+                            f"code={classification.get('code', 'unknown')}"
+                        )
+                    if not classification.get("all_ok"):
+                        raise RuntimeError(
+                            "Post-start Movie send health check failed: "
+                            f"{classification.get('code', 'unknown')} | {classification.get('message', '')}"
+                        )
+            if args.stop_after is not None:
+                print("Post-Movie stop_after request ignored because open_movie uses the manual bootstrap-only flow")
+            return
 
         simcontrol = await connect_simcontrol(
-            carmaker_pid,
-            args.host,
+            carmaker,
+            args.movie_apphost,
             variation,
             args.apo_connect_retries,
             args.apo_connect_delay_sec,

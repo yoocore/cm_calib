@@ -8,6 +8,7 @@ import msvcrt
 import os
 import random
 import re
+import subprocess
 import sys
 import time
 import warnings
@@ -1993,6 +1994,453 @@ def _write_initial_values_to_config_if_best(
     return True
 
 
+def _resolve_round_strategy_autotune_policy(cfg: dict) -> dict:
+    payload = cfg.get("round_strategy_autotune")
+    if payload is False:
+        return {
+            "enabled": False,
+            "activation_stagnation_rounds": 2,
+            "plateau_score_delta": 0.75,
+            "top_k_boards": 4,
+            "min_board_score": 8.0,
+            "min_family_board_count": 2,
+            "min_family_share": 0.75,
+            "priority_max_total_worsen_step": 0.5,
+            "priority_max_total_worsen_cap": 4.5,
+            "priority_min_total_improvement_floor": 0.6,
+            "priority_tradeoff_ratio_floor": 0.6,
+            "joint_max_single_worsen_cap": 4.5,
+            "force_focus_activation_rounds": 1,
+            "restrict_to_priority_boards": True,
+        }
+
+    if not isinstance(payload, dict):
+        payload = {}
+
+    return {
+        "enabled": bool(payload.get("enabled", True)),
+        "activation_stagnation_rounds": max(
+            1, int(payload.get("activation_stagnation_rounds", 2))
+        ),
+        "plateau_score_delta": max(0.0, float(payload.get("plateau_score_delta", 0.75))),
+        "top_k_boards": max(2, int(payload.get("top_k_boards", 4))),
+        "min_board_score": max(0.0, float(payload.get("min_board_score", 8.0))),
+        "min_family_board_count": max(2, int(payload.get("min_family_board_count", 2))),
+        "min_family_share": min(1.0, max(0.0, float(payload.get("min_family_share", 0.75)))),
+        "priority_max_total_worsen_step": max(
+            0.0, float(payload.get("priority_max_total_worsen_step", 0.5))
+        ),
+        "priority_max_total_worsen_cap": max(
+            0.0, float(payload.get("priority_max_total_worsen_cap", 4.5))
+        ),
+        "priority_min_total_improvement_floor": max(
+            0.0, float(payload.get("priority_min_total_improvement_floor", 0.6))
+        ),
+        "priority_tradeoff_ratio_floor": max(
+            0.0, float(payload.get("priority_tradeoff_ratio_floor", 0.6))
+        ),
+        "joint_max_single_worsen_cap": max(
+            0.0, float(payload.get("joint_max_single_worsen_cap", 4.5))
+        ),
+        "force_focus_activation_rounds": max(
+            1, int(payload.get("force_focus_activation_rounds", 1))
+        ),
+        "restrict_to_priority_boards": bool(payload.get("restrict_to_priority_boards", True)),
+    }
+
+
+def _round_entry_best_score(round_entry: dict) -> Optional[float]:
+    try:
+        if "best_score" in round_entry:
+            return float(round_entry.get("best_score"))
+        best_run = round_entry.get("best_run")
+        if isinstance(best_run, dict) and "best_score" in best_run:
+            return float(best_run.get("best_score"))
+    except Exception:
+        return None
+    return None
+
+
+def _round_entry_result_json(round_entry: dict) -> Optional[str]:
+    if not isinstance(round_entry, dict):
+        return None
+    raw_result_json = round_entry.get("result_json")
+    if isinstance(raw_result_json, str) and raw_result_json.strip():
+        return raw_result_json
+    best_run = round_entry.get("best_run")
+    if isinstance(best_run, dict):
+        raw_result_json = best_run.get("result_json")
+        if isinstance(raw_result_json, str) and raw_result_json.strip():
+            return raw_result_json
+    return None
+
+
+def _round_entry_current_param_order(round_entry: dict) -> List[str]:
+    if not isinstance(round_entry, dict):
+        return []
+    raw_order = round_entry.get("current_param_order")
+    if not isinstance(raw_order, list):
+        return []
+    return [str(name).strip() for name in raw_order if str(name).strip()]
+
+
+def _current_round_plateau_stagnation_count(
+    round_summaries: List[dict],
+    score_delta: float,
+) -> int:
+    best_score: Optional[float] = None
+    stagnation_count = 0
+    tolerance = max(0.0, float(score_delta))
+    for round_entry in round_summaries:
+        score = _round_entry_best_score(round_entry)
+        if score is None:
+            continue
+        if best_score is None or score < best_score - tolerance:
+            best_score = score
+            stagnation_count = 0
+            continue
+        stagnation_count += 1
+    return stagnation_count
+
+
+def _dominant_bottleneck_family_from_result_payload(
+    result_payload: dict,
+    cfg: dict,
+    policy: dict,
+) -> Optional[dict]:
+    acceptance = result_payload.get("acceptance") or {}
+    if bool(acceptance.get("passed", False)):
+        return None
+
+    acceptance_reason = str(acceptance.get("reason", "")).strip().lower()
+    if "bottleneck" not in acceptance_reason:
+        try:
+            max_board_score = float(acceptance.get("max_board_score", 0.0))
+            max_board_threshold = float(
+                acceptance.get("bottleneck_board_score_max_threshold", 0.0)
+            )
+        except Exception:
+            max_board_score = 0.0
+            max_board_threshold = 0.0
+        if max_board_threshold <= 0.0 or max_board_score <= max_board_threshold:
+            return None
+
+    best_metrics = result_payload.get("best_metrics") or {}
+    raw_board_scores = best_metrics.get("board_scores") or []
+    if not isinstance(raw_board_scores, list):
+        return None
+
+    priority_accept_cfg = cfg.get("priority_board_acceptance") or {}
+    priority_board_ids = {
+        str(board_id).strip()
+        for board_id in priority_accept_cfg.get("board_ids", [])
+        if str(board_id).strip()
+    }
+    isolated_outlier_boards = {
+        str(board_id).strip()
+        for board_id in (best_metrics.get("isolated_outlier_boards") or [])
+        if str(board_id).strip()
+    }
+
+    candidates: List[dict] = []
+    for raw_board_score in raw_board_scores:
+        if not isinstance(raw_board_score, dict):
+            continue
+        if not bool(raw_board_score.get("compared", False)):
+            continue
+        board_id = str(raw_board_score.get("board_id", "")).strip()
+        if not board_id or board_id in isolated_outlier_boards:
+            continue
+        if (
+            bool(policy.get("restrict_to_priority_boards", True))
+            and priority_board_ids
+            and board_id not in priority_board_ids
+        ):
+            continue
+        family = _board_focus_family(board_id)
+        if not family:
+            continue
+        try:
+            score_value = float(raw_board_score.get("total_score", raw_board_score.get("score", 0.0)))
+        except Exception:
+            continue
+        if score_value < float(policy.get("min_board_score", 8.0)):
+            continue
+        candidates.append(
+            {
+                "board_id": board_id,
+                "family": family,
+                "score": score_value,
+            }
+        )
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda item: float(item["score"]), reverse=True)
+    selected = candidates[: max(1, int(policy.get("top_k_boards", 4)))]
+    family_groups: Dict[str, List[dict]] = {}
+    for item in selected:
+        family_groups.setdefault(str(item["family"]), []).append(item)
+    if not family_groups:
+        return None
+
+    dominant_family, dominant_items = max(
+        family_groups.items(),
+        key=lambda entry: (
+            len(entry[1]),
+            sum(float(item["score"]) for item in entry[1]),
+        ),
+    )
+    if len(dominant_items) < int(policy.get("min_family_board_count", 2)):
+        return None
+    family_share = len(dominant_items) / max(1, len(selected))
+    if family_share < float(policy.get("min_family_share", 0.75)):
+        return None
+
+    dominant_scores = [float(item["score"]) for item in dominant_items]
+    return {
+        "family": dominant_family,
+        "board_ids": [str(item["board_id"]) for item in dominant_items],
+        "board_count": len(dominant_items),
+        "family_share": family_share,
+        "max_score": max(dominant_scores),
+        "avg_score": sum(dominant_scores) / len(dominant_scores),
+    }
+
+
+def _build_round_strategy_autotune_patch(
+    cfg: dict,
+    policy: dict,
+    dominant_family: dict,
+    current_param_order: List[str],
+) -> dict:
+    patch: Dict[str, object] = {}
+    family_board_count = max(1, int(dominant_family.get("board_count", 1)))
+    escalation_steps = max(1, family_board_count - 1)
+
+    priority_cfg = cfg.get("priority_board_acceptance")
+    if isinstance(priority_cfg, dict) and priority_cfg:
+        priority_patch: Dict[str, float] = {}
+        current_max_total_worsen = float(priority_cfg.get("max_total_score_worsen", 0.0))
+        desired_max_total_worsen = min(
+            float(policy.get("priority_max_total_worsen_cap", current_max_total_worsen)),
+            current_max_total_worsen
+            + float(policy.get("priority_max_total_worsen_step", 0.0)) * escalation_steps,
+        )
+        if desired_max_total_worsen > current_max_total_worsen:
+            priority_patch["max_total_score_worsen"] = desired_max_total_worsen
+
+        current_min_total_improvement = float(
+            priority_cfg.get("min_total_board_score_improvement", 0.0)
+        )
+        if current_min_total_improvement > 0.0:
+            desired_min_total_improvement = max(
+                float(policy.get("priority_min_total_improvement_floor", 0.0)),
+                current_min_total_improvement * 0.75,
+            )
+            if desired_min_total_improvement < current_min_total_improvement:
+                priority_patch["min_total_board_score_improvement"] = desired_min_total_improvement
+
+        current_tradeoff_ratio = float(priority_cfg.get("total_worsen_tradeoff_ratio", 0.0))
+        if current_tradeoff_ratio > 0.0:
+            desired_tradeoff_ratio = max(
+                float(policy.get("priority_tradeoff_ratio_floor", 0.0)),
+                current_tradeoff_ratio * 0.8,
+            )
+            if desired_tradeoff_ratio < current_tradeoff_ratio:
+                priority_patch["total_worsen_tradeoff_ratio"] = desired_tradeoff_ratio
+
+        if priority_patch:
+            patch["priority_board_acceptance"] = priority_patch
+
+    focus_cfg = cfg.get("auto_objective_board_focus")
+    if isinstance(focus_cfg, dict):
+        focus_patch: Dict[str, object] = {}
+        current_activation_rounds = max(
+            1, int(focus_cfg.get("activation_min_stagnation_rounds", 2))
+        )
+        desired_activation_rounds = min(
+            current_activation_rounds,
+            int(policy.get("force_focus_activation_rounds", 1)),
+        )
+        if desired_activation_rounds < current_activation_rounds:
+            focus_patch["activation_min_stagnation_rounds"] = desired_activation_rounds
+
+        current_top_k = max(1, int(focus_cfg.get("top_k", 1)))
+        desired_top_k = max(current_top_k, family_board_count)
+        if desired_top_k > current_top_k:
+            focus_patch["top_k"] = desired_top_k
+
+        if bool(policy.get("restrict_to_priority_boards", True)) and not bool(
+            focus_cfg.get("restrict_to_priority_boards", False)
+        ):
+            focus_patch["restrict_to_priority_boards"] = True
+
+        if focus_patch:
+            patch["auto_objective_board_focus"] = focus_patch
+
+    joint_cfg = cfg.get("joint_exploration")
+    if isinstance(joint_cfg, dict):
+        joint_patch: Dict[str, float] = {}
+        current_joint_max_single_worsen = float(joint_cfg.get("max_single_score_worsen", 0.0))
+        priority_patch = patch.get("priority_board_acceptance")
+        target_joint_limit = current_joint_max_single_worsen
+        if isinstance(priority_patch, dict) and "max_total_score_worsen" in priority_patch:
+            target_joint_limit = max(
+                target_joint_limit,
+                float(priority_patch["max_total_score_worsen"]),
+            )
+        target_joint_limit = min(
+            float(policy.get("joint_max_single_worsen_cap", target_joint_limit)),
+            target_joint_limit,
+        )
+        if target_joint_limit > current_joint_max_single_worsen:
+            joint_patch["max_single_score_worsen"] = target_joint_limit
+        if joint_patch:
+            patch["joint_exploration"] = joint_patch
+
+    escape_cfg = cfg.get("escape_exploration")
+    if isinstance(escape_cfg, dict):
+        escape_patch: Dict[str, int] = {}
+        current_board_focus_top_k = max(1, int(escape_cfg.get("board_focus_top_k", 1)))
+        desired_board_focus_top_k = max(current_board_focus_top_k, family_board_count)
+        if desired_board_focus_top_k > current_board_focus_top_k:
+            escape_patch["board_focus_top_k"] = desired_board_focus_top_k
+        if escape_patch:
+            patch["escape_exploration"] = escape_patch
+
+    if current_param_order:
+        existing_order = [
+            str(name).strip() for name in cfg.get("optimization_order", []) if str(name).strip()
+        ]
+        if current_param_order != existing_order:
+            patch["optimization_order"] = list(current_param_order)
+
+    return patch
+
+
+def _cfg_value_changed(current_value: object, desired_value: object) -> bool:
+    if isinstance(current_value, (int, float)) and isinstance(desired_value, (int, float)):
+        return not math.isclose(
+            float(current_value),
+            float(desired_value),
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        )
+    return current_value != desired_value
+
+
+def _apply_round_strategy_autotune_patch(cfg: dict, patch: dict) -> List[str]:
+    changed_paths: List[str] = []
+
+    optimization_order = patch.get("optimization_order")
+    if isinstance(optimization_order, list):
+        next_order = [str(name).strip() for name in optimization_order if str(name).strip()]
+        if next_order and cfg.get("optimization_order") != next_order:
+            cfg["optimization_order"] = next_order
+            changed_paths.append("optimization_order")
+
+    for section_name in (
+        "priority_board_acceptance",
+        "auto_objective_board_focus",
+        "joint_exploration",
+        "escape_exploration",
+    ):
+        section_patch = patch.get(section_name)
+        if not isinstance(section_patch, dict) or not section_patch:
+            continue
+        section_cfg = cfg.get(section_name)
+        if not isinstance(section_cfg, dict):
+            section_cfg = {}
+            cfg[section_name] = section_cfg
+        for key, value in section_patch.items():
+            if _cfg_value_changed(section_cfg.get(key), value):
+                section_cfg[key] = value
+                changed_paths.append(f"{section_name}.{key}")
+
+    return changed_paths
+
+
+def _maybe_autotune_round_strategy(
+    config_path: Path,
+    cfg: dict,
+    round_summaries: List[dict],
+    best_round: Optional[dict],
+    *,
+    current_round_index: int,
+) -> Optional[dict]:
+    if best_round is None:
+        return None
+
+    policy = _resolve_round_strategy_autotune_policy(cfg)
+    if not bool(policy.get("enabled", True)):
+        return None
+
+    stagnation_rounds = _current_round_plateau_stagnation_count(
+        round_summaries,
+        float(policy.get("plateau_score_delta", 0.75)),
+    )
+    if stagnation_rounds < int(policy.get("activation_stagnation_rounds", 2)):
+        return None
+
+    result_json = _round_entry_result_json(best_round)
+    if not result_json:
+        return None
+
+    result_payload = _load_json_if_exists(Path(result_json))
+    if not isinstance(result_payload, dict):
+        return None
+
+    dominant_family = _dominant_bottleneck_family_from_result_payload(
+        result_payload,
+        cfg,
+        policy,
+    )
+    if dominant_family is None:
+        return None
+
+    current_param_order = _round_entry_current_param_order(best_round)
+    patch = _build_round_strategy_autotune_patch(
+        cfg,
+        policy,
+        dominant_family,
+        current_param_order,
+    )
+    if not patch:
+        return None
+
+    memory_changed_paths = _apply_round_strategy_autotune_patch(cfg, patch)
+    if not memory_changed_paths:
+        return None
+
+    with open(config_path, "r", encoding="utf-8-sig") as f:
+        persisted_cfg = json.load(f)
+
+    config_changed_paths = _apply_round_strategy_autotune_patch(persisted_cfg, patch)
+    if config_changed_paths:
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(persisted_cfg, f, ensure_ascii=False, indent=4)
+
+    print(
+        "Auto-tuned round strategy: "
+        f"path={config_path}, round={current_round_index}, family={dominant_family['family']}, "
+        f"boards={','.join(dominant_family['board_ids'])}, "
+        f"stagnation_rounds={stagnation_rounds}, "
+        f"changes={', '.join(config_changed_paths or memory_changed_paths)}"
+    )
+    return {
+        "round_index": int(current_round_index),
+        "family": dominant_family["family"],
+        "board_ids": list(dominant_family["board_ids"]),
+        "stagnation_rounds": int(stagnation_rounds),
+        "source_result_json": result_json,
+        "changed_paths": list(config_changed_paths or memory_changed_paths),
+        "config_updated": bool(config_changed_paths),
+        "patch": patch,
+    }
+
+
 def _apply_initial_values_to_cfg(cfg: dict, values: Dict[str, float]) -> List[str]:
     parameters = cfg.get("parameters", {})
     updated_names: List[str] = []
@@ -3099,6 +3547,7 @@ def _run_plain_optimize_rounds(
     best_round: Optional[dict] = None
     escape_stagnation_rounds = 0
     escape_tolerance = float(round_seed_policy.get("score_tolerance", 1e-6))
+    strategy_autotune_events: List[dict] = []
 
     for round_index in range(round_count):
         round_no = round_index + 1
@@ -3159,6 +3608,16 @@ def _run_plain_optimize_rounds(
         anchor_values = dict(next_seed_values)
         anchor_score = next_anchor_score
         anchor_source = next_seed_source
+        autotune_event = _maybe_autotune_round_strategy(
+            config_path,
+            active_cfg,
+            round_summaries,
+            best_round,
+            current_round_index=round_no,
+        )
+        if autotune_event is not None:
+            round_entry["strategy_autotune"] = autotune_event
+            strategy_autotune_events.append(autotune_event)
         if float(result["best_score"]) <= target_score:
             print(
                 f"Plain optimize rounds: stop early at round {round_no} because target_score was reached"
@@ -3173,6 +3632,7 @@ def _run_plain_optimize_rounds(
         "round_count_completed": len(round_summaries),
         "rounds_output_dir": str(rounds_root),
         "best_round": best_round,
+        "strategy_autotune_events": strategy_autotune_events,
         "rounds": round_summaries,
     }
     payload["summary_json"] = str(_write_rounds_summary(rounds_root, payload))
@@ -3209,6 +3669,7 @@ def _run_multi_start_rounds(
     best_round: Optional[dict] = None
     escape_stagnation_rounds = 0
     escape_tolerance = float(round_seed_policy.get("score_tolerance", 1e-6))
+    strategy_autotune_events: List[dict] = []
 
     for round_index in range(round_count):
         round_no = round_index + 1
@@ -3275,6 +3736,16 @@ def _run_multi_start_rounds(
         anchor_values = dict(next_seed_values)
         anchor_score = next_anchor_score
         anchor_source = next_seed_source
+        autotune_event = _maybe_autotune_round_strategy(
+            config_path,
+            active_cfg,
+            round_summaries,
+            best_round,
+            current_round_index=round_no,
+        )
+        if autotune_event is not None:
+            round_entry["strategy_autotune"] = autotune_event
+            strategy_autotune_events.append(autotune_event)
         if float(best_run["best_score"]) <= target_score:
             print(
                 f"Multi-start rounds: stop early at round {round_no} because target_score was reached"
@@ -3289,6 +3760,7 @@ def _run_multi_start_rounds(
         "round_count_completed": len(round_summaries),
         "rounds_output_dir": str(rounds_root),
         "best_round": best_round,
+        "strategy_autotune_events": strategy_autotune_events,
         "rounds": round_summaries,
     }
     payload["summary_json"] = str(_write_rounds_summary(rounds_root, payload))
@@ -3326,6 +3798,7 @@ def _run_explore_then_refine_rounds(
     best_round: Optional[dict] = None
     escape_stagnation_rounds = 0
     escape_tolerance = float(round_seed_policy.get("score_tolerance", 1e-6))
+    strategy_autotune_events: List[dict] = []
 
     for round_index in range(round_count):
         round_no = round_index + 1
@@ -3393,6 +3866,16 @@ def _run_explore_then_refine_rounds(
         anchor_values = dict(next_seed_values)
         anchor_score = next_anchor_score
         anchor_source = next_seed_source
+        autotune_event = _maybe_autotune_round_strategy(
+            config_path,
+            active_cfg,
+            round_summaries,
+            best_round,
+            current_round_index=round_no,
+        )
+        if autotune_event is not None:
+            round_entry["strategy_autotune"] = autotune_event
+            strategy_autotune_events.append(autotune_event)
         if float(best_run["best_score"]) <= target_score:
             print(
                 f"Explore-then-refine rounds: stop early at round {round_no} because target_score was reached"
@@ -3407,6 +3890,7 @@ def _run_explore_then_refine_rounds(
         "round_count_completed": len(round_summaries),
         "rounds_output_dir": str(rounds_root),
         "best_round": best_round,
+        "strategy_autotune_events": strategy_autotune_events,
         "rounds": round_summaries,
     }
     payload["summary_json"] = str(_write_rounds_summary(rounds_root, payload))
@@ -3554,6 +4038,10 @@ class CameraCalibrator:
         self.cfg = cfg
         self.config_path = config_path
         self.repo_root = Path(__file__).resolve().parents[3]
+        self.cmapi_host = str(cfg.get("cmapi_host", "localhost"))
+        default_cm_install_root = Path(os.environ.get("IPGHOME", "D:/IPG")) / "carmaker" / "win64-14.1"
+        self.cm_install_root = Path(str(cfg.get("cm_install_root", default_cm_install_root)))
+        self.movie_apphost = str(cfg.get("movie_apphost", "kel")).strip() or "kel"
         self.score_scope = _resolve_score_scope_from_cfg(cfg)
         self.output_dir = _resolve_config_output_dir(cfg, config_path)
         cfg["output_dir"] = str(self.output_dir)
@@ -3612,6 +4100,7 @@ class CameraCalibrator:
         self.script_control_dde_topic = str(cfg.get("script_control_dde_topic", "CarMaker"))
         self.script_control_timeout_sec = float(cfg.get("script_control_timeout_sec", 5.0))
         self.script_control_settle_sec = float(cfg.get("script_control_settle_sec", 0.2))
+        self.movie_restart_settle_sec = float(cfg.get("movie_restart_settle_sec", 2.0))
         self.template_feature_max_dim = int(cfg.get("template_feature_max_dim", 2048))
         self.comparison_mode = str(cfg.get("comparison_mode", "direct")).lower()
         if self.comparison_mode not in {"direct", "overlay_residual"}:
@@ -4787,12 +5276,9 @@ class CameraCalibrator:
             raise RuntimeError(f"script_control mode does not support parameters: {joined}")
 
         result_path = self.script_control_result_path.as_posix()
+        channel_var = f"__copilot_sc_out_{uuid.uuid4().hex}"
         lines = [
-            f'set out [open "{result_path}" w]',
-            'proc emit {text} {',
-            '    global out',
-            '    puts $out $text',
-            '}',
+            f'set {channel_var} [open "{result_path}" w]',
             'set rc [catch {send IPG-MOVIE {',
             '    if {![winfo exists .camera]} {error "missing widget .camera"}',
         ]
@@ -4831,11 +5317,11 @@ class CameraCalibrator:
             [
                 '    join $result "\\n"',
                 '}} msg]',
-                'emit "rc=$rc"',
-                'emit "msg_begin"',
-                'emit $msg',
-                'emit "msg_end"',
-                'close $out',
+                f'puts ${channel_var} "rc=$rc"',
+                f'puts ${channel_var} "msg_begin"',
+                f"puts ${channel_var} $msg",
+                f'puts ${channel_var} "msg_end"',
+                f"close ${channel_var}",
             ]
         )
         return "\n".join(lines) + "\n"
@@ -4847,12 +5333,9 @@ class CameraCalibrator:
             raise RuntimeError(f"script_control mode does not support parameters: {joined}")
 
         result_path = self.script_control_result_path.as_posix()
+        channel_var = f"__copilot_sc_out_{uuid.uuid4().hex}"
         lines = [
-            f'set out [open "{result_path}" w]',
-            'proc emit {text} {',
-            '    global out',
-            '    puts $out $text',
-            '}',
+            f'set {channel_var} [open "{result_path}" w]',
             'set rc [catch {send IPG-MOVIE {',
             '    if {![winfo exists .camera]} {error "missing widget .camera"}',
             '    set result {}',
@@ -4871,11 +5354,11 @@ class CameraCalibrator:
             [
                 '    join $result "\\n"',
                 '}} msg]',
-                'emit "rc=$rc"',
-                'emit "msg_begin"',
-                'emit $msg',
-                'emit "msg_end"',
-                'close $out',
+                f'puts ${channel_var} "rc=$rc"',
+                f'puts ${channel_var} "msg_begin"',
+                f"puts ${channel_var} $msg",
+                f'puts ${channel_var} "msg_end"',
+                f"close ${channel_var}",
             ]
         )
         return "\n".join(lines) + "\n"
@@ -5075,7 +5558,115 @@ class CameraCalibrator:
                 )
                 if retry_sleep_sec is not None:
                     time.sleep(retry_sleep_sec)
-        return False
+        return self._restart_gui_movie_for_dde_recovery()
+
+    @staticmethod
+    def _extract_cli_arg_value(command_line: str, option_name: str) -> Optional[str]:
+        match = re.search(
+            rf"(?:^|\s){re.escape(option_name)}\s+(\"[^\"]*\"|\S+)",
+            command_line,
+            flags=re.IGNORECASE,
+        )
+        if match is None:
+            return None
+        return match.group(1).strip().strip('"')
+
+    @staticmethod
+    def _replace_cli_arg_value(command_line: str, option_name: str, new_value: str) -> str:
+        replacement = f"{option_name} {new_value}"
+        pattern = re.compile(
+            rf"((?:^|\s){re.escape(option_name)}\s+)(\"[^\"]*\"|\S+)",
+            flags=re.IGNORECASE,
+        )
+        if pattern.search(command_line):
+            return pattern.sub(lambda match: f"{match.group(1)}{new_value}", command_line, count=1)
+        return f"{command_line} {replacement}".strip()
+
+    def _build_gui_movie_relaunch_command(
+        self,
+        existing_gui_movies: List[dict],
+        carmaker_pid: int,
+    ) -> str:
+        for process in existing_gui_movies:
+            command_line = str(process.get("CommandLine") or "").strip()
+            if not command_line:
+                continue
+            if "-cmgui" not in command_line.lower():
+                continue
+            existing_apppid = self._extract_cli_arg_value(command_line, "-apppid")
+            if existing_apppid and existing_apppid.lower() != "none":
+                return self._replace_cli_arg_value(command_line, "-apppid", str(carmaker_pid))
+
+        movie_executable = (self.cm_install_root / "GUI" / "Movie.exe").resolve()
+        project_dir = self.repo_root.resolve().as_posix()
+        datapool_dir = self.cm_install_root.resolve().as_posix()
+        return (
+            f'"{movie_executable}" -CMInstance 0 '
+            f"-apphost {self.movie_apphost} "
+            f"-apppid {carmaker_pid} "
+            f"-projectdir {project_dir} "
+            f"-datapool {datapool_dir} "
+            "-cmgui CarMaker"
+        )
+
+    def _restart_gui_movie_for_dde_recovery(self) -> bool:
+        attempt_started = time.perf_counter()
+        try:
+            import cmapi_testrun_control as cmctrl
+
+            existing_carmakers = cmctrl.list_carmaker_processes()
+            runtime_carmakers = [
+                proc for proc in existing_carmakers if str(proc.get("Name") or "") == "CarMaker.win64.exe"
+            ]
+            if len(runtime_carmakers) == 1:
+                selected_process = runtime_carmakers[0]
+            elif len(existing_carmakers) == 1:
+                selected_process = existing_carmakers[0]
+            else:
+                summary = ", ".join(
+                    f"{proc.get('Name')}[{proc.get('ProcessId')}]" for proc in existing_carmakers
+                ) or "none"
+                raise RuntimeError(
+                    "expected a single attachable CarMaker runtime process for Movie restart recovery, "
+                    f"found: {summary}"
+                )
+
+            carmaker_pid = int(selected_process["ProcessId"])
+            existing_gui_movies = cmctrl.list_gui_movie_processes()
+            relaunch_command = self._build_gui_movie_relaunch_command(
+                existing_gui_movies,
+                carmaker_pid,
+            )
+            killed_gui_movies = cmctrl.kill_gui_movie_processes()
+            subprocess.Popen(
+                relaunch_command,
+                cwd=str(self.repo_root),
+            )
+            time.sleep(max(self.movie_restart_settle_sec, self.script_control_settle_sec, 0.5))
+            width, height = self._get_movie_dde_view_size(allow_cached_fallback=False)
+            killed_pids = ",".join(str(proc["ProcessId"]) for proc in killed_gui_movies) or "-"
+            self._log_dde_retry_event(
+                "movie_restart_recovery",
+                1,
+                1,
+                "success",
+                time.perf_counter() - attempt_started,
+                detail=(
+                    f"carmaker_pid={carmaker_pid} killed_gui_movie_pids={killed_pids} "
+                    f"relaunch={relaunch_command} size={width}x{height}"
+                ),
+            )
+            return True
+        except Exception as exc:
+            self._log_dde_retry_event(
+                "movie_restart_recovery",
+                1,
+                1,
+                "failed",
+                time.perf_counter() - attempt_started,
+                detail=exc,
+            )
+            return False
 
     def _recover_after_runtime_error(
         self,
@@ -5242,22 +5833,18 @@ class CameraCalibrator:
             result_path = self.output_dir / f"movie_size_probe_dde.{invocation_id}.txt"
             script_text = "\n".join(
                 [
-                    f'set out [open "{result_path.as_posix()}" w]',
-                    "proc emit {text} {",
-                    "    global out",
-                    "    puts $out $text",
-                    "}",
+                    f'set __copilot_probe_out_{invocation_id} [open "{result_path.as_posix()}" w]',
                     "set rc [catch {send IPG-MOVIE {",
                     "    set vno $View(ev.view)",
                     "    set wi [dict get $View($vno) Width]",
                     "    set he [dict get $View($vno) Height]",
                     "    list $wi $he",
                     "}} msg]",
-                    'emit "rc=$rc"',
-                    'emit "msg_begin"',
-                    "emit $msg",
-                    'emit "msg_end"',
-                    "close $out",
+                    f'puts $__copilot_probe_out_{invocation_id} "rc=$rc"',
+                    f'puts $__copilot_probe_out_{invocation_id} "msg_begin"',
+                    f"puts $__copilot_probe_out_{invocation_id} $msg",
+                    f'puts $__copilot_probe_out_{invocation_id} "msg_end"',
+                    f"close $__copilot_probe_out_{invocation_id}",
                     "",
                 ]
             )
@@ -5395,11 +5982,7 @@ class CameraCalibrator:
             result_path = self.output_dir / f"{tag}_movie_capture_dde.{invocation_id}.txt"
             script_text = "\n".join(
                 [
-                    f'set out [open "{result_path.as_posix()}" w]',
-                    "proc emit {text} {",
-                    "    global out",
-                    "    puts $out $text",
-                    "}",
+                    f'set __copilot_capture_out_{invocation_id} [open "{result_path.as_posix()}" w]',
                     "set rc [catch {send IPG-MOVIE {",
                     "    set vno $View(ev.view)",
                     "    set wi [dict get $View($vno) Width]",
@@ -5423,11 +6006,11 @@ class CameraCalibrator:
                     "    catch {gl bindframebuffer_read 0}",
                     "    catch {FBO delete $captureFBO}",
                     "}} msg]",
-                    'emit "rc=$rc"',
-                    'emit "msg_begin"',
-                    "emit $msg",
-                    'emit "msg_end"',
-                    "close $out",
+                    f'puts $__copilot_capture_out_{invocation_id} "rc=$rc"',
+                    f'puts $__copilot_capture_out_{invocation_id} "msg_begin"',
+                    f"puts $__copilot_capture_out_{invocation_id} $msg",
+                    f'puts $__copilot_capture_out_{invocation_id} "msg_end"',
+                    f"close $__copilot_capture_out_{invocation_id}",
                     "",
                 ]
             )

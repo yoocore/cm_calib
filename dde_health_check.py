@@ -79,23 +79,20 @@ def is_result_complete(text: str) -> bool:
 
 
 def render_result_script(result_path: Path, body_lines: List[str]) -> str:
+    channel_var = f"__copilot_out_{uuid.uuid4().hex}"
     lines = [
-        f'set out [open "{result_path.as_posix()}" w]',
-        "proc emit {text} {",
-        "    global out",
-        "    puts $out $text",
-        "}",
+        f'set {channel_var} [open "{result_path.as_posix()}" w]',
         "set rc [catch {",
     ]
     lines.extend(f"    {line}" for line in body_lines)
     lines.extend(
         [
             "} msg]",
-            'emit "rc=$rc"',
-            'emit "msg_begin"',
-            "emit $msg",
-            'emit "msg_end"',
-            "close $out",
+            f'puts ${channel_var} "rc=$rc"',
+            f'puts ${channel_var} "msg_begin"',
+            f"puts ${channel_var} $msg",
+            f'puts ${channel_var} "msg_end"',
+            f"close ${channel_var}",
             "",
         ]
     )
@@ -103,23 +100,20 @@ def render_result_script(result_path: Path, body_lines: List[str]) -> str:
 
 
 def render_send_script(result_path: Path, target_appname: str, body_lines: List[str]) -> str:
+    channel_var = f"__copilot_out_{uuid.uuid4().hex}"
     lines = [
-        f'set out [open "{result_path.as_posix()}" w]',
-        "proc emit {text} {",
-        "    global out",
-        "    puts $out $text",
-        "}",
+        f'set {channel_var} [open "{result_path.as_posix()}" w]',
         f"set rc [catch {{send {target_appname} {{",
     ]
     lines.extend(f"    {line}" for line in body_lines)
     lines.extend(
         [
             "}} msg]",
-            'emit "rc=$rc"',
-            'emit "msg_begin"',
-            "emit $msg",
-            'emit "msg_end"',
-            "close $out",
+            f'puts ${channel_var} "rc=$rc"',
+            f'puts ${channel_var} "msg_begin"',
+            f"puts ${channel_var} $msg",
+            f'puts ${channel_var} "msg_end"',
+            f"close ${channel_var}",
             "",
         ]
     )
@@ -167,18 +161,11 @@ def run_check_attempt(
         pass
 
     started = time.perf_counter()
+    runscript_error_detail: Optional[str] = None
     try:
         run_runscript(service, topic, script_path)
     except Exception as exc:
-        elapsed = time.perf_counter() - started
-        return {
-            "ok": False,
-            "kind": "runscript_error",
-            "elapsed_sec": elapsed,
-            "detail": str(exc),
-            "script_path": str(script_path),
-            "result_path": str(result_path),
-        }
+        runscript_error_detail = str(exc)
 
     deadline = time.time() + timeout_sec
     while time.time() < deadline:
@@ -204,12 +191,22 @@ def run_check_attempt(
                     "elapsed_sec": elapsed,
                     "detail": msg,
                     "rc": rc,
+                    "runscript_error_detail": runscript_error_detail,
                     "script_path": str(script_path),
                     "result_path": str(result_path),
                 }
         time.sleep(0.05)
 
     elapsed = time.perf_counter() - started
+    if runscript_error_detail is not None:
+        return {
+            "ok": False,
+            "kind": "runscript_error",
+            "elapsed_sec": elapsed,
+            "detail": runscript_error_detail,
+            "script_path": str(script_path),
+            "result_path": str(result_path),
+        }
     return {
         "ok": False,
         "kind": "timeout",
@@ -289,9 +286,8 @@ def build_checks(output_dir: Path) -> List[Tuple[str, str]]:
                 [
                     'set movie_cmds [info commands Movie]',
                     'set interps_before [WInfoInterps "*MOVIE*"]',
-                    'set start_rc [catch {Movie start} start_msg]',
                     'set interps_after [WInfoInterps "*MOVIE*"]',
-                    'list movie_cmds $movie_cmds interps_before $interps_before start_rc $start_rc start_msg $start_msg interps_after $interps_after',
+                    'list movie_cmds $movie_cmds interps_before $interps_before interps_after $interps_after',
                 ],
             ),
         ),
@@ -398,8 +394,8 @@ def classify_health_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "code": "movie_commands_alive_but_tk_send_surface_failed",
             "message": (
-                "CarMaker-side Movie commands still execute, but send to both IPG-MOVIE and GPUSensor_1_0 is rejected. "
-                "This isolates the fault to the Movie-side Tk send surface rather than the CarMaker Movie control API."
+                "CarMaker-side Movie command surface is still present, but send to both IPG-MOVIE and GPUSensor_1_0 is rejected. "
+                "This isolates the fault to the Movie-side Tk send surface rather than TclEval itself."
             ),
             "interpreter_probe": interpreter_detail or None,
             "movie_command_probe": movie_command_detail or None,
@@ -524,6 +520,25 @@ def run_health_suite(
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     summary["summary_path"] = str(summary_path)
     return summary
+
+
+def run_read_only_health_suite(
+    *,
+    service: str,
+    topic: str,
+    output_dir: Path,
+    attempts: int,
+    timeout_sec: float,
+    settle_sec: float,
+) -> Dict[str, Any]:
+    return run_health_suite(
+        service=service,
+        topic=topic,
+        output_dir=output_dir,
+        attempts=attempts,
+        timeout_sec=timeout_sec,
+        settle_sec=settle_sec,
+    )
 
 
 def main() -> int:

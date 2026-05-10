@@ -219,6 +219,46 @@ c:/CM_Projects/CMO141_Calibration/.venv/Scripts/python.exe Data/Script/CameraCal
 3. 启动后立刻跑 DDE 健康检查
 4. 如果 `send IPG-MOVIE` 仍然坏，直接在恢复阶段失败，而不是等到标定中途才暴露
 
+## 8.1.1 当前 open_movie 启动链记录
+
+截至 2026-05-10，`cmapi_testrun_control.py --open-movie` 的当前启动链按下面顺序执行：
+
+1. 复用或拉起 CarMaker GUI，优先走 `GUI/HIL.exe`
+2. 等 `TclEval/CarMaker` 可用
+3. 用 `LoadTestRun` 同步 GUI 里真正选中的 TestRun
+4. 通过 Tcl 执行一次手工等价 bootstrap：`StartSim -> WaitForStatus running -> StopSim -> WaitForStatus idle`
+5. 复用或拉起 GUI `Movie.exe -cmgui CarMaker`
+6. 优先用 `send IPG-MOVIE` 主动探测当前 camera/view 是否就绪
+7. 如果连续两次 `send IPG-MOVIE` 失败，先尝试只重启 GUI Movie 一次，再重新探测
+8. 如果 GUI Movie 重启后 `send IPG-MOVIE` 仍然失败，才退回到较弱的 runtime fallback：`WInfoInterps "IPG-MOVIE"` + `WInfoInterps "GPUSensor_*"` + GUI/GPUSensor Movie 进程同时存在
+9. 如果传入 `--health-check-after-start`，启动链结束前再跑一轮只读 DDE 健康检查，并把 `send IPG-MOVIE` 失败直接视为启动失败
+
+这里的关键变化是：
+
+1. 启动链不再依赖固定 `45s` 睡眠
+2. `send IPG-MOVIE` 不再只是记录失败，而是会先尝试一次 GUI Movie 自恢复
+3. 启动后健康检查使用只读探针，不再允许 `movie_command_probe` 里偷偷触发 `Movie start`
+
+### 8.1.2 当前已验证的恢复边界
+
+截至 2026-05-10 当前会话，下面这些代码级恢复动作都已经实测过：
+
+1. 仅重启 GUI Movie
+2. 清掉全部 `Movie.exe` 后，重新跑一次 bootstrap，再拉起 GUI Movie
+3. 即使 `RunScript Exec` 返回假阴性，也继续等结果文件，不再把 transport 噪音误判成 bootstrap 失败
+
+在上述修正全部生效后，当前会话里最小 `send IPG-MOVIE { list ok [info patchlevel] }` 仍然稳定报：
+
+```text
+remote server cannot handle this command
+```
+
+因此当前代码结论应明确为：
+
+1. 启动链已经能更早、更干净地识别坏态
+2. 启动链已经尝试了代码层可控的 Movie 自恢复
+3. 如果 `--health-check-after-start` 仍然失败，当前更可能是 Windows 登录会话级的 Tk send/DDE 状态坏掉，而不是脚本里少做了一步 Movie 重启
+
 ## 8.2 2026-05-09 当前健康基线快照
 
 后续如果用户说“现在又不正常了”，优先按下面这一组基线做对比。

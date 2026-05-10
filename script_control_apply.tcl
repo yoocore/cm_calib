@@ -1,8 +1,4 @@
-set out [open "C:/CM_Projects/CMO141_Calibration/SimOutput/script_control_camera_apply_result.txt" w]
-proc emit {text} {
-    global out
-    puts $out $text
-}
+set __copilot_sc_out [open "C:/CM_Projects/CMO141_Calibration/SimOutput/script_control_camera_apply_result.txt" w]
 set rc [catch {send IPG-MOVIE {
     if {![winfo exists .camera]} {error "missing widget .camera"}
     set result {}
@@ -28,8 +24,8 @@ set rc [catch {send IPG-MOVIE {
     lappend result "lens_offset_y=[.camera.cammoddlg.fisheye.ctrl.e3 get]"
     join $result "\n"
 }} msg]
-emit "rc=$rc"
-emit "msg_begin"
-emit $msg
-emit "msg_end"
-close $out
+puts $__copilot_sc_out "rc=$rc"
+puts $__copilot_sc_out "msg_begin"
+puts $__copilot_sc_out $msg
+puts $__copilot_sc_out "msg_end"
+close $__copilot_sc_out

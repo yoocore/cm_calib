@@ -259,11 +259,90 @@ remote server cannot handle this command
 2. 启动链已经尝试了代码层可控的 Movie 自恢复
 3. 如果 `--health-check-after-start` 仍然失败，当前更可能是 Windows 登录会话级的 Tk send/DDE 状态坏掉，而不是脚本里少做了一步 Movie 重启
 
-## 8.2 2026-05-09 当前健康基线快照
+### 8.1.3 当前证据链整理
+
+截至 2026-05-10，围绕 `send IPG-MOVIE` 坏态，当前可以稳定复述的证据链如下。
+
+1. 健康基线是明确存在的，不是“这个工程一直都不稳定”
+2. 健康时的判据已经固定：`WInfoInterps "IPG-MOVIE"` 能返回 `IPG-MOVIE`，最小 `send IPG-MOVIE { list ok [info patchlevel] camera $Camera::v(Name) }` 能返回 `ok ... camera ...`
+3. 当前坏态下，`TclEval/CarMaker` 往往仍然正常，`WInfoInterps` 也往往仍能解析到 `IPG-MOVIE`，有时还能同时解析到 `GPUSensor_1_0`
+4. 但最小 `send IPG-MOVIE` 会失败，且失败形态会在同一登录会话里漂移，例如：
+    - `remote server cannot handle this command`
+    - `dde command failed`
+    - `invalid data returned from server`
+5. 当前最新一次更宽的坏态已落在 `movie_send_targets_unresponsive`：CarMaker 仍能解析到 `IPG-MOVIE` 和 `GPUSensor_1_0`，但对这两个目标的 `send` 都失败
+6. 因此故障点已可收缩到 Movie 侧解释器的 `Tk send` 执行面，而不是 Python 到 CarMaker 的 DDE 主链
+
+当前已掌握的直接证据包括：
+
+1. 历史健康基线：`project_notes/ipgmovie-health-normal-2026-05-09.md`
+2. 当前会话内多轮坏态与修复尝试：`project_notes/ipgmovie-pre-reboot-snapshot-2026-05-10.md`
+3. 最新只读健康快照：`SimOutput/ipgmovie_health_monitor/20260510_140501/first_failure.json`
+
+对当前恢复边界的判断应继续保持保守：
+
+1. 代码层恢复已经覆盖 GUI Movie 重启、全 Movie 栈重建、bootstrap 重跑、启动后只读健康复检
+2. 当前会话级实验已经覆盖 IME/TextInputHost 扰动、GUI Movie 单独重启、Explorer/壳层扰动
+3. 这些动作可以让坏态“变形”，甚至短暂收窄，但尚未形成稳定、可重复的当前会话恢复
+4. 因此“注销/重启能恢复”目前仍应理解为：它重建了整个 Windows 交互会话，而不是单纯比脚本多做了一次 Movie 重启
+
+## 8.2 非 RPA 离屏控制与取图边界
+
+当前工程里，非 RPA 路线已经存在，但要区分“后台控制”与“离屏取图”。
+
+### 8.2.1 非 RPA 后台控制主链
+
+当前已验证可用的非 RPA 后台控制主链是：
+
+1. Python 通过 DDE 连接 `TclEval/CarMaker`
+2. 执行 `RunScript { ... }`
+3. 在 Tcl 内用 `send IPG-MOVIE { ... }` 把命令送进 IPG-MOVIE 解释器
+
+这条路径的性质已经明确：
+
+1. 不依赖鼠标点击
+2. 不依赖键盘输入
+3. 不要求 IPG-MOVIE 在前台
+4. 窗口最小化时仍可工作
+
+因此，对“有没有不走 RPA 的控制方式”的回答是：有，而且这一直是当前工程的主控链。
+
+### 8.2.2 非 RPA 离屏取图主链
+
+当前已验证可工作的非 RPA 离屏取图路径不是窗口截图，也不是 RPA，而是：
+
+1. 在 `send IPG-MOVIE` 内创建外层 `captureFBO`
+2. 在该 FBO 作用域里执行 `UpdateView $vno`
+3. 再用 `gl bindframebuffer_read` 加 `gl readpixels` 导出图像
+
+当前工程里的经验结论是：
+
+1. 早期直接读默认 framebuffer 会得到黑图
+2. 早期直接读 `View(FBO.tex)` 或手工重放错误显示列表会拿到错误图形上下文
+3. 现阶段真正可用的是 `captureFBO -> UpdateView -> readpixels`
+4. 这条路径已实测能得到正确的 rear_tv 离屏图，而且执行期间不会把前台切到 IPG-MOVIE
+
+### 8.2.3 当前没有已验证成功的“绕开 send”的第二控制面
+
+虽然存在非 RPA 的后台控制和离屏取图，但它们当前都仍依赖 `send IPG-MOVIE` 是健康的。
+
+截至 2026-05-10，当前没有已验证成功的替代主链能够在 `send IPG-MOVIE` 坏掉时继续稳定工作：
+
+1. `SaveImage_export` 只是编码器，不会自己抓当前视图
+2. 试图把同类逻辑改发到 `GPUSensor_1_0`，当前并没有形成稳定可用的替代控制面
+3. 因此一旦 `send IPG-MOVIE` 进入坏态，非 RPA 离屏控制与非 RPA 离屏取图通常会一起失效
+
+当前最准确的说法应是：
+
+1. 有非 RPA 路线
+2. 有可工作的离屏取图路线
+3. 但目前没有一个“已验证可用、且能完全绕开 `send IPG-MOVIE` 坏态”的第二控制面
+
+## 8.3 2026-05-09 当前健康基线快照
 
 后续如果用户说“现在又不正常了”，优先按下面这一组基线做对比。
 
-### 8.2.1 send 健康口径
+### 8.3.1 send 健康口径
 
 同一口径下，当前健康态满足：
 

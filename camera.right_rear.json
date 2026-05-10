@@ -31,30 +31,31 @@
             "C3",
             "C4"
         ],
-        "min_board_score_improvement": 0.75,
-        "max_total_score_worsen": 1.5,
-        "min_total_board_score_improvement": 1.0,
-        "total_worsen_tradeoff_ratio": 1.25,
+        "min_board_score_improvement": 0.35,
+        "max_total_score_worsen": 4.5,
+        "min_total_board_score_improvement": 0.6000000000000001,
+        "total_worsen_tradeoff_ratio": 0.6,
         "min_board_count": 1
     },
     "auto_objective_board_focus": {
         "enabled": true,
-        "activation_min_stagnation_rounds": 2,
-        "score_threshold": 10.0,
-        "top_k": 3,
+        "activation_min_stagnation_rounds": 1,
+        "score_threshold": 8.0,
+        "top_k": 4,
         "min_focus_board_count": 2,
-        "restrict_to_priority_boards": false,
+        "restrict_to_priority_boards": true,
         "require_same_family": true,
         "rank_multipliers": [
-            1.12,
-            1.08,
-            1.04
+            1.14,
+            1.1,
+            1.06,
+            1.03
         ],
-        "priority_board_multiplier": 1.02
+        "priority_board_multiplier": 1.06
     },
     "joint_exploration": {
         "apply_to_all_params": true,
-        "max_single_score_worsen": 2.5,
+        "max_single_score_worsen": 4.5,
         "trial_multipliers": [
             1.0,
             2.0,
@@ -67,8 +68,8 @@
         "adjust_step_scale": true,
         "focus_on_joint_candidates": true,
         "bottleneck_board_awareness": true,
-        "bottleneck_top_k": 2,
-        "bottleneck_min_improvement": 0.1,
+        "bottleneck_top_k": 4,
+        "bottleneck_min_improvement": 0.05,
         "bottleneck_priority_boost": 1.25,
         "priority_decay": 0.82,
         "accepted_priority_boost": 2.5,
@@ -126,7 +127,7 @@
         "stagnation_round_scale_up": 0.35,
         "focus_param_budget": 4,
         "focus_rank_decay": 0.2,
-        "board_focus_top_k": 2,
+        "board_focus_top_k": 4,
         "global_param_order": [
             "lens_fov",
             "pos_z",
@@ -164,20 +165,20 @@
         "score_tolerance": 1e-06
     },
     "optimization_order": [
-        "pos_z",
-        "pitch",
-        "yaw",
+        "lens_fov",
         "pos_x",
         "roll",
+        "yaw",
+        "pos_z",
         "pos_y",
-        "lens_fov",
+        "pitch",
         "lens_scale",
         "lens_offset_x",
         "lens_offset_y"
     ],
     "parameters": {
         "pos_x": {
-            "initial": 3.4191,
+            "initial": 3.4413,
             "step": 0.002,
             "min_offset": -0.02,
             "max_offset": 0.02,
@@ -185,7 +186,7 @@
             "decimals": 4
         },
         "pos_y": {
-            "initial": -0.9829,
+            "initial": -0.9532,
             "step": 0.001,
             "min_offset": -0.01,
             "max_offset": 0.01,
@@ -193,7 +194,7 @@
             "decimals": 4
         },
         "pos_z": {
-            "initial": 0.9793,
+            "initial": 0.9608,
             "step": 0.002,
             "min_offset": -0.03,
             "max_offset": 0.03,
@@ -201,7 +202,7 @@
             "decimals": 4
         },
         "yaw": {
-            "initial": 227.8662,
+            "initial": 227.8997,
             "step": 0.01,
             "min_offset": -0.25,
             "max_offset": 0.25,
@@ -209,7 +210,7 @@
             "decimals": 4
         },
         "pitch": {
-            "initial": -0.7433,
+            "initial": -1.0052,
             "step": 0.02,
             "min_offset": -0.45,
             "max_offset": 0.45,
@@ -217,7 +218,7 @@
             "decimals": 4
         },
         "roll": {
-            "initial": 0.27,
+            "initial": 0.3714,
             "step": 0.01,
             "min_offset": -0.2,
             "max_offset": 0.2,
@@ -225,7 +226,7 @@
             "decimals": 4
         },
         "lens_fov": {
-            "initial": 125.4,
+            "initial": 124.7,
             "step": 0.2,
             "min_offset": -6.0,
             "max_offset": 6.0,

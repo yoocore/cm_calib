@@ -134,21 +134,41 @@ def render_dde_execute_script(
     target_service: str = "TclEval",
 ) -> str:
     channel_var = f"__copilot_out_{uuid.uuid4().hex}"
+    remote_result_path = result_path.with_suffix(f"{result_path.suffix or '.txt'}.remote")
     lines = [
         f'set {channel_var} [open "{result_path.as_posix()}" w]',
+        f'set __copilot_remote_result_path "{remote_result_path.as_posix()}"',
+        'catch {file delete -force $__copilot_remote_result_path}',
         "set rc [catch {",
         "    package require dde",
         f"    dde execute {target_service} {target_topic} {{",
+        '        set __copilot_remote_out [open "' + remote_result_path.as_posix() + '" w]',
+        '        set __copilot_remote_rc [catch {',
     ]
-    lines.extend(f"        {line}" for line in body_lines)
+    lines.extend(f"            {line}" for line in body_lines)
     lines.extend(
         [
+            '        } __copilot_remote_msg]',
+            '        puts $__copilot_remote_out "rc=$__copilot_remote_rc"',
+            '        puts $__copilot_remote_out "msg_begin"',
+            '        puts $__copilot_remote_out $__copilot_remote_msg',
+            '        puts $__copilot_remote_out "msg_end"',
+            '        close $__copilot_remote_out',
+            '        if {$__copilot_remote_rc != 0} {error $__copilot_remote_msg}',
             "    }",
             "} msg]",
-            f'puts ${channel_var} "rc=$rc"',
-            f'puts ${channel_var} "msg_begin"',
-            f"puts ${channel_var} $msg",
-            f'puts ${channel_var} "msg_end"',
+            'if {[file exists $__copilot_remote_result_path]} {',
+            f'    set __copilot_remote_in [open $__copilot_remote_result_path r]',
+            '    set __copilot_remote_payload [read $__copilot_remote_in]',
+            '    close $__copilot_remote_in',
+            f'    puts -nonewline ${channel_var} $__copilot_remote_payload',
+            '    catch {file delete -force $__copilot_remote_result_path}',
+            '} else {',
+            f'    puts ${channel_var} "rc=$rc"',
+            f'    puts ${channel_var} "msg_begin"',
+            f"    puts ${channel_var} $msg",
+            f'    puts ${channel_var} "msg_end"',
+            '}',
             f"close ${channel_var}",
             "",
         ]

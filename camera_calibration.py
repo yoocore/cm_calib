@@ -4102,6 +4102,7 @@ class CameraCalibrator:
         self.script_control_dde_topic = str(cfg.get("script_control_dde_topic", "CarMaker"))
         self.script_control_timeout_sec = float(cfg.get("script_control_timeout_sec", 5.0))
         self.script_control_settle_sec = float(cfg.get("script_control_settle_sec", 0.2))
+        self.verbose_dde_diag = bool(cfg.get("verbose_dde_diag", False))
         self.movie_restart_settle_sec = float(cfg.get("movie_restart_settle_sec", 2.0))
         self.max_gui_movie_restart_recoveries = max(
             0,
@@ -5396,6 +5397,8 @@ class CameraCalibrator:
         detail: Optional[object] = None,
         retry_sleep_sec: Optional[float] = None,
     ) -> None:
+        if status == "success" and not self.verbose_dde_diag:
+            return
         parts = [
             f"DDE diag [{operation}]",
             f"attempt={attempt_no}/{attempt_count}",
@@ -9176,6 +9179,11 @@ def parse_args() -> argparse.Namespace:
         default=1,
         help="Repeat multi-start or explore-then-refine for N outer rounds, carrying previous best values and learned param order into the next round",
     )
+    parser.add_argument(
+        "--verbose-dde-diag",
+        action="store_true",
+        help="Print per-attempt DDE success diagnostics; retry/failed logs remain enabled by default",
+    )
     return parser.parse_args()
 
 
@@ -9235,6 +9243,9 @@ def main() -> None:
     camera_name = _camera_name_from_config_path(config_path)
     with open(config_path, "r", encoding="utf-8-sig") as f:
         cfg = json.load(f)
+
+    if args.verbose_dde_diag:
+        cfg["verbose_dde_diag"] = True
 
     base_output_dir = _resolve_config_output_dir(cfg, config_path)
     cfg["output_dir"] = str(base_output_dir)

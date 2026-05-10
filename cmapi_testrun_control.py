@@ -11,7 +11,7 @@ import time
 from typing import Any, Optional
 
 import cmapi
-from dde_health_check import default_output_dir, render_result_script, render_send_script, run_check_attempt, run_read_only_health_suite
+from dde_health_check import classify_health_summary, default_output_dir, render_dde_execute_script, render_result_script, run_check_attempt, run_read_only_health_suite
 
 
 if not hasattr(cmapi, "InvalidConfigurationException"):
@@ -46,6 +46,7 @@ IPGMOVIE_SENSOR_PREFIX_RE = re.compile(
 RUNTIME_PROJECTDIR_PROBE_NAME = "cmapi_testrun_control_projectdir_probe"
 MOVIE_SCENE_READY_PROBE_NAME = "cmapi_testrun_control_movie_scene_ready_probe"
 MOVIE_SEND_HEALTH_CHECK_NAME = "cmapi_testrun_control_movie_send_health"
+DEFAULT_MOVIE_SCENE_READY_GRACE_SEC = 45.0
 
 
 class VehicleSensorActivationError(RuntimeError):
@@ -337,6 +338,15 @@ def parse_args() -> argparse.Namespace:
         help="Polling interval used while waiting for the IPG-MOVIE calibration scene to become ready.",
     )
     parser.add_argument(
+        "--movie-ready-grace-sec",
+        type=float,
+        default=DEFAULT_MOVIE_SCENE_READY_GRACE_SEC,
+        help=(
+            "Initial grace window before scene-ready send probe failures can trigger GUI Movie recovery "
+            "or fallback classification."
+        ),
+    )
+    parser.add_argument(
         "--bootstrap-running-timeout-sec",
         type=float,
         default=60.0,
@@ -374,25 +384,25 @@ def parse_args() -> argparse.Namespace:
         "--health-check-after-start",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="Run a read-only send IPG-MOVIE health check after the startup chain finishes.",
+        help="Run a read-only IPG-MOVIE remote-control health check after the startup chain finishes.",
     )
     parser.add_argument(
         "--health-check-attempts",
         type=int,
         default=2,
-        help="Attempts per check when running the post-start Movie send health check.",
+        help="Attempts per check when running the post-start Movie remote-control health check.",
     )
     parser.add_argument(
         "--health-check-timeout-sec",
         type=float,
         default=2.5,
-        help="Timeout per check attempt for the post-start Movie send health check.",
+        help="Timeout per check attempt for the post-start Movie remote-control health check.",
     )
     parser.add_argument(
         "--health-check-settle-sec",
         type=float,
         default=0.3,
-        help="Retry delay between attempts for the post-start Movie send health check.",
+        help="Retry delay between attempts for the post-start Movie remote-control health check.",
     )
     return parser.parse_args()
 
@@ -778,50 +788,10 @@ def _get_health_check(summary: dict[str, Any], name: str) -> Optional[dict[str, 
 
 
 def classify_gui_movie_send_health(summary: dict[str, Any]) -> dict[str, Any]:
-    tcleval_ping = _get_health_check(summary, "tcleval_ping")
-    interpreter_probe = _get_health_check(summary, "interpreter_probe")
-    movie_command_probe = _get_health_check(summary, "movie_command_probe")
-    movie_ping = _get_health_check(summary, "movie_ping")
-    movie_view_probe = _get_health_check(summary, "movie_view_probe")
-
-    interpreter_attempts = interpreter_probe.get("attempts", []) if isinstance(interpreter_probe, dict) else []
-    interpreter_detail = ""
-    if interpreter_attempts:
-        interpreter_detail = str(interpreter_attempts[-1].get("detail", "")).strip()
-    exact_registered = bool(re.search(r"\bexact\b\s+\{?IPG-MOVIE\}?", interpreter_detail))
-    tcleval_ok = isinstance(tcleval_ping, dict) and bool(tcleval_ping.get("ok"))
-    movie_command_ok = isinstance(movie_command_probe, dict) and bool(movie_command_probe.get("ok"))
-    movie_ping_ok = isinstance(movie_ping, dict) and bool(movie_ping.get("ok"))
-    movie_view_ok = isinstance(movie_view_probe, dict) and bool(movie_view_probe.get("ok"))
-
-    if tcleval_ok and exact_registered and movie_command_ok and movie_ping_ok and movie_view_ok:
-        return {
-            "all_ok": True,
-            "code": "ok",
-            "message": "GUI Movie send and active view probes both passed.",
-        }
-    if not tcleval_ok:
-        return {
-            "all_ok": False,
-            "code": "tcleval_unavailable",
-            "message": "CarMaker TclEval is unavailable.",
-        }
-    if exact_registered and movie_command_ok and not movie_ping_ok:
-        return {
-            "all_ok": False,
-            "code": "movie_send_target_registered_but_unresponsive",
-            "message": "IPG-MOVIE is registered but minimal send commands are still rejected.",
-        }
-    if not exact_registered:
-        return {
-            "all_ok": False,
-            "code": "movie_interpreter_missing",
-            "message": "IPG-MOVIE is not registered in WInfoInterps.",
-        }
+    classification = classify_health_summary(summary)
     return {
-        "all_ok": False,
-        "code": "movie_view_probe_failed",
-        "message": "Minimal send works partially, but the active Movie view probe is not healthy.",
+        "all_ok": classification.get("code") == "ok",
+        **classification,
     }
 
 
@@ -857,13 +827,8 @@ async def recover_movie_send_surface_after_health_failure(
     health_timeout_sec: float,
     health_settle_sec: float,
 ) -> tuple[Optional[cmapi.IPGMovie], Optional[int], bool, str, dict[str, str], dict[str, Any]]:
-    killed_movies = kill_all_movie_processes()
+    killed_movies = kill_gui_movie_processes()
     killed_summary = summarize_processes(killed_movies)
-    bootstrap_testrun_for_movie_via_tcl(
-        testrun_rel_path,
-        running_timeout_sec,
-        idle_timeout_sec,
-    )
     movie, movie_pid, movie_owned, movie_action = await start_or_reuse_movie(
         cm_install,
         movie_apphost,
@@ -885,7 +850,7 @@ async def recover_movie_send_surface_after_health_failure(
         settle_sec=health_settle_sec,
     )
     recovery_action = (
-        f"restarted full Movie stack after send health failure: killed={killed_summary}; movie_action={movie_action}"
+        f"restarted GUI Movie after remote-control health failure: killed={killed_summary}; movie_action={movie_action}"
     )
     return movie, movie_pid, movie_owned, recovery_action, movie_scene, health_summary
 
@@ -897,10 +862,12 @@ def wait_for_movie_scene_ready(
     carmaker_pid: int,
     timeout_sec: float,
     poll_interval_sec: float,
+    initial_grace_sec: float = DEFAULT_MOVIE_SCENE_READY_GRACE_SEC,
 ) -> dict[str, str]:
     output_dir = default_output_dir()
     output_dir.mkdir(parents=True, exist_ok=True)
     deadline = time.monotonic() + timeout_sec
+    grace_deadline = time.monotonic() + max(0.0, min(initial_grace_sec, timeout_sec))
     last_detail = "not_ready"
     send_failure_count = 0
     restart_attempted = False
@@ -911,7 +878,7 @@ def wait_for_movie_scene_ready(
             service="TclEval",
             topic="CarMaker",
             output_dir=output_dir,
-            script_text=render_send_script(
+            script_text=render_dde_execute_script(
                 output_dir / f"{MOVIE_SCENE_READY_PROBE_NAME}.txt",
                 "IPG-MOVIE",
                 [
@@ -933,12 +900,16 @@ def wait_for_movie_scene_ready(
             height = int(payload.get("height", "0") or "0")
             camera_name = payload.get("camera_name", "")
             if width > 0 and height > 0 and camera_name:
-                payload["mode"] = "send_probe"
+                payload["mode"] = "dde_execute_probe"
                 return payload
             last_detail = detail or "scene_not_ready"
         else:
             last_detail = f"{result.get('kind')}: {result.get('detail')}"
             send_failure_count += 1
+
+        if send_failure_count >= 2 and time.monotonic() < grace_deadline:
+            time.sleep(max(0.1, poll_interval_sec))
+            continue
 
         if send_failure_count >= 2 and not restart_attempted:
             try:
@@ -963,15 +934,11 @@ def wait_for_movie_scene_ready(
                 exact = runtime_payload.get("exact", "")
                 gpu = runtime_payload.get("gpu", "")
                 if exact == "IPG-MOVIE" and list_gui_movie_processes():
-                    runtime_payload["mode"] = "runtime_fallback"
-                    runtime_payload["runtime_scope"] = "gui_movie_plus_gpusensor" if gpu and list_gpusensor_movie_processes() else "gui_movie_only"
-                    runtime_payload["recovery"] = "gui_movie_restart" if restart_attempted else "none"
-                    runtime_payload["width"] = runtime_payload.get("width", "?")
-                    runtime_payload["height"] = runtime_payload.get("height", "?")
-                    runtime_payload["camera_name"] = runtime_payload.get("camera_name", "")
-                    runtime_payload["camera_widget"] = runtime_payload.get("camera_widget", "?")
-                    runtime_payload["detail"] = last_detail
-                    return runtime_payload
+                    runtime_scope = "gui_movie_plus_gpusensor" if gpu and list_gpusensor_movie_processes() else "gui_movie_only"
+                    last_detail = (
+                        f"scene_send_unready exact={exact} gpu={gpu or '{}'} runtime_scope={runtime_scope} "
+                        f"recovery={'gui_movie_restart' if restart_attempted else 'none'} previous={last_detail}"
+                    )
             except Exception as exc:
                 last_detail = str(exc)
         time.sleep(max(0.1, poll_interval_sec))
@@ -1313,6 +1280,7 @@ async def main() -> None:
                 carmaker_pid=carmaker_pid,
                 timeout_sec=args.movie_settle_sec,
                 poll_interval_sec=args.movie_ready_poll_sec,
+                initial_grace_sec=args.movie_ready_grace_sec,
             )
             print(
                 "IPG-MOVIE scene ready: "
@@ -1336,12 +1304,17 @@ async def main() -> None:
                 )
                 if not classification.get("all_ok"):
                     recoverable_codes = {
+                        "movie_camera_probe_failed",
+                        "movie_camera_surface_unstable",
+                        "movie_commands_alive_but_tk_send_surface_failed",
+                        "movie_send_targets_unresponsive",
                         "movie_send_target_registered_but_unresponsive",
                         "movie_view_probe_failed",
+                        "ipg_movie_target_only_unresponsive",
                         "movie_interpreter_missing",
                     }
                     if classification.get("code") in recoverable_codes:
-                        print("IPG-MOVIE health recovery: restarting full Movie stack and re-running bootstrap")
+                        print("IPG-MOVIE health recovery: restarting GUI Movie only and retrying scene/remote-control checks")
                         movie, movie_pid, movie_owned, recovery_action, movie_scene, health_summary = await recover_movie_send_surface_after_health_failure(
                             cm_install=cm_install,
                             movie_apphost=args.movie_apphost,
@@ -1375,7 +1348,7 @@ async def main() -> None:
                         )
                     if not classification.get("all_ok"):
                         raise RuntimeError(
-                            "Post-start Movie send health check failed: "
+                            "Post-start Movie remote-control health check failed: "
                             f"{classification.get('code', 'unknown')} | {classification.get('message', '')}"
                         )
             if args.stop_after is not None:

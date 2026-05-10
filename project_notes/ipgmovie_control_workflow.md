@@ -184,6 +184,20 @@ update idletasks
 
 后续如果还有新的 IPG-MOVIE 控制问题、菜单项映射、刷新行为差异、最小化行为验证、其它 Show 项控制方式，都继续追加在这里。
 
+### 8.0.1 2026-05-10 send 故障专题总结入口
+
+围绕本次 `send IPG-MOVIE` / `send GPUSensor_1_0` 坏态、`dde execute` 替代链、证据链、探索过程与最终结论，现已整理成专题文档：
+
+[ipgmovie_send_failure_dde_execute_summary_2026-05-10.md](ipgmovie_send_failure_dde_execute_summary_2026-05-10.md)
+
+如果后续需要快速回答下面这些问题，优先看该专题文档：
+
+1. 当前坏的到底是外层 DDE，还是 Movie-side `send`。
+2. 为什么“窗口在线”不等于“send 正常”。
+3. 为什么 broker 重启、GUI Movie 重启、bootstrap 重跑都不能解决当前会话问题。
+4. `dde execute` 和旧 `send` 链的结构差异是什么。
+5. 目前已验证成功的替代控制面到底能做什么。
+
 ## 8.1 send IPG-MOVIE 长期失稳的已知故障型态
 
 截至 2026-05-09，已经能稳定区分下面这类故障：

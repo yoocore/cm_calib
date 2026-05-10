@@ -12,6 +12,10 @@ from typing import Any, Dict, List, Optional, Tuple
 
 DEFAULT_SERVICE = "TclEval"
 DEFAULT_TOPIC = "CarMaker"
+LEGACY_SEND_CHAIN_NOTE = (
+    "Legacy diagnostic only: Tk send probes are retained for explicit fault snapshots. "
+    "Do not use them in runtime calibration, recovery, or fallback paths."
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -100,6 +104,8 @@ def render_result_script(result_path: Path, body_lines: List[str]) -> str:
 
 
 def render_send_script(result_path: Path, target_appname: str, body_lines: List[str]) -> str:
+    """Render a legacy Tk send probe for explicit diagnostics only."""
+
     channel_var = f"__copilot_out_{uuid.uuid4().hex}"
     lines = [
         f'set {channel_var} [open "{result_path.as_posix()}" w]',
@@ -109,6 +115,36 @@ def render_send_script(result_path: Path, target_appname: str, body_lines: List[
     lines.extend(
         [
             "}} msg]",
+            f'puts ${channel_var} "rc=$rc"',
+            f'puts ${channel_var} "msg_begin"',
+            f"puts ${channel_var} $msg",
+            f'puts ${channel_var} "msg_end"',
+            f"close ${channel_var}",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def render_dde_execute_script(
+    result_path: Path,
+    target_topic: str,
+    body_lines: List[str],
+    *,
+    target_service: str = "TclEval",
+) -> str:
+    channel_var = f"__copilot_out_{uuid.uuid4().hex}"
+    lines = [
+        f'set {channel_var} [open "{result_path.as_posix()}" w]',
+        "set rc [catch {",
+        "    package require dde",
+        f"    dde execute {target_service} {target_topic} {{",
+    ]
+    lines.extend(f"        {line}" for line in body_lines)
+    lines.extend(
+        [
+            "    }",
+            "} msg]",
             f'puts ${channel_var} "rc=$rc"',
             f'puts ${channel_var} "msg_begin"',
             f"puts ${channel_var} $msg",
@@ -293,7 +329,7 @@ def build_checks(output_dir: Path) -> List[Tuple[str, str]]:
         ),
         (
             "movie_ping",
-            render_send_script(
+            render_dde_execute_script(
                 output_dir / "movie_ping.txt",
                 "IPG-MOVIE",
                 [
@@ -302,8 +338,19 @@ def build_checks(output_dir: Path) -> List[Tuple[str, str]]:
             ),
         ),
         (
+            "movie_camera_probe",
+            render_dde_execute_script(
+                output_dir / "movie_camera_probe.txt",
+                "IPG-MOVIE",
+                [
+                    'if {![info exists Camera::v(Name)]} { error "Camera::v(Name) missing" }',
+                    'list camera $Camera::v(Name)',
+                ],
+            ),
+        ),
+        (
             "movie_view_probe",
-            render_send_script(
+            render_dde_execute_script(
                 output_dir / "movie_view_probe.txt",
                 "IPG-MOVIE",
                 [
@@ -316,7 +363,7 @@ def build_checks(output_dir: Path) -> List[Tuple[str, str]]:
         ),
         (
             "gpusensor_ping",
-            render_send_script(
+            render_dde_execute_script(
                 output_dir / "gpusensor_ping.txt",
                 "GPUSensor_1_0",
                 [
@@ -351,6 +398,7 @@ def classify_health_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
     interpreter_probe = _get_check(summary, "interpreter_probe")
     movie_command_probe = _get_check(summary, "movie_command_probe")
     movie_ping = _get_check(summary, "movie_ping")
+    movie_camera_probe = _get_check(summary, "movie_camera_probe")
     movie_view_probe = _get_check(summary, "movie_view_probe")
     gpusensor_ping = _get_check(summary, "gpusensor_ping")
 
@@ -361,11 +409,17 @@ def classify_health_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
     movie_command_ok = isinstance(movie_command_probe, dict) and bool(movie_command_probe.get("ok"))
     gpu_ping_ok = isinstance(gpusensor_ping, dict) and bool(gpusensor_ping.get("ok"))
     movie_ping_ok = isinstance(movie_ping, dict) and bool(movie_ping.get("ok"))
+    movie_camera_ok = None
+    if isinstance(movie_camera_probe, dict):
+        movie_camera_ok = bool(movie_camera_probe.get("ok"))
+    movie_view_ok = isinstance(movie_view_probe, dict) and bool(movie_view_probe.get("ok"))
 
     target_status = {
         "movie_command_ok": movie_command_ok,
         "ipg_movie_registered": exact_registered,
         "ipg_movie_send_ok": movie_ping_ok,
+        "ipg_movie_camera_probe_ok": movie_camera_ok,
+        "ipg_movie_view_probe_ok": movie_view_ok,
         "gpusensor_registered": gpu_registered,
         "gpusensor_send_ok": gpu_ping_ok,
     }
@@ -373,7 +427,34 @@ def classify_health_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
     if bool(summary.get("all_ok")):
         return {
             "code": "ok",
-            "message": "TclEval and send IPG-MOVIE checks all passed.",
+            "message": "TclEval and dde execute remote-control checks all passed.",
+            "interpreter_probe": interpreter_detail or None,
+            "movie_command_probe": movie_command_detail or None,
+            "exact_ipg_movie_registered": exact_registered,
+            "target_status": target_status,
+        }
+
+    if movie_ping_ok and movie_camera_ok is False and movie_view_ok and gpu_registered and gpu_ping_ok:
+        return {
+            "code": "movie_camera_surface_unstable",
+            "message": (
+                "Minimal dde execute control to IPG-MOVIE still works, the active view probe still works, and GPUSensor_1_0 still responds, "
+                "but Camera::v(Name) access fails. This narrows the onset to the GUI Movie camera state/namespace rather than "
+                "a whole remote-control-surface failure."
+            ),
+            "interpreter_probe": interpreter_detail or None,
+            "movie_command_probe": movie_command_detail or None,
+            "exact_ipg_movie_registered": exact_registered,
+            "target_status": target_status,
+        }
+
+    if movie_ping_ok and movie_camera_ok is False:
+        return {
+            "code": "movie_camera_probe_failed",
+            "message": (
+                "Minimal dde execute control to IPG-MOVIE still works, but the Camera namespace probe does not. "
+                "This points to a Movie-side camera-state failure rather than a missing remote-control path."
+            ),
             "interpreter_probe": interpreter_detail or None,
             "movie_command_probe": movie_command_detail or None,
             "exact_ipg_movie_registered": exact_registered,
@@ -383,7 +464,7 @@ def classify_health_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
     if not (isinstance(tcleval_ping, dict) and tcleval_ping.get("ok")):
         return {
             "code": "tcleval_unavailable",
-            "message": "CarMaker RunScript/TclEval is unavailable, so Movie send health cannot be verified.",
+            "message": "CarMaker RunScript/TclEval is unavailable, so Movie remote-control health cannot be verified.",
             "interpreter_probe": interpreter_detail or None,
             "movie_command_probe": movie_command_detail or None,
             "exact_ipg_movie_registered": exact_registered,
@@ -394,8 +475,8 @@ def classify_health_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "code": "movie_commands_alive_but_tk_send_surface_failed",
             "message": (
-                "CarMaker-side Movie command surface is still present, but send to both IPG-MOVIE and GPUSensor_1_0 is rejected. "
-                "This isolates the fault to the Movie-side Tk send surface rather than TclEval itself."
+                "CarMaker-side Movie command surface is still present, but dde execute control to both IPG-MOVIE and GPUSensor_1_0 is rejected. "
+                "This isolates the fault to the Movie-side remote execution surface rather than TclEval itself."
             ),
             "interpreter_probe": interpreter_detail or None,
             "movie_command_probe": movie_command_detail or None,
@@ -407,8 +488,8 @@ def classify_health_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "code": "ipg_movie_target_only_unresponsive",
             "message": (
-                "CarMaker can send to GPUSensor_1_0 but not to IPG-MOVIE. The failure is isolated to the "
-                "GUI Movie interpreter/registration rather than the whole Tk send surface."
+                "CarMaker can control GPUSensor_1_0 via dde execute but not IPG-MOVIE. The failure is isolated to the "
+                "GUI Movie interpreter/registration rather than the whole remote execution surface."
             ),
             "interpreter_probe": interpreter_detail or None,
             "movie_command_probe": movie_command_detail or None,
@@ -420,8 +501,8 @@ def classify_health_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "code": "movie_send_targets_unresponsive",
             "message": (
-                "CarMaker resolves both IPG-MOVIE and GPUSensor_1_0, but send fails for both targets. "
-                "This points to a broader Tk send failure in the Movie-side interpreters, not just the GUI window."
+                "CarMaker resolves both IPG-MOVIE and GPUSensor_1_0, but dde execute control fails for both targets. "
+                "This points to a broader Movie-side remote execution failure, not just the GUI window."
             ),
             "interpreter_probe": interpreter_detail or None,
             "movie_command_probe": movie_command_detail or None,
@@ -434,7 +515,7 @@ def classify_health_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
             "code": "movie_send_target_registered_but_unresponsive",
             "message": (
                 "CarMaker can still resolve appname IPG-MOVIE via WInfoInterps, but even minimal "
-                "send commands are rejected. This points to a wedged Tk send target/registration state, "
+                "dde execute commands are rejected. This points to a wedged Movie target/registration state, "
                 "not a missing Movie process."
             ),
             "interpreter_probe": interpreter_detail or None,
@@ -453,10 +534,10 @@ def classify_health_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
             "target_status": target_status,
         }
 
-    if not (isinstance(movie_view_probe, dict) and movie_view_probe.get("ok")):
+    if not movie_view_ok:
         return {
             "code": "movie_view_probe_failed",
-            "message": "send IPG-MOVIE partially works, but the active Movie view probe did not succeed.",
+            "message": "dde execute control partially works, but the active Movie view probe did not succeed.",
             "interpreter_probe": interpreter_detail or None,
             "movie_command_probe": movie_command_detail or None,
             "exact_ipg_movie_registered": exact_registered,

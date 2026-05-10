@@ -13,8 +13,8 @@ from dde_health_check import (
     DEFAULT_TOPIC,
     classify_health_summary,
     default_output_dir,
+    render_dde_execute_script,
     render_result_script,
-    render_send_script,
     run_check_attempt,
 )
 
@@ -185,15 +185,26 @@ def build_read_only_checks(output_dir: Path) -> list[tuple[str, str]]:
         ),
         (
             "movie_ping",
-            render_send_script(
+            render_dde_execute_script(
                 output_dir / "movie_ping.txt",
                 "IPG-MOVIE",
-                ['list ok [info patchlevel] camera $Camera::v(Name)'],
+                ['list ok [info patchlevel]'],
+            ),
+        ),
+        (
+            "movie_camera_probe",
+            render_dde_execute_script(
+                output_dir / "movie_camera_probe.txt",
+                "IPG-MOVIE",
+                [
+                    'if {![info exists Camera::v(Name)]} { error "Camera::v(Name) missing" }',
+                    'list camera $Camera::v(Name)',
+                ],
             ),
         ),
         (
             "movie_view_probe",
-            render_send_script(
+            render_dde_execute_script(
                 output_dir / "movie_view_probe.txt",
                 "IPG-MOVIE",
                 [
@@ -206,7 +217,7 @@ def build_read_only_checks(output_dir: Path) -> list[tuple[str, str]]:
         ),
         (
             "gpusensor_ping",
-            render_send_script(
+            render_dde_execute_script(
                 output_dir / "gpusensor_ping.txt",
                 "GPUSensor_1_0",
                 ['list ok [info patchlevel]'],

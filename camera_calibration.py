@@ -22,6 +22,8 @@ import cv2
 import numpy as np
 from PIL import Image
 
+from dde_health_check import render_dde_execute_script
+
 
 _ANNOTATION_OCR_ENGINE = None
 
@@ -4101,6 +4103,11 @@ class CameraCalibrator:
         self.script_control_timeout_sec = float(cfg.get("script_control_timeout_sec", 5.0))
         self.script_control_settle_sec = float(cfg.get("script_control_settle_sec", 0.2))
         self.movie_restart_settle_sec = float(cfg.get("movie_restart_settle_sec", 2.0))
+        self.max_gui_movie_restart_recoveries = max(
+            0,
+            int(cfg.get("max_gui_movie_restart_recoveries", 1)),
+        )
+        self.gui_movie_restart_recovery_attempts = 0
         self.template_feature_max_dim = int(cfg.get("template_feature_max_dim", 2048))
         self.comparison_mode = str(cfg.get("comparison_mode", "direct")).lower()
         if self.comparison_mode not in {"direct", "overlay_residual"}:
@@ -5275,56 +5282,46 @@ class CameraCalibrator:
             joined = ", ".join(unsupported)
             raise RuntimeError(f"script_control mode does not support parameters: {joined}")
 
-        result_path = self.script_control_result_path.as_posix()
-        channel_var = f"__copilot_sc_out_{uuid.uuid4().hex}"
-        lines = [
-            f'set {channel_var} [open "{result_path}" w]',
-            'set rc [catch {send IPG-MOVIE {',
-            '    if {![winfo exists .camera]} {error "missing widget .camera"}',
+        body_lines = [
+            'if {![winfo exists .camera]} {error "missing widget .camera"}',
         ]
 
         for param in params:
             widget = self.SCRIPT_CONTROL_WRITE_WIDGETS[param.name]
             value_text = f"{self._quantize_param_value(param, param.value):.{param.decimals}f}"
-            lines.extend(
+            body_lines.extend(
                 [
-                    f'    if {{![winfo exists {widget}]}} {{error "missing widget {widget}"}}',
-                    f'    {widget} delete 0 end',
-                    f'    {widget} insert 0 {value_text}',
+                    f'if {{![winfo exists {widget}]}} {{error "missing widget {widget}"}}',
+                    f'{widget} delete 0 end',
+                    f'{widget} insert 0 {value_text}',
                 ]
             )
 
-        lines.extend(
+        body_lines.extend(
             [
-                '    update idletasks',
-                '    if {![winfo exists .camera.btn.set]} {error "missing widget .camera.btn.set"}',
-                '    .camera.btn.set invoke',
-                '    update idletasks',
-                '    set result {}',
+                'update idletasks',
+                'if {![winfo exists .camera.btn.set]} {error "missing widget .camera.btn.set"}',
+                '.camera.btn.set invoke',
+                'update idletasks',
+                'set result {}',
             ]
         )
 
         for param in params:
             read_widget = self.SCRIPT_CONTROL_READ_WIDGETS[param.name]
-            lines.extend(
+            body_lines.extend(
                 [
-                    f'    if {{![winfo exists {read_widget}]}} {{error "missing widget {read_widget}"}}',
-                    f'    lappend result "{param.name}=[{read_widget} get]"',
+                    f'if {{![winfo exists {read_widget}]}} {{error "missing widget {read_widget}"}}',
+                    f'lappend result "{param.name}=[{read_widget} get]"',
                 ]
             )
 
-        lines.extend(
+        body_lines.extend(
             [
-                '    join $result "\\n"',
-                '}} msg]',
-                f'puts ${channel_var} "rc=$rc"',
-                f'puts ${channel_var} "msg_begin"',
-                f"puts ${channel_var} $msg",
-                f'puts ${channel_var} "msg_end"',
-                f"close ${channel_var}",
+                'join $result "\\n"',
             ]
         )
-        return "\n".join(lines) + "\n"
+        return render_dde_execute_script(self.script_control_result_path, "IPG-MOVIE", body_lines) + "\n"
 
     def _render_script_control_read_script(self, params: List[ParameterSpec]) -> str:
         unsupported = [p.name for p in params if p.name not in self.SCRIPT_CONTROL_WRITE_WIDGETS]
@@ -5332,36 +5329,26 @@ class CameraCalibrator:
             joined = ", ".join(unsupported)
             raise RuntimeError(f"script_control mode does not support parameters: {joined}")
 
-        result_path = self.script_control_result_path.as_posix()
-        channel_var = f"__copilot_sc_out_{uuid.uuid4().hex}"
-        lines = [
-            f'set {channel_var} [open "{result_path}" w]',
-            'set rc [catch {send IPG-MOVIE {',
-            '    if {![winfo exists .camera]} {error "missing widget .camera"}',
-            '    set result {}',
+        body_lines = [
+            'if {![winfo exists .camera]} {error "missing widget .camera"}',
+            'set result {}',
         ]
 
         for param in params:
             widget = self.SCRIPT_CONTROL_WRITE_WIDGETS[param.name]
-            lines.extend(
+            body_lines.extend(
                 [
-                    f'    if {{![winfo exists {widget}]}} {{error "missing widget {widget}"}}',
-                    f'    lappend result "{param.name}=[{widget} get]"',
+                    f'if {{![winfo exists {widget}]}} {{error "missing widget {widget}"}}',
+                    f'lappend result "{param.name}=[{widget} get]"',
                 ]
             )
 
-        lines.extend(
+        body_lines.extend(
             [
-                '    join $result "\\n"',
-                '}} msg]',
-                f'puts ${channel_var} "rc=$rc"',
-                f'puts ${channel_var} "msg_begin"',
-                f"puts ${channel_var} $msg",
-                f'puts ${channel_var} "msg_end"',
-                f"close ${channel_var}",
+                'join $result "\\n"',
             ]
         )
-        return "\n".join(lines) + "\n"
+        return render_dde_execute_script(self.script_control_result_path, "IPG-MOVIE", body_lines) + "\n"
 
     @staticmethod
     def _parse_script_control_result_text(text: str) -> Tuple[int, str]:
@@ -5558,7 +5545,15 @@ class CameraCalibrator:
                 )
                 if retry_sleep_sec is not None:
                     time.sleep(retry_sleep_sec)
-        return self._restart_gui_movie_for_dde_recovery()
+        self._log_dde_retry_event(
+            "movie_restart_recovery",
+            self.gui_movie_restart_recovery_attempts,
+            self.max_gui_movie_restart_recoveries,
+            "disabled",
+            0.0,
+            detail="GUI Movie auto-restart disabled for DDE failures; leaving current failure to bubble up",
+        )
+        return False
 
     @staticmethod
     def _extract_cli_arg_value(command_line: str, option_name: str) -> Optional[str]:
@@ -5611,6 +5606,19 @@ class CameraCalibrator:
 
     def _restart_gui_movie_for_dde_recovery(self) -> bool:
         attempt_started = time.perf_counter()
+        if self.gui_movie_restart_recovery_attempts >= self.max_gui_movie_restart_recoveries:
+            self._log_dde_retry_event(
+                "movie_restart_recovery",
+                self.gui_movie_restart_recovery_attempts,
+                self.max_gui_movie_restart_recoveries,
+                "skipped",
+                0.0,
+                detail="restart fuse open before GUI Movie relaunch",
+            )
+            return False
+        self.gui_movie_restart_recovery_attempts += 1
+        attempt_no = self.gui_movie_restart_recovery_attempts
+        attempt_limit = max(self.max_gui_movie_restart_recoveries, 1)
         try:
             import cmapi_testrun_control as cmctrl
 
@@ -5647,8 +5655,8 @@ class CameraCalibrator:
             killed_pids = ",".join(str(proc["ProcessId"]) for proc in killed_gui_movies) or "-"
             self._log_dde_retry_event(
                 "movie_restart_recovery",
-                1,
-                1,
+                attempt_no,
+                attempt_limit,
                 "success",
                 time.perf_counter() - attempt_started,
                 detail=(
@@ -5660,8 +5668,8 @@ class CameraCalibrator:
         except Exception as exc:
             self._log_dde_retry_event(
                 "movie_restart_recovery",
-                1,
-                1,
+                attempt_no,
+                attempt_limit,
                 "failed",
                 time.perf_counter() - attempt_started,
                 detail=exc,
@@ -5831,22 +5839,15 @@ class CameraCalibrator:
             invocation_id = uuid.uuid4().hex
             script_path = self.output_dir / f"movie_size_probe_dde.{invocation_id}.tcl"
             result_path = self.output_dir / f"movie_size_probe_dde.{invocation_id}.txt"
-            script_text = "\n".join(
+            script_text = render_dde_execute_script(
+                result_path,
+                "IPG-MOVIE",
                 [
-                    f'set __copilot_probe_out_{invocation_id} [open "{result_path.as_posix()}" w]',
-                    "set rc [catch {send IPG-MOVIE {",
-                    "    set vno $View(ev.view)",
-                    "    set wi [dict get $View($vno) Width]",
-                    "    set he [dict get $View($vno) Height]",
-                    "    list $wi $he",
-                    "}} msg]",
-                    f'puts $__copilot_probe_out_{invocation_id} "rc=$rc"',
-                    f'puts $__copilot_probe_out_{invocation_id} "msg_begin"',
-                    f"puts $__copilot_probe_out_{invocation_id} $msg",
-                    f'puts $__copilot_probe_out_{invocation_id} "msg_end"',
-                    f"close $__copilot_probe_out_{invocation_id}",
-                    "",
-                ]
+                    "set vno $View(ev.view)",
+                    "set wi [dict get $View($vno) Width]",
+                    "set he [dict get $View($vno) Height]",
+                    "list $wi $he",
+                ],
             )
             script_path.write_text(script_text, encoding="utf-8")
             _unlink_if_exists(result_path)
@@ -5980,39 +5981,32 @@ class CameraCalibrator:
             invocation_id = uuid.uuid4().hex
             script_path = self.output_dir / f"{tag}_movie_capture_dde.{invocation_id}.tcl"
             result_path = self.output_dir / f"{tag}_movie_capture_dde.{invocation_id}.txt"
-            script_text = "\n".join(
+            script_text = render_dde_execute_script(
+                result_path,
+                "IPG-MOVIE",
                 [
-                    f'set __copilot_capture_out_{invocation_id} [open "{result_path.as_posix()}" w]',
-                    "set rc [catch {send IPG-MOVIE {",
-                    "    set vno $View(ev.view)",
-                    "    set wi [dict get $View($vno) Width]",
-                    "    set he [dict get $View($vno) Height]",
-                    "    set captureFBO [FBO new $wi $he -tex rgb -noclear]",
-                    "    set update_rc [catch {",
-                    "        FBO begin $captureFBO",
-                    "        UpdateView $vno",
-                    "        FBO end",
-                    "    } update_msg]",
-                    "    catch {FBO end}",
-                    "    if {$update_rc != 0} {",
-                    "        catch {FBO delete $captureFBO}",
-                    "        error $update_msg",
-                    "    }",
-                    "    catch {image delete probeImg}",
-                    "    image create photo probeImg -width $wi -height $he",
-                    "    gl bindframebuffer_read $captureFBO",
-                    "    gl readpixels 0 0 probeImg",
-                    f'    probeImg write "{out_path.as_posix()}" -format png',
-                    "    catch {gl bindframebuffer_read 0}",
+                    "set vno $View(ev.view)",
+                    "set wi [dict get $View($vno) Width]",
+                    "set he [dict get $View($vno) Height]",
+                    "set captureFBO [FBO new $wi $he -tex rgb -noclear]",
+                    "set update_rc [catch {",
+                    "    FBO begin $captureFBO",
+                    "    UpdateView $vno",
+                    "    FBO end",
+                    "} update_msg]",
+                    "catch {FBO end}",
+                    "if {$update_rc != 0} {",
                     "    catch {FBO delete $captureFBO}",
-                    "}} msg]",
-                    f'puts $__copilot_capture_out_{invocation_id} "rc=$rc"',
-                    f'puts $__copilot_capture_out_{invocation_id} "msg_begin"',
-                    f"puts $__copilot_capture_out_{invocation_id} $msg",
-                    f'puts $__copilot_capture_out_{invocation_id} "msg_end"',
-                    f"close $__copilot_capture_out_{invocation_id}",
-                    "",
-                ]
+                    "    error $update_msg",
+                    "}",
+                    "catch {image delete probeImg}",
+                    "image create photo probeImg -width $wi -height $he",
+                    "gl bindframebuffer_read $captureFBO",
+                    "gl readpixels 0 0 probeImg",
+                    f'probeImg write "{out_path.as_posix()}" -format png',
+                    "catch {gl bindframebuffer_read 0}",
+                    "catch {FBO delete $captureFBO}",
+                ],
             )
             script_path.write_text(script_text, encoding="utf-8")
             _unlink_if_exists(result_path)

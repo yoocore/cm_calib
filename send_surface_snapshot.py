@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Set
 from dde_health_check import (
     DEFAULT_SERVICE,
     DEFAULT_TOPIC,
+    LEGACY_SEND_CHAIN_NOTE,
     classify_health_summary,
     render_result_script,
     render_send_script,
@@ -46,8 +47,8 @@ class RECT(ctypes.Structure):
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Capture a machine-readable snapshot of the IPG-MOVIE Tk send surface, "
-            "including DDE probes, related processes, and top-level windows."
+            "Capture a machine-readable snapshot of the retired IPG-MOVIE Tk send surface "
+            "for explicit diagnostics only. This script is not part of the runtime calibration chain."
         )
     )
     parser.add_argument("--service", default=DEFAULT_SERVICE, help="DDE service name for RunScript")
@@ -70,6 +71,14 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=None,
         help="Optional output directory for generated Tcl scripts, raw results, and summary.json",
+    )
+    parser.add_argument(
+        "--allow-legacy-send",
+        action="store_true",
+        help=(
+            "Required opt-in. This script intentionally exercises the retired Tk send surface and must not "
+            "be used as a runtime control path or fallback."
+        ),
     )
     return parser.parse_args()
 
@@ -425,9 +434,16 @@ def build_summary(args: argparse.Namespace, output_dir: Path) -> Dict[str, Any]:
 
 def main() -> int:
     args = parse_args()
+    if not args.allow_legacy_send:
+        raise SystemExit(
+            "Refusing to run retired Tk send diagnostics without explicit opt-in. "
+            "Re-run with --allow-legacy-send if you intentionally need a legacy snapshot."
+        )
+
     output_dir = (args.output_dir or default_output_dir()).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    print(f"Legacy send notice: {LEGACY_SEND_CHAIN_NOTE}")
     print(
         "Send-surface snapshot: "
         f"service={args.service}, topic={args.topic}, attempts={max(args.attempts, 1)}, "

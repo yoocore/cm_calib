@@ -119,7 +119,7 @@
 
 1. 当前输出目录，提供打开按钮，让用户能够直接打开当前输出目录
 2. 实时日志，提供打开按钮，让用户能够直接打开
-3. 单块结果区，统一显示当前任务相关结果，包括 best score、score 视图、overlap 视图、当前 iter score
+3. 单个结果区域按 camera 分块显示本次任务结果；每个 camera 都要独立显示自己的 best score、score 视图、overlap 视图、当前 iter score
 
 ## 8. 全局状态机
 
@@ -237,7 +237,7 @@ GUI 内部应至少维护以下状态：
 3. 在 ready 状态下点击 Calib Start 时，直接启动底层标定脚本，不重复执行 CM Prepare
 4. 实时接收 stdout 和 stderr
 5. 将日志持续显示到右栏
-6. 实时读取结果文件，提取结果摘要并刷新右栏，如本次任务best score，及其score视图和overlap视图，当前iter score
+6. 实时读取结果文件，按 camera 提取并刷新结果摘要；每个 camera 都要独立显示自己的 best score、score 视图、overlap 视图、当前 iter score
 
 注意事项：
 标定脚本在执行第一个摄像头标定的时候，环境准备工作已经被CM Prepare 步骤准备好，但是后续摄像头的标定需要执行一些特殊的步骤（因为涉及到配置的更改及CarMaker的运行等），需要在标定脚本中实现：
@@ -329,9 +329,10 @@ GUI 内部应至少维护以下状态：
 
 确定口径：
 
-1. 右栏先做成一个统一结果区
-2. 该结果区统一展示当前任务相关结果，包括 best score、score 视图、overlap 视图、当前 iter score
-3. 若后续实践证明单块结果区不够清晰，再拆分为多个结果区
+1. 右栏先做成一个统一结果区域，而不是为整个任务只显示一套混合结果
+2. 该结果区域内部需要按 camera 分块显示结果，每个 camera 都要独立展示自己的 best score、score 视图、overlap 视图、当前 iter score
+3. 不允许把多个 camera 的 best score、score 视图、overlap 视图、当前 iter score 混成一套任务级汇总结果
+4. 若后续实践证明单个结果区域内的分块展示仍不够清晰，再拆分为多个结果区
 
 ### 10.6 Stop 后再次 Start 的行为
 

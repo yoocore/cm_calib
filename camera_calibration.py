@@ -2423,6 +2423,13 @@ def _resolve_round_strategy_autotune_policy(cfg: dict) -> dict:
             "joint_max_single_worsen_cap": 4.5,
             "force_focus_activation_rounds": 1,
             "restrict_to_priority_boards": True,
+            "dominant_family_restrict_to_priority_boards": False,
+            "auto_switch_priority_boards": True,
+            "priority_family_switch_streak_rounds": 2,
+            "focus_rank_multiplier_step": 0.35,
+            "focus_rank_multiplier_cap": 1.6,
+            "focus_priority_multiplier_step": 0.08,
+            "focus_priority_multiplier_cap": 1.35,
             "unlock_parameters_enabled": False,
             "unlock_parameter_activation_rounds": 2,
             "unlock_parameter_step_multipliers": default_unlock_parameter_step_multipliers,
@@ -2485,6 +2492,25 @@ def _resolve_round_strategy_autotune_policy(cfg: dict) -> dict:
             1, int(payload.get("force_focus_activation_rounds", 1))
         ),
         "restrict_to_priority_boards": bool(payload.get("restrict_to_priority_boards", True)),
+        "dominant_family_restrict_to_priority_boards": bool(
+            payload.get("dominant_family_restrict_to_priority_boards", False)
+        ),
+        "auto_switch_priority_boards": bool(payload.get("auto_switch_priority_boards", True)),
+        "priority_family_switch_streak_rounds": max(
+            1, int(payload.get("priority_family_switch_streak_rounds", 2))
+        ),
+        "focus_rank_multiplier_step": max(
+            0.0, float(payload.get("focus_rank_multiplier_step", 0.35))
+        ),
+        "focus_rank_multiplier_cap": max(
+            1.0, float(payload.get("focus_rank_multiplier_cap", 1.6))
+        ),
+        "focus_priority_multiplier_step": max(
+            0.0, float(payload.get("focus_priority_multiplier_step", 0.08))
+        ),
+        "focus_priority_multiplier_cap": max(
+            1.0, float(payload.get("focus_priority_multiplier_cap", 1.35))
+        ),
         "unlock_parameters_enabled": bool(payload.get("unlock_parameters_enabled", False)),
         "unlock_parameter_activation_rounds": max(
             1, int(payload.get("unlock_parameter_activation_rounds", 2))
@@ -2658,6 +2684,7 @@ def _dominant_bottleneck_family_from_result_payload(
     }
 
     candidates: List[dict] = []
+    family_candidates: Dict[str, List[dict]] = {}
     for raw_board_score in raw_board_scores:
         if not isinstance(raw_board_score, dict):
             continue
@@ -2667,7 +2694,7 @@ def _dominant_bottleneck_family_from_result_payload(
         if not board_id or board_id in isolated_outlier_boards:
             continue
         if (
-            bool(policy.get("restrict_to_priority_boards", True))
+            bool(policy.get("dominant_family_restrict_to_priority_boards", False))
             and priority_board_ids
             and board_id not in priority_board_ids
         ):
@@ -2681,6 +2708,13 @@ def _dominant_bottleneck_family_from_result_payload(
             continue
         if score_value < float(policy.get("min_board_score", 8.0)):
             continue
+        family_candidates.setdefault(family, []).append(
+            {
+                "board_id": board_id,
+                "family": family,
+                "score": score_value,
+            }
+        )
         candidates.append(
             {
                 "board_id": board_id,
@@ -2714,13 +2748,55 @@ def _dominant_bottleneck_family_from_result_payload(
         return None
 
     dominant_scores = [float(item["score"]) for item in dominant_items]
+    family_board_ids = [
+        str(item["board_id"])
+        for item in sorted(
+            family_candidates.get(str(dominant_family), []),
+            key=lambda item: float(item["score"]),
+            reverse=True,
+        )
+    ]
     return {
         "family": dominant_family,
         "board_ids": [str(item["board_id"]) for item in dominant_items],
+        "family_board_ids": family_board_ids,
         "board_count": len(dominant_items),
         "family_share": family_share,
         "max_score": max(dominant_scores),
         "avg_score": sum(dominant_scores) / len(dominant_scores),
+    }
+
+
+def _priority_family_switch_streak(
+    round_summaries: List[dict],
+    cfg: dict,
+    policy: dict,
+) -> dict:
+    streak = 0
+    family = ""
+    for round_entry in reversed(round_summaries):
+        result_json = _round_entry_result_json(round_entry)
+        if not result_json:
+            break
+        result_payload = _load_json_if_exists(Path(result_json))
+        if not isinstance(result_payload, dict):
+            break
+        dominant_family = _dominant_bottleneck_family_from_result_payload(result_payload, cfg, policy)
+        if dominant_family is None:
+            break
+        round_family = str(dominant_family.get("family", "")).strip().upper()
+        if not round_family:
+            break
+        if not family:
+            family = round_family
+            streak = 1
+            continue
+        if round_family != family:
+            break
+        streak += 1
+    return {
+        "family": family,
+        "streak": streak,
     }
 
 
@@ -2732,6 +2808,7 @@ def _build_round_strategy_autotune_patch(
     *,
     stagnation_rounds: int,
     repeated_signature_count: int,
+    priority_family_switch_streak: int,
 ) -> dict:
     patch: Dict[str, object] = {}
     family_board_count = max(1, int(dominant_family.get("board_count", 1)))
@@ -2740,7 +2817,33 @@ def _build_round_strategy_autotune_patch(
 
     priority_cfg = cfg.get("priority_board_acceptance")
     if isinstance(priority_cfg, dict) and priority_cfg:
-        priority_patch: Dict[str, float] = {}
+        priority_patch: Dict[str, object] = {}
+        current_priority_board_ids = [
+            str(board_id).strip()
+            for board_id in priority_cfg.get("board_ids", [])
+            if str(board_id).strip()
+        ]
+        if bool(policy.get("auto_switch_priority_boards", True)):
+            dominant_family_board_ids = [
+                str(board_id).strip()
+                for board_id in dominant_family.get("family_board_ids", [])
+                if str(board_id).strip()
+            ]
+            if dominant_family_board_ids:
+                current_priority_family = _board_focus_family(current_priority_board_ids[0]) if current_priority_board_ids else ""
+                desired_priority_family = _board_focus_family(dominant_family_board_ids[0])
+                desired_priority_count = max(1, len(current_priority_board_ids))
+                desired_priority_board_ids = dominant_family_board_ids[:desired_priority_count]
+                minimum_switch_streak = int(policy.get("priority_family_switch_streak_rounds", 2))
+                family_switch_allowed = (
+                    not current_priority_family
+                    or not desired_priority_family
+                    or current_priority_family == desired_priority_family
+                    or priority_family_switch_streak >= minimum_switch_streak
+                )
+                if desired_priority_board_ids != current_priority_board_ids and family_switch_allowed:
+                    priority_patch["board_ids"] = desired_priority_board_ids
+
         current_max_total_worsen = float(priority_cfg.get("max_total_score_worsen", 0.0))
         desired_max_total_worsen = min(
             float(policy.get("priority_max_total_worsen_cap", current_max_total_worsen)),
@@ -2776,6 +2879,14 @@ def _build_round_strategy_autotune_patch(
     focus_cfg = cfg.get("auto_objective_board_focus")
     if isinstance(focus_cfg, dict):
         focus_patch: Dict[str, object] = {}
+        focus_escalation_steps = max(
+            1,
+            escalation_steps,
+            max(
+                0,
+                stagnation_rounds - int(policy.get("activation_stagnation_rounds", 2)) + 1,
+            ),
+        )
         current_activation_rounds = max(
             1, int(focus_cfg.get("activation_min_stagnation_rounds", 2))
         )
@@ -2795,6 +2906,39 @@ def _build_round_strategy_autotune_patch(
             focus_cfg.get("restrict_to_priority_boards", False)
         ):
             focus_patch["restrict_to_priority_boards"] = True
+
+        current_rank_multipliers = CameraCalibrator._normalize_trial_multiplier_values(
+            focus_cfg.get("rank_multipliers", [1.12, 1.08, 1.04]),
+            [1.12, 1.08, 1.04],
+        )
+        rank_scale = 1.0 + float(policy.get("focus_rank_multiplier_step", 0.0)) * float(focus_escalation_steps)
+        rank_cap = float(policy.get("focus_rank_multiplier_cap", 1.6))
+        desired_rank_multipliers = [
+            min(rank_cap, 1.0 + (float(value) - 1.0) * rank_scale)
+            for value in current_rank_multipliers
+        ]
+        if len(desired_rank_multipliers) == len(current_rank_multipliers) and any(
+            not math.isclose(float(desired), float(current), rel_tol=0.0, abs_tol=1e-12)
+            for desired, current in zip(desired_rank_multipliers, current_rank_multipliers)
+        ):
+            focus_patch["rank_multipliers"] = [round(float(value), 6) for value in desired_rank_multipliers]
+
+        current_priority_multiplier = max(
+            1.0,
+            float(focus_cfg.get("priority_board_multiplier", 1.02)),
+        )
+        desired_priority_multiplier = min(
+            float(policy.get("focus_priority_multiplier_cap", 1.35)),
+            current_priority_multiplier
+            + float(policy.get("focus_priority_multiplier_step", 0.0)) * float(focus_escalation_steps),
+        )
+        if not math.isclose(
+            desired_priority_multiplier,
+            current_priority_multiplier,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        ):
+            focus_patch["priority_board_multiplier"] = round(float(desired_priority_multiplier), 6)
 
         if focus_patch:
             patch["auto_objective_board_focus"] = focus_patch
@@ -3026,6 +3170,7 @@ def _maybe_autotune_round_strategy(
         best_round,
         float(policy.get("deanchor_score_delta", 0.05)),
     )
+    priority_family_switch_state = _priority_family_switch_streak(round_summaries, cfg, policy)
     patch = _build_round_strategy_autotune_patch(
         cfg,
         policy,
@@ -3033,6 +3178,7 @@ def _maybe_autotune_round_strategy(
         current_param_order,
         stagnation_rounds=stagnation_rounds,
         repeated_signature_count=repeated_signature_count,
+        priority_family_switch_streak=int(priority_family_switch_state.get("streak", 0)),
     )
     if not patch:
         return None
@@ -3054,6 +3200,8 @@ def _maybe_autotune_round_strategy(
         f"path={config_path}, round={current_round_index}, family={dominant_family['family']}, "
         f"boards={','.join(dominant_family['board_ids'])}, "
         f"stagnation_rounds={stagnation_rounds}, "
+        f"switch_family={priority_family_switch_state.get('family', '')}, "
+        f"switch_streak={int(priority_family_switch_state.get('streak', 0))}, "
         f"changes={', '.join(config_changed_paths or memory_changed_paths)}"
     )
     return {
@@ -3062,6 +3210,11 @@ def _maybe_autotune_round_strategy(
         "board_ids": list(dominant_family["board_ids"]),
         "stagnation_rounds": int(stagnation_rounds),
         "repeated_signature_count": int(repeated_signature_count),
+        "priority_family_switch_family": str(priority_family_switch_state.get("family", "")),
+        "priority_family_switch_streak": int(priority_family_switch_state.get("streak", 0)),
+        "priority_family_switch_required_streak": int(
+            policy.get("priority_family_switch_streak_rounds", 2)
+        ),
         "source_result_json": result_json,
         "changed_paths": list(config_changed_paths or memory_changed_paths),
         "config_updated": bool(config_changed_paths),
@@ -5015,6 +5168,12 @@ class CameraCalibrator:
         self.objective_board_focus_score_threshold = float(
             objective_board_focus_cfg.get("score_threshold", 8.0)
         )
+        raw_focus_board_ids = objective_board_focus_cfg.get("focus_board_ids", [])
+        self.objective_board_focus_board_ids = {
+            str(board_id).strip()
+            for board_id in raw_focus_board_ids
+            if str(board_id).strip()
+        }
         self.objective_board_focus_rank_multipliers = self._normalize_trial_multiplier_values(
             objective_board_focus_cfg.get("rank_multipliers", [1.35, 1.2, 1.1]),
             [1.35, 1.2, 1.1],
@@ -7815,8 +7974,11 @@ class CameraCalibrator:
         in_progress: bool,
     ) -> Dict[str, object]:
         initial_entry = history[0] if history else {}
+        latest_entry = history[-1] if history else {}
         initial_score = float(initial_entry.get("total_score", best_score))
         initial_values = dict(initial_entry.get("values", best_values))
+        current_iter_index = int(latest_entry.get("iter", 0))
+        current_iter_score = float(latest_entry.get("total_score", best_score))
         iteration_round_count = sum(
             1 for entry in history if entry.get("phase") == "iteration_start"
         )
@@ -7828,6 +7990,8 @@ class CameraCalibrator:
             "score_improvement": initial_score - best_score,
             "start_values": initial_values,
             "final_values": best_values,
+            "current_iter_index": current_iter_index,
+            "current_iter_score": current_iter_score,
             "iteration_round_count": iteration_round_count,
             "history_event_count": len(history),
             "total_elapsed_sec": run_stats["total_elapsed_sec"],
@@ -8812,6 +8976,12 @@ class CameraCalibrator:
             and score.board_id not in isolated_outlier_board_set
             and float(score.total_score) >= self.objective_board_focus_score_threshold
         ]
+        if self.objective_board_focus_board_ids:
+            candidates = [
+                score
+                for score in candidates
+                if score.board_id in self.objective_board_focus_board_ids
+            ]
         if not candidates:
             return {}
 
@@ -10163,7 +10333,55 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Print per-attempt DDE success diagnostics; retry/failed logs remain enabled by default",
     )
+    parser.add_argument(
+        "--print-summary-json",
+        action="store_true",
+        help="Print one machine-readable JSON summary line on successful completion",
+    )
     return parser.parse_args()
+
+
+def _build_cli_summary_payload(
+    *,
+    camera_name: str,
+    config_path: Path,
+    mode: str,
+    result_json_path: Optional[Path] = None,
+    result_payload: Optional[dict] = None,
+    summary_json_path: Optional[Path] = None,
+    rounds_output_dir: Optional[Path] = None,
+) -> dict:
+    payload = result_payload or {}
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    best_score = payload.get("best_score")
+    if best_score is None:
+        best_score = summary.get("final_score")
+
+    return {
+        "camera": camera_name,
+        "config_path": str(config_path),
+        "mode": mode,
+        "result_json": str(result_json_path) if result_json_path else None,
+        "summary_json": str(summary_json_path) if summary_json_path else None,
+        "rounds_output_dir": str(rounds_output_dir) if rounds_output_dir else None,
+        "output_dir": payload.get("output_dir"),
+        "in_progress": bool(payload.get("in_progress", False)),
+        "best_score": best_score,
+        "best_image": payload.get("best_image"),
+        "best_score_image": payload.get("best_score_image"),
+        "best_overlay_image": payload.get("best_overlay_image"),
+        "current_iter_index": summary.get("current_iter_index"),
+        "current_iter_score": summary.get("current_iter_score"),
+        "final_score": summary.get("final_score"),
+        "passed": summary.get("passed"),
+        "stop_reason": payload.get("stop_reason") or summary.get("stop_reason"),
+        "live_log": payload.get("live_log"),
+        "run_session_id": payload.get("run_session_id"),
+    }
+
+
+def _emit_cli_summary_json(payload: dict) -> None:
+    print("CALIBRATION_SUMMARY_JSON:", json.dumps(payload, ensure_ascii=False, sort_keys=True))
 
 
 def main() -> None:
@@ -10276,6 +10494,19 @@ def main() -> None:
         )
         _print_camera_history_summary(camera_history_summary, camera_history_summary_path)
         _print_camera_history_summary_compact(camera_history_summary_compact_path)
+        if args.print_summary_json:
+            best_result_json_path = Path(best_run["result_json"]).resolve()
+            _emit_cli_summary_json(
+                _build_cli_summary_payload(
+                    camera_name=camera_name,
+                    config_path=config_path,
+                    mode="explore_then_refine_rounds",
+                    result_json_path=best_result_json_path,
+                    result_payload=_load_json_if_exists(best_result_json_path) or {},
+                    summary_json_path=Path(rounds_payload["summary_json"]).resolve(),
+                    rounds_output_dir=Path(rounds_payload["rounds_output_dir"]).resolve(),
+                )
+            )
         return
 
     if args.multi_start_count > 0:
@@ -10310,6 +10541,19 @@ def main() -> None:
         )
         _print_camera_history_summary(camera_history_summary, camera_history_summary_path)
         _print_camera_history_summary_compact(camera_history_summary_compact_path)
+        if args.print_summary_json:
+            best_result_json_path = Path(best_run["result_json"]).resolve()
+            _emit_cli_summary_json(
+                _build_cli_summary_payload(
+                    camera_name=camera_name,
+                    config_path=config_path,
+                    mode="multi_start_rounds",
+                    result_json_path=best_result_json_path,
+                    result_payload=_load_json_if_exists(best_result_json_path) or {},
+                    summary_json_path=Path(rounds_payload["summary_json"]).resolve(),
+                    rounds_output_dir=Path(rounds_payload["rounds_output_dir"]).resolve(),
+                )
+            )
         return
 
     marker_path: Optional[Path] = None
@@ -10339,6 +10583,19 @@ def main() -> None:
         )
         _print_camera_history_summary(camera_history_summary, camera_history_summary_path)
         _print_camera_history_summary_compact(camera_history_summary_compact_path)
+        if args.print_summary_json:
+            best_result_json_path = Path(best_round["result_json"]).resolve()
+            _emit_cli_summary_json(
+                _build_cli_summary_payload(
+                    camera_name=camera_name,
+                    config_path=config_path,
+                    mode="plain_optimize_rounds",
+                    result_json_path=best_result_json_path,
+                    result_payload=_load_json_if_exists(best_result_json_path) or {},
+                    summary_json_path=Path(rounds_payload["summary_json"]).resolve(),
+                    rounds_output_dir=Path(rounds_payload["rounds_output_dir"]).resolve(),
+                )
+            )
         return
 
     if should_optimize:
@@ -10454,6 +10711,17 @@ def main() -> None:
         )
         _print_camera_history_summary(camera_history_summary, camera_history_summary_path)
         _print_camera_history_summary_compact(camera_history_summary_compact_path)
+        if args.print_summary_json:
+            result_json_path = (Path(cfg["output_dir"]) / "result.json").resolve()
+            _emit_cli_summary_json(
+                _build_cli_summary_payload(
+                    camera_name=camera_name,
+                    config_path=config_path,
+                    mode="single_run",
+                    result_json_path=result_json_path,
+                    result_payload=result,
+                )
+            )
     except Exception as exc:
         if marker_path is not None and marker_payload is not None:
             marker_payload.update(

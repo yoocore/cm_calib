@@ -8,6 +8,7 @@ import msvcrt
 import os
 import random
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -16,13 +17,18 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, TextIO, Tuple
+from typing import Any, Dict, List, Optional, TextIO, Tuple
 
 import cv2
 import numpy as np
 from PIL import Image
 
-from dde_health_check import render_dde_execute_script
+from dde_health_check import (
+    default_output_dir as _dde_default_output_dir,
+    render_dde_execute_script,
+    render_result_script,
+    run_check_attempt,
+)
 
 
 _ANNOTATION_OCR_ENGINE = None
@@ -81,6 +87,27 @@ _DDE_RECOVERY_ERROR_MARKERS = (
 _RUNTIME_SESSION_LOCK_STREAM: Optional[TextIO] = None
 _RUNTIME_SESSION_LOCK_PATH: Optional[Path] = None
 _RUNTIME_SESSION_LOCK_ATEXIT_REGISTERED = False
+_VEHICLE_WRITEBACK_CONTEXT_CACHE: Dict[str, Optional[dict]] = {}
+_VEHICLE_WRITEBACK_METADATA_PREFIX = "# camera_calibration.writeback "
+
+_VEHICLE_SENSOR_NAME_RE = re.compile(
+    r"^(?P<prefix>\s*Sensor\.(?P<index>\d+)\.name\s*=\s*)(?P<value>.*?)(?P<suffix>\s*)$"
+)
+_VEHICLE_SENSOR_ACTIVE_RE = re.compile(
+    r"^(?P<prefix>\s*Sensor\.(?P<index>\d+)\.Active\s*=\s*)(?P<value>.*?)(?P<suffix>\s*)$"
+)
+_VEHICLE_SENSOR_REF_PARAM_RE = re.compile(
+    r"^(?P<prefix>\s*Sensor\.(?P<index>\d+)\.Ref\.Param\s*=\s*)(?P<value>.*?)(?P<suffix>\s*)$"
+)
+_VEHICLE_SENSOR_POS_RE = re.compile(
+    r"^(?P<prefix>\s*Sensor\.(?P<index>\d+)\.pos\s*=\s*)(?P<value>.*?)(?P<suffix>\s*)$"
+)
+_VEHICLE_SENSOR_ROT_RE = re.compile(
+    r"^(?P<prefix>\s*Sensor\.(?P<index>\d+)\.rot\s*=\s*)(?P<value>.*?)(?P<suffix>\s*)$"
+)
+_VEHICLE_SENSOR_PARAM_VALUE_RE = re.compile(
+    r"^(?P<prefix>\s*Sensor\.Param\.(?P<index>\d+)\.(?P<field>[A-Za-z0-9_.]+)\s*=\s*)(?P<value>.*?)(?P<suffix>\s*)$"
+)
 
 
 def _cleanup_live_log() -> None:
@@ -2003,6 +2030,365 @@ def _write_initial_values_to_config_if_best(
     return True
 
 
+def _vehicle_writeback_backup_path(vehicle_path: Path) -> Path:
+    return vehicle_path.parent / f"{vehicle_path.name}.calib.bk"
+
+
+def _normalize_vehicle_sensor_name(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value).casefold())
+
+
+def _tokenize_camera_like_name(value: str) -> List[str]:
+    return [token for token in re.split(r"[^a-z0-9]+", str(value).casefold()) if token]
+
+
+def _camera_name_matches_vehicle_sensor(camera_name: str, sensor_name: str) -> bool:
+    camera_tokens = _tokenize_camera_like_name(camera_name)
+    sensor_tokens = _tokenize_camera_like_name(sensor_name)
+    if not camera_tokens or not sensor_tokens:
+        return False
+    if _normalize_vehicle_sensor_name(camera_name) == _normalize_vehicle_sensor_name(sensor_name):
+        return True
+    token_pos = 0
+    for token in sensor_tokens:
+        if token_pos < len(camera_tokens) and token == camera_tokens[token_pos]:
+            token_pos += 1
+    return token_pos == len(camera_tokens)
+
+
+def _parse_runtime_vehicle_probe_detail(detail: str) -> Dict[str, str]:
+    parsed: Dict[str, str] = {}
+    for raw_line in str(detail).splitlines():
+        line = str(raw_line).strip()
+        if not line:
+            continue
+        parts = line.split(None, 1)
+        key = parts[0].strip().lower()
+        value = parts[1].strip() if len(parts) > 1 else ""
+        parsed[key] = value
+    return parsed
+
+
+def _probe_runtime_vehicle_context() -> Optional[dict]:
+    output_dir = _dde_default_output_dir()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    probe_name = f"camera_calibration_vehicle_writeback_{uuid.uuid4().hex}"
+    script_text = render_result_script(
+        output_dir / f"{probe_name}.txt",
+        [
+            "set lines {}",
+            'if {[info exists TestRun(FName)]} {lappend lines [list testrun $TestRun(FName)]} else {lappend lines [list testrun ""]}',
+            'if {[catch {IFileRead TestRun "Vehicle"} vehicle_msg]} {error $vehicle_msg}',
+            'lappend lines [list vehicle $vehicle_msg]',
+            'join $lines "\\n"',
+        ],
+    )
+    result = run_check_attempt(
+        probe_name,
+        "TclEval",
+        "CarMaker",
+        output_dir,
+        script_text,
+        5.0,
+    )
+    if not result.get("ok"):
+        print(
+            "Skipped vehicle writeback runtime probe: "
+            f"kind={result.get('kind')} detail={result.get('detail')}"
+        )
+        return None
+
+    parsed = _parse_runtime_vehicle_probe_detail(str(result.get("detail") or ""))
+    vehicle_key = parsed.get("vehicle", "").strip()
+    if not vehicle_key:
+        print("Skipped vehicle writeback runtime probe: vehicle path was empty")
+        return None
+
+    project_root = Path(__file__).resolve().parents[3]
+    vehicle_path = project_root / "Data" / "Vehicle" / Path(vehicle_key.replace("\\", "/"))
+    return {
+        "project_root": project_root,
+        "testrun": parsed.get("testrun", "").strip() or None,
+        "vehicle_key": vehicle_key,
+        "vehicle_path": vehicle_path,
+    }
+
+
+def _resolve_vehicle_writeback_context(config_path: Path, cfg: dict) -> Optional[dict]:
+    cache_key = str(config_path.resolve())
+    if cache_key in _VEHICLE_WRITEBACK_CONTEXT_CACHE:
+        cached = _VEHICLE_WRITEBACK_CONTEXT_CACHE[cache_key]
+        return copy.deepcopy(cached) if isinstance(cached, dict) else None
+
+    payload = cfg.get("vehicle_writeback") if isinstance(cfg.get("vehicle_writeback"), dict) else {}
+    if payload.get("enabled") is False:
+        _VEHICLE_WRITEBACK_CONTEXT_CACHE[cache_key] = None
+        return None
+
+    project_root = Path(payload.get("project_root", Path(__file__).resolve().parents[3]))
+    vehicle_key = str(payload.get("vehicle", payload.get("vehicle_key", ""))).strip()
+    vehicle_path: Optional[Path] = None
+    testrun_name = str(payload.get("testrun", "")).strip() or None
+    sensor_name = str(payload.get("sensor_name", "")).strip() or None
+
+    if vehicle_key:
+        candidate = Path(vehicle_key.replace("\\", "/"))
+        if candidate.is_absolute():
+            vehicle_path = candidate
+        else:
+            parts = list(candidate.parts)
+            if len(parts) >= 2 and parts[0].lower() == "data" and parts[1].lower() == "vehicle":
+                candidate = Path(*parts[2:])
+            vehicle_path = project_root / "Data" / "Vehicle" / candidate
+    else:
+        runtime_context = _probe_runtime_vehicle_context()
+        if runtime_context is not None:
+            project_root = Path(runtime_context.get("project_root") or project_root)
+            vehicle_key = str(runtime_context.get("vehicle_key") or "").strip()
+            vehicle_path = Path(runtime_context.get("vehicle_path")) if runtime_context.get("vehicle_path") else None
+            testrun_name = testrun_name or runtime_context.get("testrun")
+
+    if vehicle_path is None:
+        print(f"Skipped vehicle writeback: unable to resolve vehicle path for {config_path}")
+        _VEHICLE_WRITEBACK_CONTEXT_CACHE[cache_key] = None
+        return None
+
+    context = {
+        "project_root": project_root,
+        "testrun": testrun_name,
+        "vehicle_key": vehicle_key or str(vehicle_path),
+        "vehicle_path": vehicle_path,
+        "sensor_name": sensor_name,
+    }
+    _VEHICLE_WRITEBACK_CONTEXT_CACHE[cache_key] = copy.deepcopy(context)
+    return context
+
+
+def _format_vehicle_float(value: float) -> str:
+    text = f"{float(value):.12f}".rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def _replace_vehicle_assignment_line(line: str, regex: re.Pattern[str], replacement_value: str) -> str:
+    stripped = line.rstrip("\r\n")
+    newline = line[len(stripped) :]
+    match = regex.match(stripped)
+    if match is None:
+        return line
+    return f"{match.group('prefix')}{replacement_value}{match.group('suffix')}{newline}"
+
+
+def _select_vehicle_sensor_for_writeback(
+    sensor_name_by_index: Dict[str, str],
+    active_indexes: List[str],
+    camera_name: str,
+    explicit_sensor_name: Optional[str],
+) -> Tuple[str, str]:
+    if explicit_sensor_name:
+        explicit_norm = _normalize_vehicle_sensor_name(explicit_sensor_name)
+        for sensor_index, sensor_name in sensor_name_by_index.items():
+            if _normalize_vehicle_sensor_name(sensor_name) == explicit_norm:
+                return sensor_index, sensor_name
+        raise RuntimeError(
+            f"vehicle_writeback sensor_name {explicit_sensor_name!r} was not found. "
+            f"Available sensors: {', '.join(sensor_name_by_index[index] for index in sorted(sensor_name_by_index, key=int))}"
+        )
+
+    if len(active_indexes) == 1:
+        sensor_index = active_indexes[0]
+        return sensor_index, sensor_name_by_index[sensor_index]
+
+    matched_indexes = [
+        sensor_index
+        for sensor_index, sensor_name in sensor_name_by_index.items()
+        if _camera_name_matches_vehicle_sensor(camera_name, sensor_name)
+    ]
+    if len(matched_indexes) == 1:
+        sensor_index = matched_indexes[0]
+        return sensor_index, sensor_name_by_index[sensor_index]
+
+    raise RuntimeError(
+        "Unable to resolve target sensor for vehicle writeback: "
+        f"camera={camera_name}, active_indexes={active_indexes}, "
+        f"available={', '.join(sensor_name_by_index[index] for index in sorted(sensor_name_by_index, key=int))}"
+    )
+
+
+def _write_best_values_to_vehicle_config(
+    config_path: Path,
+    cfg: dict,
+    camera_name: str,
+    best_score: float,
+    values: Dict[str, float],
+) -> Optional[dict]:
+    context = _resolve_vehicle_writeback_context(config_path, cfg)
+    if context is None:
+        return None
+
+    vehicle_path = Path(context["vehicle_path"])
+    if not vehicle_path.exists():
+        print(f"Skipped vehicle writeback: vehicle file not found at {vehicle_path}")
+        return None
+
+    text = vehicle_path.read_text(encoding="utf-8")
+    lines = text.splitlines(keepends=True)
+    sensor_name_by_index: Dict[str, str] = {}
+    active_indexes: List[str] = []
+    ref_param_by_sensor_index: Dict[str, str] = {}
+    pos_line_by_sensor_index: Dict[str, int] = {}
+    rot_line_by_sensor_index: Dict[str, int] = {}
+    param_line_by_key: Dict[Tuple[str, str], int] = {}
+
+    for line_index, line in enumerate(lines):
+        stripped = line.rstrip("\r\n")
+        match = _VEHICLE_SENSOR_NAME_RE.match(stripped)
+        if match is not None:
+            sensor_name_by_index[match.group("index")] = match.group("value").strip()
+            continue
+        match = _VEHICLE_SENSOR_ACTIVE_RE.match(stripped)
+        if match is not None:
+            if match.group("value").strip() == "1":
+                active_indexes.append(match.group("index"))
+            continue
+        match = _VEHICLE_SENSOR_REF_PARAM_RE.match(stripped)
+        if match is not None:
+            ref_value = match.group("value").strip()
+            if ref_value:
+                ref_param_by_sensor_index[match.group("index")] = ref_value
+            continue
+        match = _VEHICLE_SENSOR_POS_RE.match(stripped)
+        if match is not None:
+            pos_line_by_sensor_index[match.group("index")] = line_index
+            continue
+        match = _VEHICLE_SENSOR_ROT_RE.match(stripped)
+        if match is not None:
+            rot_line_by_sensor_index[match.group("index")] = line_index
+            continue
+        match = _VEHICLE_SENSOR_PARAM_VALUE_RE.match(stripped)
+        if match is not None:
+            param_line_by_key[(match.group("index"), match.group("field"))] = line_index
+
+    sensor_index, sensor_name = _select_vehicle_sensor_for_writeback(
+        sensor_name_by_index,
+        active_indexes,
+        camera_name,
+        context.get("sensor_name"),
+    )
+    ref_param_index = ref_param_by_sensor_index.get(sensor_index)
+    if not ref_param_index:
+        raise RuntimeError(
+            f"Vehicle sensor {sensor_name!r} is missing Sensor.{sensor_index}.Ref.Param in {vehicle_path}"
+        )
+
+    backup_path = _vehicle_writeback_backup_path(vehicle_path)
+    backup_created = False
+    if not backup_path.exists():
+        shutil.copy2(vehicle_path, backup_path)
+        backup_created = True
+
+    changed_fields: List[str] = []
+
+    pos_line_index = pos_line_by_sensor_index.get(sensor_index)
+    if pos_line_index is not None:
+        pos_value = " ".join(
+            _format_vehicle_float(float(values[name]))
+            for name in ("pos_x", "pos_y", "pos_z")
+        )
+        new_line = _replace_vehicle_assignment_line(lines[pos_line_index], _VEHICLE_SENSOR_POS_RE, pos_value)
+        if new_line != lines[pos_line_index]:
+            lines[pos_line_index] = new_line
+            changed_fields.append(f"Sensor.{sensor_index}.pos")
+
+    rot_line_index = rot_line_by_sensor_index.get(sensor_index)
+    if rot_line_index is not None:
+        rot_value = " ".join(
+            _format_vehicle_float(float(values[name]))
+            for name in ("roll", "pitch", "yaw")
+        )
+        new_line = _replace_vehicle_assignment_line(lines[rot_line_index], _VEHICLE_SENSOR_ROT_RE, rot_value)
+        if new_line != lines[rot_line_index]:
+            lines[rot_line_index] = new_line
+            changed_fields.append(f"Sensor.{sensor_index}.rot")
+
+    for field_name, param_name in (("FoV", "lens_fov"), ("ImageScaling", "lens_scale")):
+        line_index = param_line_by_key.get((ref_param_index, field_name))
+        if line_index is None:
+            continue
+        field_regex = re.compile(
+            rf"^(?P<prefix>\s*Sensor\.Param\.{re.escape(ref_param_index)}\.{re.escape(field_name)}\s*=\s*)(?P<value>.*?)(?P<suffix>\s*)$"
+        )
+        new_line = _replace_vehicle_assignment_line(
+            lines[line_index],
+            field_regex,
+            _format_vehicle_float(float(values[param_name])),
+        )
+        if new_line != lines[line_index]:
+            lines[line_index] = new_line
+            changed_fields.append(f"Sensor.Param.{ref_param_index}.{field_name}")
+
+    principal_point_index = param_line_by_key.get((ref_param_index, "PrincipalPntOffset"))
+    if principal_point_index is not None:
+        principal_point_regex = re.compile(
+            rf"^(?P<prefix>\s*Sensor\.Param\.{re.escape(ref_param_index)}\.PrincipalPntOffset\s*=\s*)(?P<value>.*?)(?P<suffix>\s*)$"
+        )
+        principal_point_value = " ".join(
+            _format_vehicle_float(float(values[name]))
+            for name in ("lens_offset_x", "lens_offset_y")
+        )
+        new_line = _replace_vehicle_assignment_line(
+            lines[principal_point_index],
+            principal_point_regex,
+            principal_point_value,
+        )
+        if new_line != lines[principal_point_index]:
+            lines[principal_point_index] = new_line
+            changed_fields.append(f"Sensor.Param.{ref_param_index}.PrincipalPntOffset")
+
+    metadata_line = (
+        f"{_VEHICLE_WRITEBACK_METADATA_PREFIX}camera={camera_name} "
+        f"sensor={sensor_name} best_score={float(best_score):.6f} "
+        f"updated_at={datetime.now().astimezone().isoformat(timespec='seconds')}"
+    )
+    metadata_index = next(
+        (index for index, line in enumerate(lines) if line.startswith(_VEHICLE_WRITEBACK_METADATA_PREFIX)),
+        None,
+    )
+    if metadata_index is None:
+        if lines and not lines[-1].endswith(("\n", "\r")):
+            lines[-1] = lines[-1] + "\n"
+        lines.append(metadata_line + "\n")
+        changed_fields.append("vehicle_writeback_metadata")
+    else:
+        existing_line = lines[metadata_index].rstrip("\r\n")
+        if existing_line != metadata_line:
+            newline = lines[metadata_index][len(existing_line) :]
+            lines[metadata_index] = metadata_line + (newline or "\n")
+            changed_fields.append("vehicle_writeback_metadata")
+
+    if changed_fields:
+        vehicle_path.write_text("".join(lines), encoding="utf-8")
+
+    print(
+        "Vehicle writeback: "
+        f"path={vehicle_path}, sensor={sensor_name}, ref_param={ref_param_index}, "
+        f"best_score={float(best_score):.6f}, "
+        f"backup={'created' if backup_created else 'reused'}:{backup_path}, "
+        f"changes={', '.join(changed_fields) if changed_fields else '-'}"
+    )
+    return {
+        "vehicle_path": str(vehicle_path),
+        "vehicle_backup_path": str(backup_path),
+        "sensor_name": sensor_name,
+        "sensor_index": int(sensor_index),
+        "ref_param_index": int(ref_param_index),
+        "best_score": float(best_score),
+        "changed_fields": changed_fields,
+        "backup_created": backup_created,
+        "testrun": context.get("testrun"),
+        "vehicle_key": context.get("vehicle_key"),
+    }
+
+
 def _resolve_round_strategy_autotune_policy(cfg: dict) -> dict:
     default_unlock_parameter_step_multipliers = {
         "C": {
@@ -2056,7 +2442,7 @@ def _resolve_round_strategy_autotune_policy(cfg: dict) -> dict:
             family = str(raw_family).strip().upper()
             if not family or not isinstance(raw_mapping, dict):
                 continue
-            family_mapping = unlock_parameter_step_multipliers.setdefault(family, {})
+            family_mapping = {}
             for raw_name, raw_value in raw_mapping.items():
                 name = str(raw_name).strip()
                 if not name:
@@ -2065,6 +2451,7 @@ def _resolve_round_strategy_autotune_policy(cfg: dict) -> dict:
                     family_mapping[name] = max(0.0, float(raw_value))
                 except Exception:
                     continue
+            unlock_parameter_step_multipliers[family] = family_mapping
 
     return {
         "enabled": bool(payload.get("enabled", True)),
@@ -3888,6 +4275,13 @@ def _run_single_optimize(
             float(result["best_score"]),
             result["best_values"],
         )
+        _write_best_values_to_vehicle_config(
+            config_path,
+            run_cfg,
+            camera_name,
+            float(result["best_score"]),
+            result["best_values"],
+        )
         marker_payload.update(
             {
                 "status": "finished",
@@ -4095,6 +4489,13 @@ def _run_multi_start_rounds(
             float(best_run["best_score"]),
             best_run["best_values"],
         )
+        _write_best_values_to_vehicle_config(
+            config_path,
+            active_cfg,
+            camera_name,
+            float(best_run["best_score"]),
+            best_run["best_values"],
+        )
         strategy_payload = _load_strategy_adaptation_from_result_json(best_run.get("result_json"))
         current_param_order: List[str] = []
         if isinstance(strategy_payload, dict):
@@ -4257,6 +4658,13 @@ def _run_explore_then_refine_rounds(
         best_run = dict(summary["best_run"])
         _write_initial_values_to_config_if_best(
             config_path,
+            camera_name,
+            float(best_run["best_score"]),
+            best_run["best_values"],
+        )
+        _write_best_values_to_vehicle_config(
+            config_path,
+            active_cfg,
             camera_name,
             float(best_run["best_score"]),
             best_run["best_values"],
@@ -9996,6 +10404,13 @@ def main() -> None:
         result = calib.optimize()
         _write_initial_values_to_config_if_best(
             config_path,
+            camera_name,
+            float(result["best_score"]),
+            result["best_values"],
+        )
+        _write_best_values_to_vehicle_config(
+            config_path,
+            cfg,
             camera_name,
             float(result["best_score"]),
             result["best_values"],

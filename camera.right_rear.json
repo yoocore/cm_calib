@@ -156,7 +156,8 @@
             "baseline": 1.0,
             "expanded": 1.35,
             "aggressive": 1.7
-        }
+        },
+        "deanchor_baseline_start": true
     },
     "round_seeding": {
         "enabled": true,
@@ -174,9 +175,7 @@
         "unlock_parameter_activation_rounds": 2,
         "unlock_parameter_step_multipliers": {
             "C": {
-                "lens_scale": 6.0,
-                "lens_offset_x": 6.0,
-                "lens_offset_y": 6.0
+                "lens_scale": 6.0
             }
         },
         "deanchor_baseline_enabled": true,
@@ -188,14 +187,14 @@
         "skip_refine_score_delta": 0.05
     },
     "optimization_order": [
+        "lens_scale",
         "lens_fov",
+        "pos_y",
         "pos_x",
-        "roll",
         "yaw",
         "pos_z",
-        "pos_y",
         "pitch",
-        "lens_scale",
+        "roll",
         "lens_offset_x",
         "lens_offset_y"
     ],
@@ -259,8 +258,8 @@
         "lens_scale": {
             "initial": 1.0,
             "step": 0.005,
-            "min_offset": 0.0,
-            "max_offset": 0.0,
+            "min_offset": -0.03,
+            "max_offset": 0.03,
             "min_step": 0.005,
             "decimals": 3
         },

@@ -208,7 +208,7 @@
 
 当前主脚本已经收敛到 [Data/Script/CameraCalibration/camera_calibration.py](Data/Script/CameraCalibration/camera_calibration.py)。
 
-当前活动配置文件是 [Data/Script/CameraCalibration/camera.rear_tv.json](Data/Script/CameraCalibration/camera.rear_tv.json)。
+当前活动配置文件是 [Data/Script/CameraCalibration/configs/camera.rear_tv.json](Data/Script/CameraCalibration/configs/camera.rear_tv.json)。
 
 当前活动的 Script Control 命令脚本只保留一个入口：[Data/Script/CameraCalibration/script_control_apply.tcl](Data/Script/CameraCalibration/script_control_apply.tcl)。
 
@@ -231,7 +231,7 @@
 1. 不再维护多套并行抓图模式。
 2. 不再维护通用窗口连接与前台截图主链。
 3. Script Control 只保留一个活动脚本入口。
-4. 配置文件按 config.<camera>.json 统一命名，不再保留一堆 best、final、proposed 变体。
+4. 配置文件统一放到 Data/Script/CameraCalibration/configs/ 下，按 camera.<camera>.json 命名，不再保留一堆 best、final、proposed 变体。
 
 ### 6.2 删除已经失效的兼容字段
 
@@ -307,7 +307,7 @@ script_control_camera_apply_result.txt 不是历史快照，而是 Script Contro
 
 短轮验证后，没有把结果停留在 result.json，而是把已确认更优的参数写回当前配置。
 
-当前 [Data/Script/CameraCalibration/camera.rear_tv.json](Data/Script/CameraCalibration/camera.rear_tv.json) 中，pos_z.initial 已同步到 0.67，这就是一次明确的“运行结果反哺基线配置”。
+当前 [Data/Script/CameraCalibration/configs/camera.rear_tv.json](Data/Script/CameraCalibration/configs/camera.rear_tv.json) 中，pos_z.initial 已同步到 0.67，这就是一次明确的“运行结果反哺基线配置”。
 
 ### 7.3 以当前主链为界，做一次本地提交
 
@@ -478,7 +478,7 @@ script_control_camera_apply_result.txt 看起来像结果归档，实际上只�
 当前主链对应的关键文件：
 
 1. 主脚本：[Data/Script/CameraCalibration/camera_calibration.py](Data/Script/CameraCalibration/camera_calibration.py)
-2. 当前配置：[Data/Script/CameraCalibration/camera.rear_tv.json](Data/Script/CameraCalibration/camera.rear_tv.json)
+2. 当前配置：[Data/Script/CameraCalibration/configs/camera.rear_tv.json](Data/Script/CameraCalibration/configs/camera.rear_tv.json)
 3. Script Control 脚本：[Data/Script/CameraCalibration/script_control_apply.tcl](Data/Script/CameraCalibration/script_control_apply.tcl)
 4. 使用说明：[Data/Script/CameraCalibration/README.md](Data/Script/CameraCalibration/README.md)
 5. 设计文档：[Data/Script/CameraCalibration/project_notes/design.md](Data/Script/CameraCalibration/project_notes/design.md)

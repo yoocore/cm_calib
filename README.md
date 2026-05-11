@@ -14,8 +14,8 @@
 
 文件说明
 - camera_calibration.py：主脚本
-- camera.<camera>.json：每个摄像头维护一份运行输入配置，例如 camera.rear_tv.json
-- bootstrap.template.json：独立的 bootstrap 模板输入配置，用于在第一个摄像头还没有现成 camera config 时生成新配置；文件里尽量只保留项目相关的板原型和少量覆盖项
+- configs/camera.<camera>.json：每个摄像头维护一份运行输入配置，例如 configs/camera.rear_tv.json
+- configs/bootstrap.template.json：独立的 bootstrap 模板输入配置，用于在第一个摄像头还没有现成 camera config 时生成新配置；文件里尽量只保留项目相关的板原型和少量覆盖项
 - script_control_apply.tcl：唯一维护的 Script Control 命令脚本
 - project_notes/ipgmovie_control_workflow.md：IPG-MOVIE 控制流程、菜单项映射、刷新行为与最小化行为的持续记录文档
 - project_notes/README.md：项目强相关知识文档索引，收纳长期笔记、设计文档、流程文档和依赖清单
@@ -36,7 +36,7 @@
 - 在 VS Code 中，选择一次工作区解释器后，固定到 .venv 即可。
 - 如果 cv2、numpy、PIL 等导入突然再次显示未解析，优先先检查当前解释器是否正确，而不是直接排查脚本本身。
 - 手工运行命令时，优先使用明确的解释器路径：
-  - c:/CM_Projects/CMO141_Calibration/.venv/Scripts/python.exe camera_calibration.py --config camera.rear_tv.json
+  - c:/CM_Projects/CMO141_Calibration/.venv/Scripts/python.exe camera_calibration.py --config configs/camera.rear_tv.json
 
 推荐运行环境
 - Windows 缩放 100%
@@ -46,25 +46,25 @@
 - lens 页面至少初始化过一次后，Script Control、Camera Settings、IPGMovie 窗口在参数写入和 FBO 抓图烟测期间可以保持最小化
 
 快速开始
-1. 编辑对应摄像头的配置文件，例如 camera.rear_tv.json。
+1. 编辑对应摄像头的配置文件，例如 configs/camera.rear_tv.json。
 2. 创建或刷新本地虚拟环境，并根据 project_notes/requirements.txt 安装依赖。
 3. 在 VS Code 中确认当前选择的解释器是 .venv/Scripts/python.exe。
 4. 设置 real_image 和 output_dir。
 5. 为所有可见标定板配置 boards[]。
 6. 确认当前 Script Control 命令路径指向 Data/Script/CameraCalibration/script_control_apply.tcl。
 7. 可选：把当前 Script Control 读到的值回写进配置：
-  python camera_calibration.py --config camera.rear_tv.json --capture-initials --write-initials-to-config
+  python camera_calibration.py --config configs/camera.rear_tv.json --capture-initials --write-initials-to-config
 8. 使用配置中的初始值执行默认优化：
-  python camera_calibration.py --config camera.rear_tv.json
+  python camera_calibration.py --config configs/camera.rear_tv.json
 9. 可选：如果想测试是否存在另一个邻近 basin，可运行 multi-start 短跑探索：
-  python camera_calibration.py --config camera.rear_tv.json --multi-start-count 4 --multi-start-iters 24 --multi-start-jitter-steps 2.0
+  python camera_calibration.py --config configs/camera.rear_tv.json --multi-start-count 4 --multi-start-iters 24 --multi-start-jitter-steps 2.0
 10. 可选：如果想先短跑探索，再从最优起点做长跑收束，可以执行一体化 campaign：
-  python camera_calibration.py --config camera.rear_tv.json --explore-then-refine --multi-start-count 4 --multi-start-iters 24 --refine-iters 180
+  python camera_calibration.py --config configs/camera.rear_tv.json --explore-then-refine --multi-start-count 4 --multi-start-iters 24 --refine-iters 180
 11. 成功完成的优化会自动把 best_values 回写到配置中的 initial 字段，作为下一次运行的初始值。
 
 可选行为说明
-- 始终显式传入 --config，例如 --config camera.rear_tv.json。
-- 后续新增更多视角时，继续沿用 camera.<camera>.json 命名方式，例如 camera.front_tv.json。
+- 始终显式传入 --config，例如 --config configs/camera.rear_tv.json。
+- 后续新增更多视角时，继续沿用 configs/camera.<camera>.json 命名方式，例如 configs/camera.front_tv.json。
 - --resume-from-result 仍可作为遗留/手动恢复模式使用，但已不再是推荐的默认工作流。
 - --explore-then-refine 会使用 --multi-start-* 作为探索阶段参数，然后从短跑阶段最优结果启动一次 refine。
 - 在 --explore-then-refine 模式下，如果省略 --multi-start-count，默认使用 4 个起点；如果省略 --multi-start-iters，默认使用 min(config max_iters, 24)。
@@ -72,7 +72,8 @@
 - 如果你想在任何优化前，先把当前 IPG-MOVIE 里的值同步回配置，--capture-initials --write-initials-to-config 仍然很有用。
 
 简化后的仓库布局
-- 仓库现在对每个视角只保留一个摄像头专属 JSON 配置，命名为 config.<camera>.json。
+- 仓库现在对每个视角只保留一个摄像头专属 JSON 配置，命名为 configs/camera.<camera>.json。
+- 这些版本化输入统一存放在 Data/Script/CameraCalibration/configs/ 下。
 - 仓库只保留一个维护中的 Script Control Tcl：Data/Script/CameraCalibration/script_control_apply.tcl。
 - Python 路径已经有意收敛为：Script Control DDE 负责参数写入，IPG-MOVIE dde_fbo 负责图像抓取。
 - 仓库不再维护 UI 窗口连接逻辑，也不再维护其它 movie 抓取模式；当前有效路径就是纯 DDE/FBO。
@@ -80,7 +81,7 @@
 
 按当前视角自动提议 boards 配置
 - 你可以根据当前 real_image 自动生成一份候选 boards 配置：
-  python camera_calibration.py --config camera.rear_tv.json --propose-boards
+  python camera_calibration.py --config configs/camera.rear_tv.json --propose-boards
 - 该命令会输出：
   - 一份与输入 config 相邻的提议配置：*.proposed.json
   - 一张带编号的预览图：output_dir/board_proposal_preview.png
@@ -94,7 +95,7 @@
   - 真实图片，例如 Movie/ngxpro/8_left_tv_origin.jpg
   - 一张用红框标出可见标定板的人工标注图片
 - 可以直接基于独立模板 config 生成新的配置，而不依赖已有 camera json：
-  python camera_calibration.py --bootstrap-config-from-annotation --bootstrap-template-config bootstrap.template.json --bootstrap-real-image C:/CM_Projects/CMO141_Calibration/Movie/ngxpro/8_left_tv_origin.jpg --bootstrap-annotated-image C:/CM_Projects/CMO141_Calibration/Movie/ngxpro/8_left_tv.jpg
+  python camera_calibration.py --bootstrap-config-from-annotation --bootstrap-template-config configs/bootstrap.template.json --bootstrap-real-image C:/CM_Projects/CMO141_Calibration/Movie/ngxpro/8_left_tv_origin.jpg --bootstrap-annotated-image C:/CM_Projects/CMO141_Calibration/Movie/ngxpro/8_left_tv.jpg
 - 默认行为：
   - 先使用代码内置的稳定默认配置，再叠加 bootstrap 模板里的项目相关覆盖项
   - 用 --bootstrap-real-image 替换 real_image
@@ -102,9 +103,9 @@
   - 用 OCR 从标注图里读取每块板的真实标签文字，并把识别结果写入最终 board_id
   - 对第一次未识别成功的标注框，脚本会优先在该框内部做局部 OCR，然后才回退到更大的补充裁剪区域，避免大框把其它标签一起带入后干扰识别
   - 对参考图里无法按完整棋盘检测到的 checkerboard，自动裁出当前可见 ROI 模板，并切换到 template_match fallback
-  - 对 bootstrap 生成的 custom_maker，bootstrap.template.json 里不需要手工提供 template_image；脚本会默认直接使用整块人工标注 ROI 生成 template_image，并把 template_image、template_source_roi、template_source_crop 一起写入最终 camera.<camera>.json，方便人工追溯；不会再默认从 ROI 里二次自动猜一个更小的局部纹理块
+  - 对 bootstrap 生成的 custom_maker，configs/bootstrap.template.json 里不需要手工提供 template_image；脚本会默认直接使用整块人工标注 ROI 生成 template_image，并把 template_image、template_source_roi、template_source_crop 一起写入最终 configs/camera.<camera>.json，方便人工追溯；不会再默认从 ROI 里二次自动猜一个更小的局部纹理块
   - 通过 Script Control 读取当前激活的 IPG-MOVIE 相机窗口参数，并写入 parameters.*.initial
-  - 在模板输入同目录写出一份运行配置，例如 camera.left_tv.json
+  - 在模板输入同目录写出一份运行配置，例如 configs/camera.left_tv.json
   - 在 SimOutput/<camera>/annotation_bootstrap_preview.png 写出一张校验预览图
 - 标注图建议：
   - 每块板使用单独闭合的红框，框与框不要相交、不要共边、不要通过文字笔画间接连在一起
@@ -118,14 +119,14 @@
   - 自动生成的局部 checkerboard 模板会写到 real_image 同级目录下的 bootstrap_templates/<camera>/ 中
   - bootstrap 依赖当前 Python 环境可导入 rapidocr-onnxruntime
 - 可选覆盖项：
-  - --bootstrap-template-config：指定 bootstrap 模板输入路径；如果省略，默认使用脚本同目录下的 bootstrap.template.json
+  - --bootstrap-template-config：指定 bootstrap 模板输入路径；如果省略，默认使用脚本同目录下的 configs/bootstrap.template.json
   - --bootstrap-output：指定生成 JSON 的输出路径
   - --bootstrap-preview：指定预览图输出路径
   - --bootstrap-camera-name：当目标 camera 名称不想从图片文件名推导时可手动覆盖
   - --bootstrap-skip-current-params：如果只想做 ROI/template bootstrap，不想读取当前窗口参数，可以显式跳过
 - bootstrap 模板回归检查：
   - 如果想快速确认 bootstrap 生成的 custom_maker template 没有意外缩成一小块纹理，可以执行：
-    c:/CM_Projects/CMO141_Calibration/.venv/Scripts/python.exe bootstrap_template_health_check.py --config camera.right_rear.json
+    c:/CM_Projects/CMO141_Calibration/.venv/Scripts/python.exe bootstrap_template_health_check.py --config configs/camera.right_rear.json
   - 该检查会重点验证：
     - template_source_crop 是否异常小于 template_source_roi
     - bootstrap_templates/<camera>/ 下的自动模板图片尺寸是否与配置一致
@@ -180,7 +181,7 @@ boards[] 配置说明
   - weight
   - roi
 - checkerboard 还必须包含 board_size = [cols, rows]，表示内角点数量
-- custom_maker 不需要在 bootstrap.template.json 里手工写 template_image；脚本会基于 real_image 和 roi 自动裁出模板并写到当前 camera 独立目录，且 bootstrap 生成的 camera.<camera>.json 会显式保留这个 template_image 路径
+- custom_maker 不需要在 configs/bootstrap.template.json 里手工写 template_image；脚本会基于 real_image 和 roi 自动裁出模板并写到当前 camera 独立目录，且 bootstrap 生成的 configs/camera.<camera>.json 会显式保留这个 template_image 路径
 - 如果 custom_maker 来自 bootstrap 标注图，默认会把整块 roi 当作 template_source_roi，并把 template_source_crop 设为整块 roi；如果后续确实需要更小的模板来源，再显式手工覆盖 template_source_crop
 - degrade_threshold_* 字段用于定义每块板的防退化保护阈值
 - 脚本在评分前会先把截图缩放到参考图尺寸

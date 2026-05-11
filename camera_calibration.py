@@ -297,9 +297,12 @@ def _camera_name_from_config_path(config_path: Optional[Path]) -> str:
 
 def _default_bootstrap_template_path() -> Path:
     calibration_dir = Path(__file__).resolve().parent
-    preferred = calibration_dir / "bootstrap.template.json"
+    preferred = calibration_dir / "configs" / "bootstrap.template.json"
     if preferred.exists():
         return preferred
+    legacy_preferred = calibration_dir / "bootstrap.template.json"
+    if legacy_preferred.exists():
+        return legacy_preferred
     return calibration_dir / "config.bootstrap_template.json"
 
 
@@ -10032,7 +10035,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--config",
         required=False,
-        help="Path to runtime JSON config, for example camera.rear_tv.json; required except in bootstrap mode",
+        help="Path to runtime JSON config, for example configs/camera.rear_tv.json; required except in bootstrap mode",
     )
     parser.add_argument(
         "--capture-initials",
@@ -10072,7 +10075,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--bootstrap-template-config",
         default=None,
-        help="Path to standalone bootstrap template input; defaults to bootstrap.template.json next to the script",
+        help="Path to standalone bootstrap template input; defaults to configs/bootstrap.template.json next to the script",
     )
     parser.add_argument(
         "--bootstrap-annotated-image",

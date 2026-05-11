@@ -71,6 +71,13 @@ _LIVE_LOG_PRIMARY_STDERR: Optional[TextIO] = None
 _LIVE_LOG_STREAM: Optional[TextIO] = None
 _LIVE_LOG_PATH: Optional[Path] = None
 _LIVE_LOG_ATEXIT_REGISTERED = False
+_DDE_RECOVERY_ERROR_MARKERS = (
+    "remote server cannot handle this command",
+    "timed out waiting for",
+    "did not execute",
+    "exec failed",
+    "dde dispatch circuit recovery",
+)
 _RUNTIME_SESSION_LOCK_STREAM: Optional[TextIO] = None
 _RUNTIME_SESSION_LOCK_PATH: Optional[Path] = None
 _RUNTIME_SESSION_LOCK_ATEXIT_REGISTERED = False
@@ -1997,6 +2004,19 @@ def _write_initial_values_to_config_if_best(
 
 
 def _resolve_round_strategy_autotune_policy(cfg: dict) -> dict:
+    default_unlock_parameter_step_multipliers = {
+        "C": {
+            "lens_scale": 6.0,
+            "lens_offset_x": 6.0,
+            "lens_offset_y": 6.0,
+        },
+        "S": {
+            "lens_scale": 4.0,
+            "lens_offset_x": 4.0,
+            "lens_offset_y": 4.0,
+        },
+    }
+
     payload = cfg.get("round_strategy_autotune")
     if payload is False:
         return {
@@ -2014,10 +2034,37 @@ def _resolve_round_strategy_autotune_policy(cfg: dict) -> dict:
             "joint_max_single_worsen_cap": 4.5,
             "force_focus_activation_rounds": 1,
             "restrict_to_priority_boards": True,
+            "unlock_parameters_enabled": False,
+            "unlock_parameter_activation_rounds": 2,
+            "unlock_parameter_step_multipliers": default_unlock_parameter_step_multipliers,
+            "deanchor_baseline_enabled": False,
+            "deanchor_activation_stagnation_rounds": 2,
+            "deanchor_repeated_signature_count": 2,
+            "deanchor_score_delta": 0.05,
+            "skip_refine_on_plateau": False,
+            "skip_refine_activation_stagnation_rounds": 2,
+            "skip_refine_score_delta": 0.05,
         }
 
     if not isinstance(payload, dict):
         payload = {}
+
+    unlock_parameter_step_multipliers = copy.deepcopy(default_unlock_parameter_step_multipliers)
+    raw_unlock_parameter_step_multipliers = payload.get("unlock_parameter_step_multipliers")
+    if isinstance(raw_unlock_parameter_step_multipliers, dict):
+        for raw_family, raw_mapping in raw_unlock_parameter_step_multipliers.items():
+            family = str(raw_family).strip().upper()
+            if not family or not isinstance(raw_mapping, dict):
+                continue
+            family_mapping = unlock_parameter_step_multipliers.setdefault(family, {})
+            for raw_name, raw_value in raw_mapping.items():
+                name = str(raw_name).strip()
+                if not name:
+                    continue
+                try:
+                    family_mapping[name] = max(0.0, float(raw_value))
+                except Exception:
+                    continue
 
     return {
         "enabled": bool(payload.get("enabled", True)),
@@ -2048,6 +2095,26 @@ def _resolve_round_strategy_autotune_policy(cfg: dict) -> dict:
             1, int(payload.get("force_focus_activation_rounds", 1))
         ),
         "restrict_to_priority_boards": bool(payload.get("restrict_to_priority_boards", True)),
+        "unlock_parameters_enabled": bool(payload.get("unlock_parameters_enabled", False)),
+        "unlock_parameter_activation_rounds": max(
+            1, int(payload.get("unlock_parameter_activation_rounds", 2))
+        ),
+        "unlock_parameter_step_multipliers": unlock_parameter_step_multipliers,
+        "deanchor_baseline_enabled": bool(payload.get("deanchor_baseline_enabled", False)),
+        "deanchor_activation_stagnation_rounds": max(
+            1, int(payload.get("deanchor_activation_stagnation_rounds", 2))
+        ),
+        "deanchor_repeated_signature_count": max(
+            1, int(payload.get("deanchor_repeated_signature_count", 2))
+        ),
+        "deanchor_score_delta": max(0.0, float(payload.get("deanchor_score_delta", 0.05))),
+        "skip_refine_on_plateau": bool(payload.get("skip_refine_on_plateau", False)),
+        "skip_refine_activation_stagnation_rounds": max(
+            1, int(payload.get("skip_refine_activation_stagnation_rounds", 2))
+        ),
+        "skip_refine_score_delta": max(
+            0.0, float(payload.get("skip_refine_score_delta", 0.05))
+        ),
     }
 
 
@@ -2075,6 +2142,62 @@ def _round_entry_result_json(round_entry: dict) -> Optional[str]:
         if isinstance(raw_result_json, str) and raw_result_json.strip():
             return raw_result_json
     return None
+
+
+def _round_entry_best_values(round_entry: dict) -> Dict[str, float]:
+    if not isinstance(round_entry, dict):
+        return {}
+
+    raw_values = round_entry.get("best_values")
+    if not isinstance(raw_values, dict):
+        best_run = round_entry.get("best_run")
+        if isinstance(best_run, dict):
+            raw_values = best_run.get("best_values")
+    if not isinstance(raw_values, dict):
+        return {}
+
+    values: Dict[str, float] = {}
+    for raw_name, raw_value in raw_values.items():
+        name = str(raw_name).strip()
+        if not name:
+            continue
+        try:
+            values[name] = float(raw_value)
+        except Exception:
+            continue
+    return values
+
+
+def _round_value_signature(values: Dict[str, float]) -> Tuple[Tuple[str, float], ...]:
+    return tuple((name, round(float(value), 6)) for name, value in sorted(values.items()))
+
+
+def _count_matching_round_signatures(
+    round_summaries: List[dict],
+    target_round: dict,
+    score_delta: float,
+) -> int:
+    target_score = _round_entry_best_score(target_round)
+    target_values = _round_entry_best_values(target_round)
+    if target_score is None or not target_values:
+        return 0
+
+    target_signature = _round_value_signature(target_values)
+    tolerance = max(0.0, float(score_delta))
+    match_count = 0
+    for round_entry in round_summaries:
+        round_score = _round_entry_best_score(round_entry)
+        if round_score is None:
+            continue
+        round_values = _round_entry_best_values(round_entry)
+        if not round_values:
+            continue
+        if _round_value_signature(round_values) != target_signature:
+            continue
+        if abs(float(round_score) - float(target_score)) > tolerance:
+            continue
+        match_count += 1
+    return match_count
 
 
 def _round_entry_current_param_order(round_entry: dict) -> List[str]:
@@ -2216,10 +2339,14 @@ def _build_round_strategy_autotune_patch(
     policy: dict,
     dominant_family: dict,
     current_param_order: List[str],
+    *,
+    stagnation_rounds: int,
+    repeated_signature_count: int,
 ) -> dict:
     patch: Dict[str, object] = {}
     family_board_count = max(1, int(dominant_family.get("board_count", 1)))
     escalation_steps = max(1, family_board_count - 1)
+    dominant_family_name = str(dominant_family.get("family", "")).strip().upper()
 
     priority_cfg = cfg.get("priority_board_acceptance")
     if isinstance(priority_cfg, dict) and priority_cfg:
@@ -2304,20 +2431,103 @@ def _build_round_strategy_autotune_patch(
 
     escape_cfg = cfg.get("escape_exploration")
     if isinstance(escape_cfg, dict):
-        escape_patch: Dict[str, int] = {}
+        escape_patch: Dict[str, object] = {}
         current_board_focus_top_k = max(1, int(escape_cfg.get("board_focus_top_k", 1)))
         desired_board_focus_top_k = max(current_board_focus_top_k, family_board_count)
         if desired_board_focus_top_k > current_board_focus_top_k:
             escape_patch["board_focus_top_k"] = desired_board_focus_top_k
+        deanchor_ready = (
+            bool(policy.get("deanchor_baseline_enabled", False))
+            and (
+                stagnation_rounds >= int(policy.get("deanchor_activation_stagnation_rounds", 2))
+                or repeated_signature_count >= int(policy.get("deanchor_repeated_signature_count", 2))
+            )
+        )
+        if deanchor_ready and not bool(escape_cfg.get("deanchor_baseline_start", False)):
+            escape_patch["deanchor_baseline_start"] = True
+        if deanchor_ready:
+            current_activation_rounds = max(
+                1,
+                int(
+                    escape_cfg.get(
+                        "deanchor_activation_min_stagnation_rounds",
+                        policy.get("deanchor_activation_stagnation_rounds", 2),
+                    )
+                ),
+            )
+            desired_activation_rounds = min(
+                current_activation_rounds,
+                int(policy.get("deanchor_activation_stagnation_rounds", 2)),
+            )
+            if desired_activation_rounds < current_activation_rounds:
+                escape_patch["deanchor_activation_min_stagnation_rounds"] = desired_activation_rounds
         if escape_patch:
             patch["escape_exploration"] = escape_patch
 
+    unlock_priority_names: List[str] = []
+    if (
+        bool(policy.get("unlock_parameters_enabled", False))
+        and stagnation_rounds >= int(policy.get("unlock_parameter_activation_rounds", 2))
+    ):
+        raw_unlock_map = policy.get("unlock_parameter_step_multipliers", {})
+        family_unlock_map = raw_unlock_map.get(dominant_family_name, {}) if isinstance(raw_unlock_map, dict) else {}
+        if isinstance(family_unlock_map, dict) and family_unlock_map:
+            parameters_cfg = cfg.get("parameters")
+            parameter_patch: Dict[str, dict] = {}
+            for raw_name, raw_multiplier in family_unlock_map.items():
+                name = str(raw_name).strip()
+                if not name or not isinstance(parameters_cfg, dict):
+                    continue
+                param_cfg = parameters_cfg.get(name)
+                if not isinstance(param_cfg, dict):
+                    continue
+                try:
+                    multiplier = max(0.0, float(raw_multiplier))
+                    step = max(
+                        abs(float(param_cfg.get("step", 0.0))),
+                        abs(float(param_cfg.get("min_step", 0.0))),
+                    )
+                except Exception:
+                    continue
+                if multiplier <= 0.0 or step <= 0.0:
+                    continue
+                initial_value = float(param_cfg.get("initial", 0.0))
+                min_value, max_value = _resolve_parameter_bounds(param_cfg)
+                current_min_offset = float(param_cfg.get("min_offset", min_value - initial_value))
+                current_max_offset = float(param_cfg.get("max_offset", max_value - initial_value))
+                desired_half_range = _quantize_float(
+                    max(step * multiplier, abs(current_min_offset), abs(current_max_offset)),
+                    int(param_cfg.get("decimals", 4)),
+                )
+                next_min_offset = min(current_min_offset, -desired_half_range)
+                next_max_offset = max(current_max_offset, desired_half_range)
+                param_patch: Dict[str, float] = {}
+                if not math.isclose(next_min_offset, current_min_offset, rel_tol=0.0, abs_tol=1e-12):
+                    param_patch["min_offset"] = next_min_offset
+                if not math.isclose(next_max_offset, current_max_offset, rel_tol=0.0, abs_tol=1e-12):
+                    param_patch["max_offset"] = next_max_offset
+                if param_patch:
+                    parameter_patch[name] = param_patch
+                    unlock_priority_names.append(name)
+            if parameter_patch:
+                patch["parameters"] = parameter_patch
+
+    desired_order = list(current_param_order)
     if current_param_order:
         existing_order = [
             str(name).strip() for name in cfg.get("optimization_order", []) if str(name).strip()
         ]
-        if current_param_order != existing_order:
-            patch["optimization_order"] = list(current_param_order)
+        if unlock_priority_names:
+            desired_order = _merge_unique_parameter_names(unlock_priority_names, desired_order)
+        if desired_order != existing_order:
+            patch["optimization_order"] = list(desired_order)
+    elif unlock_priority_names:
+        existing_order = [
+            str(name).strip() for name in cfg.get("optimization_order", []) if str(name).strip()
+        ]
+        desired_order = _merge_unique_parameter_names(unlock_priority_names, existing_order)
+        if desired_order != existing_order:
+            patch["optimization_order"] = list(desired_order)
 
     return patch
 
@@ -2361,6 +2571,24 @@ def _apply_round_strategy_autotune_patch(cfg: dict, patch: dict) -> List[str]:
                 section_cfg[key] = value
                 changed_paths.append(f"{section_name}.{key}")
 
+    parameters_patch = patch.get("parameters")
+    if isinstance(parameters_patch, dict) and parameters_patch:
+        parameters_cfg = cfg.get("parameters")
+        if not isinstance(parameters_cfg, dict):
+            parameters_cfg = {}
+            cfg["parameters"] = parameters_cfg
+        for raw_name, raw_param_patch in parameters_patch.items():
+            name = str(raw_name).strip()
+            if not name or not isinstance(raw_param_patch, dict):
+                continue
+            param_cfg = parameters_cfg.get(name)
+            if not isinstance(param_cfg, dict):
+                continue
+            for key, value in raw_param_patch.items():
+                if _cfg_value_changed(param_cfg.get(key), value):
+                    param_cfg[key] = value
+                    changed_paths.append(f"parameters.{name}.{key}")
+
     return changed_paths
 
 
@@ -2403,11 +2631,18 @@ def _maybe_autotune_round_strategy(
         return None
 
     current_param_order = _round_entry_current_param_order(best_round)
+    repeated_signature_count = _count_matching_round_signatures(
+        round_summaries,
+        best_round,
+        float(policy.get("deanchor_score_delta", 0.05)),
+    )
     patch = _build_round_strategy_autotune_patch(
         cfg,
         policy,
         dominant_family,
         current_param_order,
+        stagnation_rounds=stagnation_rounds,
+        repeated_signature_count=repeated_signature_count,
     )
     if not patch:
         return None
@@ -2436,6 +2671,7 @@ def _maybe_autotune_round_strategy(
         "family": dominant_family["family"],
         "board_ids": list(dominant_family["board_ids"]),
         "stagnation_rounds": int(stagnation_rounds),
+        "repeated_signature_count": int(repeated_signature_count),
         "source_result_json": result_json,
         "changed_paths": list(config_changed_paths or memory_changed_paths),
         "config_updated": bool(config_changed_paths),
@@ -2534,6 +2770,8 @@ def _resolve_escape_exploration_policy(cfg: dict) -> dict:
             "local_jitter_scale": 1.5,
             "stagnation_round_scale_up": 0.35,
             "activation_min_stagnation_rounds": 1,
+            "deanchor_baseline_start": False,
+            "deanchor_activation_min_stagnation_rounds": 2,
             "focus_param_budget": 4,
             "focus_rank_decay": 0.2,
             "board_focus_top_k": 2,
@@ -2592,6 +2830,16 @@ def _resolve_escape_exploration_policy(cfg: dict) -> dict:
         "local_jitter_scale": max(0.0, float(payload.get("local_jitter_scale", 1.5))),
         "stagnation_round_scale_up": max(0.0, float(payload.get("stagnation_round_scale_up", 0.35))),
         "activation_min_stagnation_rounds": max(0, int(payload.get("activation_min_stagnation_rounds", 1))),
+        "deanchor_baseline_start": bool(payload.get("deanchor_baseline_start", False)),
+        "deanchor_activation_min_stagnation_rounds": max(
+            1,
+            int(
+                payload.get(
+                    "deanchor_activation_min_stagnation_rounds",
+                    payload.get("activation_min_stagnation_rounds", 1),
+                )
+            ),
+        ),
         "focus_param_budget": max(1, int(payload.get("focus_param_budget", 4))),
         "focus_rank_decay": min(0.8, max(0.0, float(payload.get("focus_rank_decay", 0.2)))),
         "board_focus_top_k": max(1, int(payload.get("board_focus_top_k", 2))),
@@ -2930,6 +3178,15 @@ def _build_multi_start_run_configs(
         bool(escape_policy.get("enabled", False))
         and stagnation_rounds >= int(escape_policy.get("activation_min_stagnation_rounds", 1))
     )
+    deanchor_baseline_start = (
+        coarse_escape_active
+        and bool(escape_policy.get("deanchor_baseline_start", False))
+        and stagnation_rounds >= int(escape_policy.get("deanchor_activation_min_stagnation_rounds", 2))
+    )
+    deanchor_multiplier_index = min(
+        max(0, stagnation_rounds - int(escape_policy.get("deanchor_activation_min_stagnation_rounds", 2))),
+        max(0, len(coarse_start_multipliers) - 1),
+    )
 
     for start_index in range(start_count):
         run_cfg = copy.deepcopy(cfg)
@@ -2942,7 +3199,12 @@ def _build_multi_start_run_configs(
         run_parameters: Dict[str, dict] = {}
         initial_values: Dict[str, float] = {}
         escape_variant: Optional[dict] = None
-        if coarse_escape_active and start_index > 0:
+        if deanchor_baseline_start and start_index == 0:
+            escape_variant = {
+                "mode": "focused_escape",
+                "coarse_multiplier": coarse_start_multipliers[deanchor_multiplier_index],
+            }
+        elif coarse_escape_active and start_index > 0:
             escape_index = start_index - 1
             escape_variant = {
                 "mode": ["coarse_positive", "coarse_negative", "focused_escape"][escape_index % 3],
@@ -2959,7 +3221,7 @@ def _build_multi_start_run_configs(
             decimals = int(base_param.get("decimals", 4))
             start_value = initial_value
             unlocked = not math.isclose(min_value, max_value, rel_tol=0.0, abs_tol=1e-12)
-            if start_index > 0 and unlocked and step > 0.0:
+            if (start_index > 0 or escape_variant is not None) and unlocked and step > 0.0:
                 delta = 0.0
                 if jitter_steps > 0.0:
                     delta += (
@@ -3002,6 +3264,7 @@ def _build_multi_start_run_configs(
                     "focus_boards": list(multi_start_guidance.get("worst_boards", [])),
                     "profile_name": guidance_profile_name,
                     "stagnation_rounds": stagnation_rounds,
+                    "baseline_deanchored": bool(deanchor_baseline_start and start_index == 0),
                 }
             )
         run_cfg["multi_start"] = multi_start_meta
@@ -3253,6 +3516,47 @@ def _select_campaign_best_run(explore_best_run: dict, refine_run: dict) -> dict:
     return explore_candidate
 
 
+def _should_skip_refine_run(
+    cfg: dict,
+    best_run: dict,
+    *,
+    previous_escape_stagnation_rounds: int,
+    anchor_score: Optional[float],
+    round_seed_policy: dict,
+) -> Optional[dict]:
+    policy = _resolve_round_strategy_autotune_policy(cfg)
+    if not bool(policy.get("skip_refine_on_plateau", False)):
+        return None
+    if anchor_score is None:
+        return None
+
+    try:
+        explore_best_score = float(best_run["best_score"])
+    except Exception:
+        return None
+
+    projected_stagnation_rounds = _next_escape_stagnation_rounds(
+        explore_best_score,
+        anchor_score,
+        float(round_seed_policy.get("score_tolerance", 1e-6)),
+        previous_escape_stagnation_rounds,
+    )
+    if projected_stagnation_rounds < int(policy.get("skip_refine_activation_stagnation_rounds", 2)):
+        return None
+    if explore_best_score < float(anchor_score) - float(policy.get("skip_refine_score_delta", 0.05)):
+        return None
+
+    return {
+        "skipped": True,
+        "reason": (
+            "refine skipped because explore best stayed inside the current plateau basin"
+        ),
+        "anchor_score": float(anchor_score),
+        "explore_best_score": explore_best_score,
+        "projected_stagnation_rounds": int(projected_stagnation_rounds),
+    }
+
+
 def _run_explore_then_refine_campaign(
     config_path: Path,
     cfg: dict,
@@ -3262,6 +3566,8 @@ def _run_explore_then_refine_campaign(
     seed: int,
     explore_max_iters: int,
     refine_max_iters: Optional[int],
+    previous_escape_stagnation_rounds: int = 0,
+    anchor_score: Optional[float] = None,
     output_root_dir: Optional[Path] = None,
 ) -> dict:
     if start_count <= 0:
@@ -3296,6 +3602,52 @@ def _run_explore_then_refine_campaign(
     )
     best_run = explore_summary["best_run"]
     best_values = dict(best_run["best_values"])
+    round_seed_policy = _resolve_round_seed_policy(cfg)
+    skip_refine_payload = _should_skip_refine_run(
+        cfg,
+        best_run,
+        previous_escape_stagnation_rounds=previous_escape_stagnation_rounds,
+        anchor_score=anchor_score,
+        round_seed_policy=round_seed_policy,
+    )
+    if skip_refine_payload is not None:
+        summary = {
+            "config": str(config_path),
+            "campaign_output_dir": str(campaign_root),
+            "explore": {
+                "output_dir": str(explore_summary["output_dir"]),
+                "summary_json": str(Path(explore_summary["output_dir"]) / "multistart_summary.json"),
+                "start_count": start_count,
+                "max_iters": explore_max_iters,
+                "jitter_steps": jitter_steps,
+                "seed": seed,
+                "best_run": best_run,
+            },
+            "refine": {
+                "skipped": True,
+                "reason": skip_refine_payload["reason"],
+                "max_iters": int(refine_max_iters or int(cfg.get("max_iters", 0))),
+                "anchor_score": skip_refine_payload["anchor_score"],
+                "explore_best_score": skip_refine_payload["explore_best_score"],
+                "projected_stagnation_rounds": skip_refine_payload["projected_stagnation_rounds"],
+            },
+        }
+        summary["best_run"] = dict(best_run)
+        summary["best_run"]["stage"] = "explore"
+        summary_path = campaign_root / "campaign_summary.json"
+        summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(
+            "Refine skipped: "
+            f"explore_best_score={skip_refine_payload['explore_best_score']:.6f} "
+            f"anchor_score={skip_refine_payload['anchor_score']:.6f} "
+            f"projected_stagnation_rounds={skip_refine_payload['projected_stagnation_rounds']}"
+        )
+        print("Campaign summary:", summary_path)
+        print("Campaign best stage:", summary["best_run"]["stage"])
+        print("Campaign best score:", summary["best_run"]["best_score"])
+        print("Campaign best image:", summary["best_run"]["best_image"])
+        print("Campaign best result JSON:", summary["best_run"]["result_json"])
+        return summary
 
     refine_cfg = _cfg_with_initial_values(cfg, best_values)
     refine_output_dir = campaign_root / "refine"
@@ -3433,6 +3785,51 @@ def _write_rounds_summary(rounds_root: Path, payload: dict) -> Path:
 
 def _is_fatal_initial_board_error(exc: Exception) -> bool:
     return str(exc).startswith("Initial evaluation aborted due to fatal board scores:")
+
+
+def _is_timeout_like_failure_text(text: str) -> bool:
+    lowered = str(text).strip().lower()
+    return any(marker in lowered for marker in _DDE_RECOVERY_ERROR_MARKERS)
+
+
+def _extract_failure_summary_path(text: str) -> Optional[Path]:
+    raw_text = str(text).strip()
+    marker = " See "
+    if marker not in raw_text:
+        return None
+    _, _, path_text = raw_text.partition(marker)
+    candidate = path_text.strip()
+    if not candidate:
+        return None
+    return Path(candidate)
+
+
+def _is_timeout_like_round_failure(exc: Exception) -> bool:
+    text = str(exc)
+    if _is_timeout_like_failure_text(text):
+        return True
+
+    summary_path = _extract_failure_summary_path(text)
+    if summary_path is None or not summary_path.exists():
+        return False
+
+    try:
+        payload = json.loads(summary_path.read_text(encoding="utf-8", errors="replace"))
+    except Exception:
+        return False
+
+    runs = payload.get("runs")
+    if not isinstance(runs, list):
+        return False
+
+    failed_errors = [
+        str(entry.get("error", ""))
+        for entry in runs
+        if isinstance(entry, dict) and entry.get("status") == "failed"
+    ]
+    return bool(failed_errors) and all(
+        _is_timeout_like_failure_text(error_text) for error_text in failed_errors
+    )
 
 
 def _run_single_optimize(
@@ -3801,6 +4198,9 @@ def _run_explore_then_refine_rounds(
     escape_stagnation_rounds = 0
     escape_tolerance = float(round_seed_policy.get("score_tolerance", 1e-6))
     strategy_autotune_events: List[dict] = []
+    timeout_fuse_limit = max(0, int(cfg.get("timeout_fuse_consecutive_round_failures", 2)))
+    consecutive_timeout_like_failures = 0
+    abort_reason: Optional[str] = None
 
     for round_index in range(round_count):
         round_no = round_index + 1
@@ -3810,17 +4210,50 @@ def _run_explore_then_refine_rounds(
             f"Explore-then-refine rounds: round={round_no}/{round_count} "
             f"seed={round_seed} output_dir={round_output_dir}"
         )
-        summary = _run_explore_then_refine_campaign(
-            config_path=config_path,
-            cfg=active_cfg,
-            base_output_dir=base_output_dir,
-            start_count=start_count,
-            jitter_steps=jitter_steps,
-            seed=round_seed,
-            explore_max_iters=explore_max_iters,
-            refine_max_iters=refine_max_iters,
-            output_root_dir=round_output_dir,
-        )
+        try:
+            summary = _run_explore_then_refine_campaign(
+                config_path=config_path,
+                cfg=active_cfg,
+                base_output_dir=base_output_dir,
+                start_count=start_count,
+                jitter_steps=jitter_steps,
+                seed=round_seed,
+                explore_max_iters=explore_max_iters,
+                refine_max_iters=refine_max_iters,
+                previous_escape_stagnation_rounds=escape_stagnation_rounds,
+                anchor_score=anchor_score,
+                output_root_dir=round_output_dir,
+            )
+        except Exception as exc:
+            timeout_like_failure = _is_timeout_like_round_failure(exc)
+            consecutive_timeout_like_failures = (
+                consecutive_timeout_like_failures + 1 if timeout_like_failure else 0
+            )
+            round_entry = {
+                "round_index": round_no,
+                "seed": round_seed,
+                "campaign_output_dir": str(round_output_dir),
+                "status": "failed",
+                "error": str(exc),
+                "timeout_like_failure": timeout_like_failure,
+                "consecutive_timeout_like_failures": consecutive_timeout_like_failures,
+            }
+            round_summaries.append(round_entry)
+            print(f"Explore-then-refine round {round_no} failed: {exc}")
+            if _is_fatal_initial_board_error(exc):
+                raise
+            if timeout_fuse_limit > 0 and consecutive_timeout_like_failures >= timeout_fuse_limit:
+                abort_reason = (
+                    "Explore-then-refine timeout fuse tripped after "
+                    f"{consecutive_timeout_like_failures} consecutive timeout-like failed rounds. "
+                    f"Last error: {exc}"
+                )
+                round_entry["status"] = "aborted"
+                round_entry["abort_reason"] = abort_reason
+                print(abort_reason)
+                break
+            continue
+        consecutive_timeout_like_failures = 0
         best_run = dict(summary["best_run"])
         _write_initial_values_to_config_if_best(
             config_path,
@@ -3838,6 +4271,7 @@ def _run_explore_then_refine_rounds(
             "round_index": round_no,
             "seed": round_seed,
             "campaign_output_dir": summary["campaign_output_dir"],
+            "status": "finished",
             "best_run": best_run,
             "current_param_order": current_param_order,
         }
@@ -3896,6 +4330,10 @@ def _run_explore_then_refine_rounds(
         "rounds": round_summaries,
     }
     payload["summary_json"] = str(_write_rounds_summary(rounds_root, payload))
+    if abort_reason is not None:
+        raise RuntimeError(f"{abort_reason} See {payload['summary_json']}")
+    if best_round is None:
+        raise RuntimeError(f"All explore-then-refine rounds failed. See {payload['summary_json']}")
     return payload
 
 
@@ -4004,6 +4442,7 @@ class EvalImageTransform:
 
 
 class CameraCalibrator:
+    DDE_OPERATION_TIMEOUT_FLOOR_SEC = 20.0
     SCRIPT_CONTROL_WRITE_WIDGETS = {
         "roll": ".camera.presetFrame.x",
         "pitch": ".camera.presetFrame.y",
@@ -4100,8 +4539,21 @@ class CameraCalibrator:
         )
         self.script_control_dde_service = str(cfg.get("script_control_dde_service", "TclEval"))
         self.script_control_dde_topic = str(cfg.get("script_control_dde_topic", "CarMaker"))
-        self.script_control_timeout_sec = float(cfg.get("script_control_timeout_sec", 5.0))
+        configured_script_control_timeout_sec = float(cfg.get("script_control_timeout_sec", 5.0))
+        self.script_control_timeout_sec = max(
+            configured_script_control_timeout_sec,
+            self.DDE_OPERATION_TIMEOUT_FLOOR_SEC,
+        )
         self.script_control_settle_sec = float(cfg.get("script_control_settle_sec", 0.2))
+        self.dde_circuit_trip_failures = max(1, int(cfg.get("dde_circuit_trip_failures", 3)))
+        self.dde_circuit_cooldown_sec = max(
+            0.0,
+            float(cfg.get("dde_circuit_cooldown_sec", 1.5)),
+        )
+        self.dde_dispatch_failure_streak = 0
+        self.dde_circuit_opened_at: Optional[float] = None
+        self.dde_circuit_last_error_text = ""
+        self._dde_recovery_probe_active = False
         self.verbose_dde_diag = bool(cfg.get("verbose_dde_diag", False))
         self.movie_restart_settle_sec = float(cfg.get("movie_restart_settle_sec", 2.0))
         self.max_gui_movie_restart_recoveries = max(
@@ -5249,6 +5701,7 @@ class CameraCalibrator:
         return applied
 
     def _run_script_control_dde_runscript(self, script_path: Path) -> bool:
+        self._ensure_dde_dispatch_ready("script_control_runscript")
         try:
             import win32ui  # noqa: F401
             import dde  # type: ignore
@@ -5459,6 +5912,7 @@ class CameraCalibrator:
                                 "success",
                                 time.perf_counter() - attempt_started,
                             )
+                            self._record_dde_operation_success()
                             self._unlink_script_control_result_file(invocation_result_path)
                             return msg
                     time.sleep(0.1)
@@ -5485,11 +5939,14 @@ class CameraCalibrator:
                 time.sleep(retry_sleep_sec)
 
         if last_runtime_error is not None:
+            self._record_dde_operation_failure(last_runtime_error, "script_control_apply")
             raise last_runtime_error
-        raise RuntimeError(
+        final_error = RuntimeError(
             "Timed out waiting for Script Control result file. "
             f"Script Control did not execute {self.script_control_script_path}."
         )
+        self._record_dde_operation_failure(final_error, "script_control_apply")
+        raise final_error
 
     def _unlink_script_control_result_file(
         self,
@@ -5517,46 +5974,122 @@ class CameraCalibrator:
 
     def _runtime_error_needs_dde_recovery_probe(self, exc: BaseException) -> bool:
         text = self._summarize_dde_detail(exc).lower()
-        return "remote server cannot handle this command" in text
+        return any(
+            marker in text
+            for marker in _DDE_RECOVERY_ERROR_MARKERS
+        )
+
+    def _reset_dde_dispatch_circuit(self) -> None:
+        self.dde_dispatch_failure_streak = 0
+        self.dde_circuit_opened_at = None
+        self.dde_circuit_last_error_text = ""
+
+    def _record_dde_operation_success(self) -> None:
+        if self._dde_recovery_probe_active:
+            return
+        self._reset_dde_dispatch_circuit()
+
+    def _record_dde_operation_failure(self, exc: BaseException, operation: str) -> None:
+        if self._dde_recovery_probe_active:
+            return
+        if not self._runtime_error_needs_dde_recovery_probe(exc):
+            self._reset_dde_dispatch_circuit()
+            return
+
+        self.dde_dispatch_failure_streak += 1
+        self.dde_circuit_last_error_text = self._summarize_dde_detail(exc)
+        if self.dde_dispatch_failure_streak < self.dde_circuit_trip_failures:
+            return
+        if self.dde_circuit_opened_at is None:
+            self.dde_circuit_opened_at = time.perf_counter()
+            self._log_dde_retry_event(
+                "dde_dispatch_circuit",
+                self.dde_dispatch_failure_streak,
+                self.dde_circuit_trip_failures,
+                "opened",
+                0.0,
+                detail=f"operation={operation} error={self.dde_circuit_last_error_text}",
+            )
+
+    def _ensure_dde_dispatch_ready(self, operation: str) -> None:
+        if self._dde_recovery_probe_active or self.dde_circuit_opened_at is None:
+            return
+
+        elapsed_sec = max(0.0, time.perf_counter() - self.dde_circuit_opened_at)
+        cooldown_remaining = self.dde_circuit_cooldown_sec - elapsed_sec
+        if cooldown_remaining > 0:
+            self._log_dde_retry_event(
+                "dde_dispatch_circuit",
+                self.dde_dispatch_failure_streak,
+                self.dde_circuit_trip_failures,
+                "cooldown",
+                elapsed_sec,
+                detail=f"operation={operation}",
+                retry_sleep_sec=cooldown_remaining,
+            )
+            time.sleep(cooldown_remaining)
+
+        if self._wait_for_dde_service_recovery():
+            self._log_dde_retry_event(
+                "dde_dispatch_circuit",
+                1,
+                1,
+                "closed",
+                0.0,
+                detail=f"operation={operation}",
+            )
+            return
+
+        detail = self.dde_circuit_last_error_text or "recovery probe failed"
+        raise RuntimeError(
+            "Timed out waiting for DDE dispatch circuit recovery before "
+            f"{operation}; last_error={detail}"
+        )
 
     def _wait_for_dde_service_recovery(self) -> bool:
+        prior_probe_state = self._dde_recovery_probe_active
+        self._dde_recovery_probe_active = True
         retry_delay = max(self.script_control_settle_sec, 0.5)
         attempt_count = 4
-        for attempt in range(attempt_count):
-            attempt_no = attempt + 1
-            attempt_started = time.perf_counter()
-            try:
-                self._get_movie_dde_view_size(allow_cached_fallback=False)
-                self._log_dde_retry_event(
-                    "dde_recovery_probe",
-                    attempt_no,
-                    attempt_count,
-                    "success",
-                    time.perf_counter() - attempt_started,
-                )
-                return True
-            except Exception as exc:
-                retry_sleep_sec = retry_delay * attempt_no if attempt < attempt_count - 1 else None
-                self._log_dde_retry_event(
-                    "dde_recovery_probe",
-                    attempt_no,
-                    attempt_count,
-                    "retry" if retry_sleep_sec is not None else "failed",
-                    time.perf_counter() - attempt_started,
-                    detail=exc,
-                    retry_sleep_sec=retry_sleep_sec,
-                )
-                if retry_sleep_sec is not None:
-                    time.sleep(retry_sleep_sec)
-        self._log_dde_retry_event(
-            "movie_restart_recovery",
-            self.gui_movie_restart_recovery_attempts,
-            self.max_gui_movie_restart_recoveries,
-            "disabled",
-            0.0,
-            detail="GUI Movie auto-restart disabled for DDE failures; leaving current failure to bubble up",
-        )
-        return False
+        try:
+            for attempt in range(attempt_count):
+                attempt_no = attempt + 1
+                attempt_started = time.perf_counter()
+                try:
+                    self._get_movie_dde_view_size(allow_cached_fallback=False)
+                    self._log_dde_retry_event(
+                        "dde_recovery_probe",
+                        attempt_no,
+                        attempt_count,
+                        "success",
+                        time.perf_counter() - attempt_started,
+                    )
+                    self._reset_dde_dispatch_circuit()
+                    return True
+                except Exception as exc:
+                    retry_sleep_sec = retry_delay * attempt_no if attempt < attempt_count - 1 else None
+                    self._log_dde_retry_event(
+                        "dde_recovery_probe",
+                        attempt_no,
+                        attempt_count,
+                        "retry" if retry_sleep_sec is not None else "failed",
+                        time.perf_counter() - attempt_started,
+                        detail=exc,
+                        retry_sleep_sec=retry_sleep_sec,
+                    )
+                    if retry_sleep_sec is not None:
+                        time.sleep(retry_sleep_sec)
+            self._log_dde_retry_event(
+                "movie_restart_recovery",
+                self.gui_movie_restart_recovery_attempts,
+                self.max_gui_movie_restart_recoveries,
+                "disabled",
+                0.0,
+                detail="GUI Movie auto-restart disabled for DDE failures; leaving current failure to bubble up",
+            )
+            return False
+        finally:
+            self._dde_recovery_probe_active = prior_probe_state
 
     @staticmethod
     def _extract_cli_arg_value(command_line: str, option_name: str) -> Optional[str]:
@@ -5768,14 +6301,13 @@ class CameraCalibrator:
                 expected = self._quantize_param_value(param, param.value)
                 actual = observed.get(param.name)
                 read_decimals = self.SCRIPT_CONTROL_READ_DECIMALS.get(param.name, param.decimals)
-                expected_readback = self._quantize_value(expected, read_decimals)
-                tolerance = max((10 ** (-read_decimals)) * 0.5, 1e-6)
-                if actual is None or not math.isclose(
+                if not self._script_control_readback_matches(
+                    expected,
                     actual,
-                    expected_readback,
-                    rel_tol=0.0,
-                    abs_tol=tolerance,
+                    param.decimals,
+                    read_decimals,
                 ):
+                    expected_readback = self._quantize_value(expected, read_decimals)
                     mismatches.append(
                         f"{param.name}: expected {expected_readback}, read back {actual}"
                     )
@@ -5812,6 +6344,29 @@ class CameraCalibrator:
     @staticmethod
     def _quantize_value(value: float, decimals: int) -> float:
         return float(f"{float(value):.{decimals}f}")
+
+    def _script_control_readback_matches(
+        self,
+        expected: float,
+        actual: Optional[float],
+        spec_decimals: int,
+        read_decimals: int,
+    ) -> bool:
+        if actual is None:
+            return False
+
+        expected_readback = self._quantize_value(expected, read_decimals)
+        read_unit = 10 ** (-read_decimals)
+        # Script Control position fields read back at 3 decimals and can land one
+        # displayed step away from the written value because of truncation/rounding.
+        tolerance = read_unit if read_decimals < spec_decimals else read_unit * 0.5
+        tolerance += 1e-12
+        return math.isclose(
+            actual,
+            expected_readback,
+            rel_tol=0.0,
+            abs_tol=max(tolerance, 1e-6),
+        )
 
     def _quantize_param_value(self, spec: ParameterSpec, value: float) -> float:
         clipped = float(np.clip(value, spec.min_value, spec.max_value))
@@ -5854,6 +6409,7 @@ class CameraCalibrator:
             )
             script_path.write_text(script_text, encoding="utf-8")
             _unlink_if_exists(result_path)
+            self._ensure_dde_dispatch_ready("movie_size_probe")
 
             server = None
             try:
@@ -5902,6 +6458,7 @@ class CameraCalibrator:
                                 time.perf_counter() - attempt_started,
                                 detail=f"size={width}x{height}",
                             )
+                            self._record_dde_operation_success()
                             _unlink_if_exists(script_path)
                             _unlink_if_exists(result_path)
                             return width, height
@@ -5923,6 +6480,9 @@ class CameraCalibrator:
             _unlink_if_exists(script_path)
             _unlink_if_exists(result_path)
             if retry_sleep_sec is not None:
+                if self._runtime_error_needs_dde_recovery_probe(attempt_runtime_error):
+                    if self._wait_for_dde_service_recovery():
+                        continue
                 time.sleep(retry_sleep_sec)
 
         if allow_cached_fallback and self.movie_size_cache_path.exists():
@@ -5943,8 +6503,11 @@ class CameraCalibrator:
                     return width, height
 
         if last_runtime_error is not None:
+            self._record_dde_operation_failure(last_runtime_error, "movie_size_probe")
             raise last_runtime_error
-        raise RuntimeError("Timed out waiting for movie size probe result")
+        final_error = RuntimeError("Timed out waiting for movie size probe result")
+        self._record_dde_operation_failure(final_error, "movie_size_probe")
+        raise final_error
 
     def _preflight_capture_aspect_ratio(self) -> None:
         try:
@@ -6013,6 +6576,7 @@ class CameraCalibrator:
             )
             script_path.write_text(script_text, encoding="utf-8")
             _unlink_if_exists(result_path)
+            self._ensure_dde_dispatch_ready("movie_capture")
 
             server = None
             try:
@@ -6048,6 +6612,7 @@ class CameraCalibrator:
                                 time.perf_counter() - attempt_started,
                                 detail=f"output={out_path.name}",
                             )
+                            self._record_dde_operation_success()
                             _unlink_if_exists(script_path)
                             _unlink_if_exists(result_path)
                             return out_path
@@ -6075,8 +6640,11 @@ class CameraCalibrator:
                 time.sleep(retry_sleep_sec)
 
         if last_runtime_error is not None:
+            self._record_dde_operation_failure(last_runtime_error, "movie_capture")
             raise last_runtime_error
-        raise RuntimeError("Timed out waiting for movie dde_fbo capture result")
+        final_error = RuntimeError("Timed out waiting for movie dde_fbo capture result")
+        self._record_dde_operation_failure(final_error, "movie_capture")
+        raise final_error
 
     def capture_movie(self, tag: str) -> Path:
         return self._capture_movie_via_dde_fbo(tag)

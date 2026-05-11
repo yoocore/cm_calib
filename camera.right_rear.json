@@ -164,6 +164,29 @@
         "carry_forward_only_if_improved": true,
         "score_tolerance": 1e-06
     },
+    "round_strategy_autotune": {
+        "enabled": true,
+        "activation_stagnation_rounds": 2,
+        "plateau_score_delta": 0.2,
+        "top_k_boards": 4,
+        "min_board_score": 8.0,
+        "unlock_parameters_enabled": true,
+        "unlock_parameter_activation_rounds": 2,
+        "unlock_parameter_step_multipliers": {
+            "C": {
+                "lens_scale": 6.0,
+                "lens_offset_x": 6.0,
+                "lens_offset_y": 6.0
+            }
+        },
+        "deanchor_baseline_enabled": true,
+        "deanchor_activation_stagnation_rounds": 2,
+        "deanchor_repeated_signature_count": 2,
+        "deanchor_score_delta": 0.05,
+        "skip_refine_on_plateau": true,
+        "skip_refine_activation_stagnation_rounds": 2,
+        "skip_refine_score_delta": 0.05
+    },
     "optimization_order": [
         "lens_fov",
         "pos_x",

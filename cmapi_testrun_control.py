@@ -460,6 +460,10 @@ def build_status_summary(
     vehicle_path: Path,
     vehicle_key: str,
     camera_sensor: Optional[str],
+    health_check_after_start: bool,
+    health_check_attempts: int,
+    health_check_timeout_sec: float,
+    health_check_settle_sec: float,
 ) -> dict[str, Any]:
     processes = list_cm_processes()
     carmakers = list_carmaker_processes()
@@ -467,6 +471,41 @@ def build_status_summary(
     gpusensor_movies = list_gpusensor_movie_processes()
     running_projectdir = probe_running_carmaker_projectdir()
     sensors = collect_vehicle_sensor_state(vehicle_path)
+    active_sensors = [sensor["name"] for sensor in sensors if sensor.get("active")]
+    health: Optional[dict[str, Any]] = None
+    if health_check_after_start:
+        output_dir = default_output_dir()
+        output_dir.mkdir(parents=True, exist_ok=True)
+        health_summary = run_read_only_health_suite(
+            service="TclEval",
+            topic="CarMaker",
+            output_dir=output_dir,
+            attempts=max(1, int(health_check_attempts)),
+            timeout_sec=max(0.1, float(health_check_timeout_sec)),
+            settle_sec=max(0.0, float(health_check_settle_sec)),
+        )
+        classification = health_summary.get("classification") if isinstance(health_summary, dict) else None
+        if isinstance(classification, dict):
+            health = classification
+
+    status_issues: list[str] = []
+    if running_projectdir is None:
+        status_issues.append("CarMaker projectdir is not readable")
+    elif running_projectdir.resolve() != project_root.resolve():
+        status_issues.append(
+            f"CarMaker projectdir mismatch: expected {project_root.as_posix()}, got {running_projectdir.as_posix()}"
+        )
+    if len(carmakers) != 1:
+        status_issues.append(f"expected exactly 1 CarMaker runtime, found {len(carmakers)}")
+    if len(gui_movies) < 1:
+        status_issues.append("GUI Movie is not running")
+    if not active_sensors:
+        status_issues.append("no active camera sensor in Vehicle")
+    if health is not None and str(health.get("code") or "") != "ok":
+        status_issues.append(str(health.get("message") or health.get("code") or "Movie remote-control health check failed"))
+
+    status = "ready" if not status_issues else "passive"
+    status_reason = "runtime ready" if not status_issues else "; ".join(status_issues)
 
     return {
         "mode": "status",
@@ -484,7 +523,10 @@ def build_status_summary(
             "gpusensor_movie": len(gpusensor_movies),
         },
         "sensors": sensors,
-        "active_sensors": [sensor["name"] for sensor in sensors if sensor.get("active")],
+        "active_sensors": active_sensors,
+        "health": health,
+        "status": status,
+        "status_reason": status_reason,
     }
 
 
@@ -1377,6 +1419,10 @@ async def main() -> None:
             vehicle_path=vehicle_path,
             vehicle_key=vehicle_key,
             camera_sensor=args.camera_sensor,
+            health_check_after_start=args.health_check_after_start,
+            health_check_attempts=args.health_check_attempts,
+            health_check_timeout_sec=args.health_check_timeout_sec,
+            health_check_settle_sec=args.health_check_settle_sec,
         )
         if args.print_summary_json:
             emit_summary_json(summary)

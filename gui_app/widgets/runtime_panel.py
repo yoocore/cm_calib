@@ -27,15 +27,15 @@ class RuntimePanel(QGroupBox):
         self.output_dir_label = QLabel("-")
         self.probe_button = QPushButton("Probe Runtime")
         self.prepare_button = QPushButton("CM Prepare")
+        self.browse_button = QPushButton("Browse")
 
-        browse_button = QPushButton("Browse")
-        browse_button.clicked.connect(self._browse_project_root)
+        self.browse_button.clicked.connect(self._browse_project_root)
 
         row = QWidget(self)
         row_layout = QHBoxLayout(row)
         row_layout.setContentsMargins(0, 0, 0, 0)
         row_layout.addWidget(self.project_root_edit, 1)
-        row_layout.addWidget(browse_button)
+        row_layout.addWidget(self.browse_button)
 
         form = QFormLayout()
         form.addRow("ProjectDir", row)
@@ -68,7 +68,20 @@ class RuntimePanel(QGroupBox):
         active_sensors = payload.get("active_sensors") or []
         self.active_sensors_label.setText(", ".join(str(item) for item in active_sensors) if active_sensors else "-")
         counts = payload.get("process_counts") if isinstance(payload.get("process_counts"), dict) else {}
+        if not counts:
+            carmaker = payload.get("carmaker") if isinstance(payload.get("carmaker"), dict) else {}
+            movie = payload.get("movie") if isinstance(payload.get("movie"), dict) else {}
+            counts = {
+                "carmaker": 1 if carmaker.get("pid") else 0,
+                "gui_movie": 1 if movie.get("pid") else 0,
+                "gpusensor_movie": 0,
+            }
         self.process_label.setText(
             f"CM={counts.get('carmaker', 0)} GUI={counts.get('gui_movie', 0)} GPU={counts.get('gpusensor_movie', 0)}"
         )
+
+    def set_inputs_locked(self, locked: bool) -> None:
+        self.project_root_edit.setEnabled(not locked)
+        self.testrun_edit.setEnabled(not locked)
+        self.browse_button.setEnabled(not locked)
 

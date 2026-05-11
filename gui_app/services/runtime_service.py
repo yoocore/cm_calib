@@ -29,8 +29,8 @@ class RuntimeService(QObject):
     def is_running(self) -> bool:
         return self.process_service.is_running
 
-    def probe_status(self, project_root: Path, testrun: str) -> None:
-        self._start_mode("status", project_root, testrun)
+    def probe_status(self, project_root: Path, testrun: str, *, verify_health: bool = False) -> None:
+        self._start_mode("status", project_root, testrun, verify_health=verify_health)
 
     def prepare_runtime(self, project_root: Path, testrun: str) -> None:
         self._start_mode("prepare", project_root, testrun)
@@ -38,7 +38,7 @@ class RuntimeService(QObject):
     def stop(self) -> None:
         self.process_service.stop()
 
-    def _start_mode(self, mode: str, project_root: Path, testrun: str) -> None:
+    def _start_mode(self, mode: str, project_root: Path, testrun: str, *, verify_health: bool = False) -> None:
         script_path = self.calibration_root / "cmapi_testrun_control.py"
         arguments = [
             str(script_path),
@@ -50,4 +50,6 @@ class RuntimeService(QObject):
             testrun,
             "--print-summary-json",
         ]
+        if mode == "status" and verify_health:
+            arguments.append("--health-check-after-start")
         self.process_service.start_python(script_path, arguments[1:], self.calibration_root)

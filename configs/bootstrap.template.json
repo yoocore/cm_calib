@@ -34,6 +34,30 @@
                 "template_binary_threshold": 150,
                 "min_detected_points": 9
             }
+        },
+        {
+            "detected_group": "A",
+            "board": {
+                "board_type": "aruco",
+                "weight": 1.0,
+                "aruco_dictionary": "DICT_4X4_50",
+                "min_detected_points": 8
+            }
+        },
+        {
+            "detected_group": "CH",
+            "board": {
+                "board_type": "charuco",
+                "weight": 1.0,
+                "board_size": [
+                    5,
+                    7
+                ],
+                "square_size": 1.0,
+                "marker_length_ratio": 0.7,
+                "aruco_dictionary": "DICT_4X4_50",
+                "min_detected_points": 8
+            }
         }
     ]
 }

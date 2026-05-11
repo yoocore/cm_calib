@@ -273,10 +273,11 @@
 ### 本阶段优先实现
 - CheckerboardDetector，用于命名棋盘格板（如 B1-B4、S1-S5）
 - GroundMakerDetector，用于地面标记区域（如 G1_left、G1_center、G1_right）
+- CharucoDetector，用于 ChArUco 角点板
+- ArucoBoardDetector，用于 ArUco marker 角点板
 
 ### 后续扩展
-- CharucoDetector
-- ArucoBoardDetector
+- 其它基于特征点或轮廓的专用 detector
 
 ---
 
@@ -529,6 +530,15 @@
 - board_size
 - square_size
 
+对于 ChArUco 板，必须包含：
+- board_size
+- square_size
+- marker_length_ratio
+- aruco_dictionary
+
+对于 ArUco 板，建议包含：
+- aruco_dictionary
+
 对于自定义板，必须包含：
 - template_image 或 template_points
 - detector_profile
@@ -559,10 +569,16 @@
 允许取值：
 - checkerboard
 - custom_groundmaker
+- custom_maker
+- aruco
+- charuco
 
 本阶段优先实现：
 - checkerboard
 - custom_groundmaker
+- custom_maker
+- aruco
+- charuco
 
 ---
 

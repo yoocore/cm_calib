@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from pathlib import Path
 
 from PySide6.QtCore import Slot
@@ -19,6 +20,10 @@ class MainWindow(QMainWindow):
     def __init__(self, project_root: Path):
         super().__init__()
         self.project_root = project_root.resolve()
+        self._runtime_mode: str | None = None
+        self._pending_launch: CalibrationLaunchConfig | None = None
+        self._runtime_recent_lines: deque[str] = deque(maxlen=12)
+        self._calibration_recent_lines: deque[str] = deque(maxlen=20)
         self.state = ApplicationState()
         self.config_service = ConfigService(self.project_root)
         self.precheck_service = PrecheckService(self.project_root)
@@ -50,10 +55,12 @@ class MainWindow(QMainWindow):
         self.runtime_panel.probe_button.clicked.connect(self._probe_runtime)
         self.runtime_panel.prepare_button.clicked.connect(self._prepare_runtime)
 
-        self.runtime_service.line_received.connect(self.output_panel.append_log)
+        self.runtime_service.line_received.connect(self._on_runtime_line)
         self.runtime_service.runtime_summary.connect(self._on_runtime_summary)
+        self.runtime_service.process_started.connect(self._on_runtime_process_started)
+        self.runtime_service.process_finished.connect(self._on_runtime_process_finished)
         self.runtime_service.process_failed.connect(self._on_runtime_process_failed)
-        self.calibration_service.line_received.connect(self.output_panel.append_log)
+        self.calibration_service.line_received.connect(self._on_calibration_line)
         self.calibration_service.process_started.connect(self._on_process_started)
         self.calibration_service.process_finished.connect(self._on_process_finished)
         self.calibration_service.process_failed.connect(self._on_process_failed)
@@ -96,8 +103,13 @@ class MainWindow(QMainWindow):
         try:
             launch = self._build_launch_config()
             self.output_panel.log_view.clear()
-            self.calibration_service.start(launch)
+            self.calibration_panel.clear_failure_summary()
+            self._pending_launch = launch
+            self._runtime_mode = "status"
+            self.runtime_service.probe_status(launch.project_root, launch.testrun, verify_health=True)
         except Exception as exc:
+            self._pending_launch = None
+            self.calibration_panel.set_failure_summary(str(exc))
             QMessageBox.critical(self, "Start Failed", str(exc))
 
     @Slot()
@@ -111,8 +123,12 @@ class MainWindow(QMainWindow):
             testrun = self.runtime_panel.testrun_edit.text().strip()
             if not testrun:
                 raise ValueError("TestRun is required")
+            self._runtime_mode = "status"
+            self.calibration_panel.clear_failure_summary()
             self.runtime_service.probe_status(project_root, testrun)
         except Exception as exc:
+            self._runtime_mode = None
+            self.calibration_panel.set_failure_summary(str(exc))
             QMessageBox.critical(self, "Runtime Probe Failed", str(exc))
 
     @Slot()
@@ -122,8 +138,12 @@ class MainWindow(QMainWindow):
             testrun = self.runtime_panel.testrun_edit.text().strip()
             if not testrun:
                 raise ValueError("TestRun is required")
+            self._runtime_mode = "prepare"
+            self.calibration_panel.clear_failure_summary()
             self.runtime_service.prepare_runtime(project_root, testrun)
         except Exception as exc:
+            self._runtime_mode = None
+            self.calibration_panel.set_failure_summary(str(exc))
             QMessageBox.critical(self, "Prepare Failed", str(exc))
 
     @Slot()
@@ -138,38 +158,104 @@ class MainWindow(QMainWindow):
             results = self.precheck_service.run_for_cameras(selected_cameras)
             self.calibration_panel.update_precheck_results(results)
         except Exception as exc:
+            self.calibration_panel.set_failure_summary(str(exc))
             QMessageBox.critical(self, "Precheck Failed", str(exc))
 
     def _apply_status(self, status: AppStatus) -> None:
         self.state.status = status
         self.runtime_panel.status_label.setText(status.value)
-        running = status == AppStatus.RUNNING
-        self.calibration_panel.start_button.setEnabled(not running)
-        self.calibration_panel.stop_button.setEnabled(running)
+        self._sync_control_states()
+
+    def _sync_control_states(self) -> None:
+        runtime_busy = self.runtime_service.is_running
+        calibration_running = self.state.status == AppStatus.RUNNING
+        can_start = self.state.status in {AppStatus.READY, AppStatus.FINISHED, AppStatus.FAILED, AppStatus.STOPPED}
+
+        self.calibration_panel.start_button.setEnabled(can_start and not runtime_busy and not calibration_running)
+        self.calibration_panel.stop_button.setEnabled(calibration_running)
+        controls_enabled = not runtime_busy and not calibration_running
+        self.calibration_panel.precheck_button.setEnabled(controls_enabled)
+        self.runtime_panel.probe_button.setEnabled(controls_enabled)
+        self.runtime_panel.prepare_button.setEnabled(controls_enabled)
+        self.calibration_panel.set_inputs_locked(not controls_enabled)
+        self.runtime_panel.set_inputs_locked(not controls_enabled)
 
     @Slot()
     def _on_process_started(self) -> None:
+        self._calibration_recent_lines.clear()
+        self.calibration_panel.clear_failure_summary()
         self._apply_status(AppStatus.RUNNING)
 
     @Slot(int)
     def _on_process_finished(self, exit_code: int) -> None:
         if self.state.status == AppStatus.STOPPED:
             return
+        if exit_code != 0:
+            self.calibration_panel.set_failure_summary(self._build_failure_summary("Calibration failed", self._calibration_recent_lines))
         self._apply_status(AppStatus.FINISHED if exit_code == 0 else AppStatus.FAILED)
 
     @Slot(str)
     def _on_process_failed(self, error_text: str) -> None:
+        self.calibration_panel.set_failure_summary(self._build_failure_summary("Calibration process error", [error_text, *self._calibration_recent_lines]))
         self._apply_status(AppStatus.FAILED)
         QMessageBox.critical(self, "Process Error", error_text)
 
     @Slot(str)
     def _on_runtime_process_failed(self, error_text: str) -> None:
+        if self._pending_launch is not None:
+            self._pending_launch = None
+        self.calibration_panel.set_failure_summary(self._build_failure_summary("Runtime process error", [error_text, *self._runtime_recent_lines]))
+        if self._runtime_mode == "prepare":
+            self._apply_status(AppStatus.PASSIVE)
+        else:
+            self._sync_control_states()
+        self._runtime_mode = None
         QMessageBox.critical(self, "Runtime Process Error", error_text)
+
+    @Slot()
+    def _on_runtime_process_started(self) -> None:
+        self._runtime_recent_lines.clear()
+        self.calibration_panel.clear_failure_summary()
+        if self._runtime_mode == "prepare":
+            self._apply_status(AppStatus.PREPARING)
+        else:
+            self._sync_control_states()
+
+    @Slot(int)
+    def _on_runtime_process_finished(self, exit_code: int) -> None:
+        if self._runtime_mode == "prepare" and exit_code != 0 and self.state.status == AppStatus.PREPARING:
+            self.calibration_panel.set_failure_summary(self._build_failure_summary("Prepare failed", self._runtime_recent_lines))
+            self._apply_status(AppStatus.PASSIVE)
+        else:
+            self._sync_control_states()
+        self._runtime_mode = None
 
     @Slot(dict)
     def _on_runtime_summary(self, payload: dict) -> None:
         self.runtime_panel.set_runtime_summary(payload)
         self.output_panel.append_log(f"[runtime] summary mode={payload.get('mode')} status={payload.get('status', payload.get('mode'))}")
+        mode = str(payload.get("mode") or "")
+        status = str(payload.get("status") or "")
+        if mode == "prepare":
+            if status == "ready":
+                self.calibration_panel.clear_failure_summary()
+            self._apply_status(AppStatus.READY if status == "ready" else AppStatus.PASSIVE)
+        elif mode == "status":
+            if self._pending_launch is not None:
+                launch = self._pending_launch
+                self._pending_launch = None
+                if self._is_runtime_ready_for_launch(payload, launch):
+                    self.calibration_panel.clear_failure_summary()
+                    self.calibration_service.start(launch)
+                    return
+                self.calibration_panel.set_failure_summary(self._build_runtime_unhealthy_summary(payload, launch))
+                self._apply_status(AppStatus.PASSIVE)
+            elif status:
+                self._apply_status(AppStatus.READY if status == "ready" else AppStatus.PASSIVE)
+            else:
+                self._sync_control_states()
+        else:
+            self._sync_control_states()
 
     @Slot(dict)
     def _on_orchestration_event(self, payload: dict) -> None:
@@ -179,6 +265,7 @@ class MainWindow(QMainWindow):
             self.state.output_dir = Path(output_dir) if output_dir else None
             self.runtime_panel.output_dir_label.setText(output_dir or "-")
             self.output_panel.set_output_dir(output_dir or None)
+            self.output_panel.set_log_path(str(Path(output_dir) / "events.jsonl") if output_dir else None)
             for camera_name in self.state.selected_cameras:
                 self.output_panel.update_camera_result(CameraResult(camera=camera_name))
         elif event_name == "camera_prepare_started":
@@ -197,6 +284,7 @@ class MainWindow(QMainWindow):
                 CameraResult(
                     camera=camera_name,
                     status="running",
+                    live_log=self._as_text(progress.get("live_log")),
                     best_score=self._as_float(progress.get("best_score")),
                     current_iter_score=self._as_float(progress.get("current_iter_score")),
                     current_iter_index=self._as_int(progress.get("current_iter_index")),
@@ -210,18 +298,26 @@ class MainWindow(QMainWindow):
             camera_name = str(payload.get("camera") or "")
             self.output_panel.update_camera_result(CameraResult(camera=camera_name, status="finished"))
         elif event_name == "task_failed":
+            self.calibration_panel.set_failure_summary(self._build_failure_summary("Calibration task failed", [self._as_text(payload.get("error")) or "Unknown failure", *self._calibration_recent_lines]))
             self._apply_status(AppStatus.FAILED)
         elif event_name == "task_stopped":
+            error_text = self._as_text(payload.get("error"))
+            if error_text:
+                self.calibration_panel.set_failure_summary(error_text)
             self._apply_status(AppStatus.STOPPED)
 
     @Slot(dict)
     def _on_orchestration_summary(self, payload: dict) -> None:
         status = str(payload.get("status") or "")
         if status == "stopped":
+            if payload.get("error"):
+                self.calibration_panel.set_failure_summary(str(payload.get("error")))
             self._apply_status(AppStatus.STOPPED)
         elif status == "failed":
+            self.calibration_panel.set_failure_summary(self._build_failure_summary("Calibration task failed", [self._as_text(payload.get("error")) or "Unknown failure", *self._calibration_recent_lines]))
             self._apply_status(AppStatus.FAILED)
         else:
+            self.calibration_panel.clear_failure_summary()
             self._apply_status(AppStatus.FINISHED)
 
         for entry in payload.get("per_camera", []):
@@ -232,6 +328,7 @@ class MainWindow(QMainWindow):
             result = CameraResult(
                 camera=camera_name,
                 status=str(entry.get("status") or status or "finished"),
+                live_log=self._as_text(calibration.get("live_log")),
                 best_score=self._as_float(calibration.get("best_score")),
                 current_iter_score=self._as_float(calibration.get("current_iter_score")),
                 current_iter_index=self._as_int(calibration.get("current_iter_index")),
@@ -262,3 +359,87 @@ class MainWindow(QMainWindow):
             return None
         text = str(value).strip()
         return text or None
+
+    @Slot(str)
+    def _on_runtime_line(self, line: str) -> None:
+        self.output_panel.append_log(line)
+        text = line.strip()
+        if text:
+            self._runtime_recent_lines.append(text)
+
+    @Slot(str)
+    def _on_calibration_line(self, line: str) -> None:
+        self.output_panel.append_log(line)
+        text = line.strip()
+        if text:
+            self._calibration_recent_lines.append(text)
+
+    @staticmethod
+    def _build_failure_summary(title: str, lines) -> str:
+        details: list[str] = []
+        seen: set[str] = set()
+        for raw_line in lines:
+            text = str(raw_line or "").strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            details.append(text)
+            if len(details) >= 6:
+                break
+        if not details:
+            return title
+        return "\n".join([title, *details])
+
+    def _is_runtime_ready_for_launch(self, payload: dict, launch: CalibrationLaunchConfig) -> bool:
+        expected_project_root = launch.project_root.resolve()
+        running_project_root_text = self._as_text(payload.get("running_projectdir"))
+        running_project_root = Path(running_project_root_text).resolve() if running_project_root_text else None
+        counts = payload.get("process_counts") if isinstance(payload.get("process_counts"), dict) else {}
+        active_sensors = payload.get("active_sensors") if isinstance(payload.get("active_sensors"), list) else []
+        health = payload.get("health") if isinstance(payload.get("health"), dict) else None
+
+        if str(payload.get("status") or "") != "ready":
+            return False
+        if running_project_root is None or running_project_root != expected_project_root:
+            return False
+        if int(counts.get("carmaker", 0)) != 1:
+            return False
+        if int(counts.get("gui_movie", 0)) < 1:
+            return False
+        if not active_sensors:
+            return False
+        if health is not None and str(health.get("code") or "") != "ok":
+            return False
+        return True
+
+    def _build_runtime_unhealthy_summary(self, payload: dict, launch: CalibrationLaunchConfig) -> str:
+        details: list[str] = []
+        status_reason = self._as_text(payload.get("status_reason"))
+        if status_reason and status_reason != "runtime ready":
+            details.append(status_reason)
+
+        running_project_root = self._as_text(payload.get("running_projectdir"))
+        expected_project_root = launch.project_root.resolve().as_posix()
+        if running_project_root and Path(running_project_root).resolve().as_posix() != expected_project_root:
+            details.append(f"expected projectdir {expected_project_root}, got {Path(running_project_root).resolve().as_posix()}")
+
+        counts = payload.get("process_counts") if isinstance(payload.get("process_counts"), dict) else {}
+        if int(counts.get("carmaker", 0)) != 1:
+            details.append(f"CarMaker runtime count = {counts.get('carmaker', 0)}")
+        if int(counts.get("gui_movie", 0)) < 1:
+            details.append("GUI Movie is not running")
+
+        active_sensors = payload.get("active_sensors") if isinstance(payload.get("active_sensors"), list) else []
+        if not active_sensors:
+            details.append("no active camera sensor found")
+
+        health = payload.get("health") if isinstance(payload.get("health"), dict) else None
+        if health is not None and str(health.get("code") or "") != "ok":
+            details.append(str(health.get("message") or health.get("code") or "Movie remote-control health check failed"))
+
+        if not details:
+            details.append("runtime probe did not return a ready state")
+        return "\n".join([
+            "Runtime is not healthy enough to start calibration. Run CM Prepare first.",
+            *details[:6],
+        ])

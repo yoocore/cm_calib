@@ -17,7 +17,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, TextIO, Tuple
+from typing import Any, Dict, List, Optional, Sequence, TextIO, Tuple
 
 import cv2
 import numpy as np
@@ -517,6 +517,10 @@ def _bootstrap_partial_template_dir(real_image_path: Path, camera_name: str) -> 
 
 def _is_custom_marker_board_type(board_type: str) -> bool:
     return str(board_type).strip().lower() in {"custom_groundmaker", "custom_maker"}
+
+
+def _is_aruco_family_board_type(board_type: str) -> bool:
+    return str(board_type).strip().lower() in {"aruco", "charuco"}
 
 
 def _preprocess_auto_template_match_image(
@@ -5064,6 +5068,8 @@ class BoardProfile:
     template_match_threshold: float = 0.0
     template_binary_threshold: int = 0
     template_crop: Optional[Tuple[int, int, int, int]] = None
+    aruco_dictionary: str = "DICT_4X4_50"
+    marker_length_ratio: float = 0.7
 
 
 @dataclass
@@ -5751,27 +5757,53 @@ class CameraCalibrator:
             board_type = str(board.get("board_type", "")).strip().lower()
             if not board_id:
                 raise ValueError("Each board must provide board_id")
-            if board_type not in {"checkerboard", "custom_groundmaker", "custom_maker"}:
+            if board_type not in {
+                "checkerboard",
+                "custom_groundmaker",
+                "custom_maker",
+                "aruco",
+                "charuco",
+            }:
                 raise ValueError(f"Unsupported board_type for {board_id}: {board_type}")
 
             roi = self._parse_roi(board.get("roi"))
             template_source_roi = self._parse_roi(board.get("template_source_roi"))
             template_source_crop = self._parse_roi(board.get("template_source_crop"))
             board_size = None
-            if board_type == "checkerboard":
+            if board_type in {"checkerboard", "charuco"}:
                 raw_size = board.get("board_size")
                 if not isinstance(raw_size, list) or len(raw_size) != 2:
                     raise ValueError(
-                        f"checkerboard {board_id} must provide board_size=[cols, rows]"
+                        f"{board_type} {board_id} must provide board_size=[cols, rows]"
                     )
                 board_size = (int(raw_size[0]), int(raw_size[1]))
+                if board_size[0] < 2 or board_size[1] < 2:
+                    raise ValueError(f"{board_type} {board_id} board_size must be >= [2, 2]")
 
-            min_points_default = board_size[0] * board_size[1] if board_size else 6
+            if board_type == "checkerboard":
+                min_points_default = board_size[0] * board_size[1] if board_size else 6
+            elif board_type == "charuco":
+                charuco_corner_count = max(1, (board_size[0] - 1) * (board_size[1] - 1))
+                min_points_default = max(4, min(charuco_corner_count, 12))
+            elif board_type == "aruco":
+                min_points_default = 8
+            else:
+                min_points_default = 6
             default_detector = "template_match" if board_type == "custom_maker" else "feature"
             custom_detector = str(board.get("custom_detector", default_detector)).strip().lower()
             if custom_detector not in {"feature", "template_match"}:
                 raise ValueError(
                     f"Unsupported custom_detector for {board_id}: {custom_detector}"
+                )
+            aruco_dictionary = str(board.get("aruco_dictionary", "DICT_4X4_50")).strip().upper()
+            if _is_aruco_family_board_type(board_type):
+                if not aruco_dictionary:
+                    raise ValueError(f"{board_type} {board_id} must provide aruco_dictionary")
+                self._resolve_aruco_dictionary(aruco_dictionary)
+            marker_length_ratio = self._read_float(board.get("marker_length_ratio"), 0.7)
+            if board_type == "charuco" and not (0.0 < marker_length_ratio < 1.0):
+                raise ValueError(
+                    f"charuco {board_id} marker_length_ratio must be between 0 and 1"
                 )
             boards.append(
                 BoardProfile(
@@ -5810,6 +5842,8 @@ class CameraCalibrator:
                         board.get("template_binary_threshold"), 0
                     ),
                     template_crop=self._read_crop_box(board.get("template_crop")),
+                    aruco_dictionary=aruco_dictionary,
+                    marker_length_ratio=marker_length_ratio,
                 )
             )
         return boards
@@ -7444,7 +7478,7 @@ class CameraCalibrator:
             max_auto_padding = int(round(max(image_h, image_w) * 0.65))
             auto_paddings: List[int] = []
 
-            if board.board_type == "checkerboard":
+            if board.board_type == "checkerboard" or _is_aruco_family_board_type(board.board_type):
                 auto_paddings.extend(
                     [
                         max(120, int(round(base_span * 1.5))),
@@ -8186,6 +8220,47 @@ class CameraCalibrator:
         variants.append(cv2.GaussianBlur(gray, (3, 3), 0))
         return variants
 
+    @staticmethod
+    def _resolve_aruco_dictionary(dictionary_name: str):
+        if not hasattr(cv2, "aruco"):
+            raise RuntimeError("OpenCV aruco module is unavailable")
+
+        normalized_name = str(dictionary_name or "DICT_4X4_50").strip().upper()
+        if normalized_name.startswith("CV2.ARUCO."):
+            normalized_name = normalized_name.split(".")[-1]
+        dictionary_id = getattr(cv2.aruco, normalized_name, None)
+        if dictionary_id is None:
+            raise ValueError(f"Unsupported ArUco dictionary: {dictionary_name}")
+        return cv2.aruco.getPredefinedDictionary(dictionary_id)
+
+    @staticmethod
+    def _flatten_aruco_marker_points(
+        marker_corners: Sequence[np.ndarray],
+        marker_ids: Optional[np.ndarray],
+        offset: Tuple[int, int],
+    ) -> np.ndarray:
+        if marker_ids is None or not marker_corners:
+            return np.empty((0, 2), dtype=np.float32)
+
+        flat_ids = np.asarray(marker_ids, dtype=np.int32).reshape(-1)
+        ordered_markers: List[Tuple[int, np.ndarray]] = []
+        for index, marker_id in enumerate(flat_ids):
+            if index >= len(marker_corners):
+                break
+            corners = np.asarray(marker_corners[index], dtype=np.float32).reshape(-1, 2)
+            if corners.shape[0] < 4:
+                continue
+            ordered_markers.append((int(marker_id), corners))
+
+        if not ordered_markers:
+            return np.empty((0, 2), dtype=np.float32)
+
+        ordered_markers.sort(key=lambda item: item[0])
+        ordered_points = np.concatenate([item[1] for item in ordered_markers], axis=0)
+        ordered_points[:, 0] += float(offset[0])
+        ordered_points[:, 1] += float(offset[1])
+        return ordered_points.astype(np.float32)
+
     def _detect_checkerboard(
         self, gray_image: np.ndarray, board: BoardProfile
     ) -> DetectionResult:
@@ -8243,6 +8318,103 @@ class CameraCalibrator:
             board_type=board.board_type,
             roi_used=board.roi,
             detector="checkerboard",
+        )
+
+    def _detect_aruco(self, gray_image: np.ndarray, board: BoardProfile) -> DetectionResult:
+        eval_image = self._prepare_eval_image(gray_image)
+        roi_attempts = self._detect_roi_padding_attempts(board)
+        dictionary = self._resolve_aruco_dictionary(board.aruco_dictionary)
+        detector = cv2.aruco.ArucoDetector(dictionary, cv2.aruco.DetectorParameters())
+
+        for padding in roi_attempts:
+            roi_img, offset = self._extract_roi(eval_image, board.roi, padding=padding)
+            marker_corners, marker_ids, _ = detector.detectMarkers(roi_img)
+            ordered_points = self._flatten_aruco_marker_points(marker_corners, marker_ids, offset)
+            if ordered_points.shape[0] == 0:
+                continue
+            return DetectionResult(
+                board_id=board.board_id,
+                success=True,
+                point_count=int(ordered_points.shape[0]),
+                ordered_points=ordered_points,
+                board_type=board.board_type,
+                roi_used=board.roi,
+                detector="aruco",
+            )
+
+        return DetectionResult(
+            board_id=board.board_id,
+            success=False,
+            point_count=0,
+            ordered_points=np.empty((0, 2), dtype=np.float32),
+            board_type=board.board_type,
+            roi_used=board.roi,
+            detector="aruco",
+            error_message="aruco markers not detected",
+        )
+
+    def _detect_charuco(self, gray_image: np.ndarray, board: BoardProfile) -> DetectionResult:
+        if board.board_size is None:
+            return DetectionResult(
+                board_id=board.board_id,
+                success=False,
+                point_count=0,
+                ordered_points=np.empty((0, 2), dtype=np.float32),
+                board_type=board.board_type,
+                roi_used=board.roi,
+                detector="charuco",
+                error_message="missing charuco board_size",
+            )
+
+        eval_image = self._prepare_eval_image(gray_image)
+        roi_attempts = self._detect_roi_padding_attempts(board)
+        dictionary = self._resolve_aruco_dictionary(board.aruco_dictionary)
+        marker_length_ratio = min(max(float(board.marker_length_ratio), 1e-3), 0.999)
+        square_length = max(float(board.square_size), 1e-6)
+        marker_length = square_length * marker_length_ratio
+        charuco_board = cv2.aruco.CharucoBoard(
+            board.board_size,
+            square_length,
+            marker_length,
+            dictionary,
+        )
+        detector = cv2.aruco.CharucoDetector(charuco_board)
+        best_error_message = "charuco corners not detected"
+
+        for padding in roi_attempts:
+            roi_img, offset = self._extract_roi(eval_image, board.roi, padding=padding)
+            charuco_corners, charuco_ids, _, marker_ids = detector.detectBoard(roi_img)
+            if charuco_corners is None or charuco_ids is None:
+                if marker_ids is not None and len(np.asarray(marker_ids).reshape(-1)) > 0:
+                    best_error_message = "charuco markers found but corners not interpolated"
+                continue
+
+            ordered_points = np.asarray(charuco_corners, dtype=np.float32).reshape(-1, 2)
+            flat_ids = np.asarray(charuco_ids, dtype=np.int32).reshape(-1)
+            if ordered_points.shape[0] == 0 or flat_ids.shape[0] == 0:
+                continue
+            ordered_points = ordered_points[np.argsort(flat_ids)]
+            ordered_points[:, 0] += float(offset[0])
+            ordered_points[:, 1] += float(offset[1])
+            return DetectionResult(
+                board_id=board.board_id,
+                success=True,
+                point_count=int(ordered_points.shape[0]),
+                ordered_points=ordered_points.astype(np.float32),
+                board_type=board.board_type,
+                roi_used=board.roi,
+                detector="charuco",
+            )
+
+        return DetectionResult(
+            board_id=board.board_id,
+            success=False,
+            point_count=0,
+            ordered_points=np.empty((0, 2), dtype=np.float32),
+            board_type=board.board_type,
+            roi_used=board.roi,
+            detector="charuco",
+            error_message=best_error_message,
         )
 
     def _detect_template_board(
@@ -8519,6 +8691,10 @@ class CameraCalibrator:
             if primary.success:
                 return primary
             return primary
+        if board.board_type == "aruco":
+            return self._detect_aruco(gray_image, board)
+        if board.board_type == "charuco":
+            return self._detect_charuco(gray_image, board)
         if _is_custom_marker_board_type(board.board_type):
             return self._detect_custom_groundmaker(gray_image, board)
         return DetectionResult(

@@ -8,6 +8,9 @@ from typing import Optional
 
 class AppStatus(StrEnum):
     IDLE = "idle"
+    PREPARING = "preparing"
+    PASSIVE = "passive"
+    READY = "ready"
     RUNNING = "running"
     FINISHED = "finished"
     FAILED = "failed"
@@ -20,6 +23,7 @@ class CameraResult:
     best_score: Optional[float] = None
     current_iter_score: Optional[float] = None
     current_iter_index: Optional[int] = None
+    live_log: Optional[str] = None
     result_json: Optional[str] = None
     best_image: Optional[str] = None
     best_score_image: Optional[str] = None

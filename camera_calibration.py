@@ -9739,6 +9739,24 @@ class CameraCalibrator:
         )
         with open(self.output_dir / "result.json", "w", encoding="utf-8") as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
+        if bool(getattr(self, "print_progress_json", False)):
+            summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
+            _emit_cli_progress_json(
+                {
+                    "camera": summary.get("camera"),
+                    "output_dir": result.get("output_dir"),
+                    "result_json": str(self.output_dir / "result.json"),
+                    "in_progress": bool(result.get("in_progress", False)),
+                    "best_score": result.get("best_score"),
+                    "best_image": result.get("best_image"),
+                    "best_score_image": result.get("best_score_image"),
+                    "best_overlay_image": result.get("best_overlay_image"),
+                    "current_iter_index": summary.get("current_iter_index"),
+                    "current_iter_score": summary.get("current_iter_score"),
+                    "final_score": summary.get("final_score"),
+                    "stop_reason": result.get("stop_reason") or summary.get("stop_reason"),
+                }
+            )
 
     def _flush_progress_if_needed(
         self,
@@ -10465,6 +10483,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Print one machine-readable JSON summary line on successful completion",
     )
+    parser.add_argument(
+        "--print-progress-json",
+        action="store_true",
+        help="Print machine-readable JSON progress lines whenever result.json is refreshed",
+    )
     return parser.parse_args()
 
 
@@ -10509,6 +10532,10 @@ def _build_cli_summary_payload(
 
 def _emit_cli_summary_json(payload: dict) -> None:
     print("CALIBRATION_SUMMARY_JSON:", json.dumps(payload, ensure_ascii=False, sort_keys=True))
+
+
+def _emit_cli_progress_json(payload: dict) -> None:
+    print("CALIBRATION_PROGRESS_JSON:", json.dumps(payload, ensure_ascii=False, sort_keys=True))
 
 
 def main() -> None:
@@ -10755,6 +10782,7 @@ def main() -> None:
 
     calib = CameraCalibrator(cfg, config_path=config_path)
     calib.live_log_path = live_log_path
+    setattr(calib, "print_progress_json", bool(args.print_progress_json))
     try:
         if args.propose_boards:
             calib.propose_boards_config(

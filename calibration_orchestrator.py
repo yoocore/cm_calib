@@ -14,6 +14,7 @@ import cmapi_testrun_control as cmctrl
 
 
 CALIBRATION_SUMMARY_PREFIX = "CALIBRATION_SUMMARY_JSON:"
+CALIBRATION_PROGRESS_PREFIX = "CALIBRATION_PROGRESS_JSON:"
 ORCHESTRATION_EVENT_PREFIX = "ORCHESTRATION_EVENT_JSON:"
 ORCHESTRATION_SUMMARY_PREFIX = "ORCHESTRATION_SUMMARY_JSON:"
 
@@ -197,6 +198,7 @@ def _build_camera_command(args: argparse.Namespace, config_path: Path) -> list[s
         "--multi-start-seed",
         str(args.multi_start_seed),
         "--print-summary-json",
+        "--print-progress-json",
     ]
     _append_optional_arg(command, "--multi-start-iters", args.multi_start_iters)
     _append_optional_arg(command, "--refine-iters", args.refine_iters)
@@ -295,6 +297,17 @@ def _run_single_camera_process(
             raw_json = raw_json.strip()
             if raw_json:
                 summary_payload = json.loads(raw_json)
+        elif text.startswith(CALIBRATION_PROGRESS_PREFIX):
+            _, _, raw_json = text.partition(":")
+            raw_json = raw_json.strip()
+            if raw_json:
+                progress_payload = json.loads(raw_json)
+                _emit_event(
+                    task_id,
+                    "camera_run_progress",
+                    camera=camera_name,
+                    progress=progress_payload,
+                )
 
     return_code = process.wait()
     _ACTIVE_CHILD = None

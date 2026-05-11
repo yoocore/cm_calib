@@ -47,10 +47,15 @@ RUNTIME_PROJECTDIR_PROBE_NAME = "cmapi_testrun_control_projectdir_probe"
 MOVIE_SCENE_READY_PROBE_NAME = "cmapi_testrun_control_movie_scene_ready_probe"
 MOVIE_SEND_HEALTH_CHECK_NAME = "cmapi_testrun_control_movie_send_health"
 DEFAULT_MOVIE_SCENE_READY_GRACE_SEC = 45.0
+CMAPI_CONTROL_SUMMARY_PREFIX = "CMAPI_CONTROL_SUMMARY_JSON:"
 
 
 class VehicleSensorActivationError(RuntimeError):
     pass
+
+
+def emit_summary_json(payload: dict[str, Any]) -> None:
+    print(CMAPI_CONTROL_SUMMARY_PREFIX, json.dumps(payload, ensure_ascii=False, sort_keys=True))
 
 
 def _run_powershell_json(command: str) -> list[dict[str, Any]]:
@@ -169,6 +174,35 @@ def normalize_sensor_name(raw_value: str) -> str:
     return value
 
 
+def collect_vehicle_sensor_state(vehicle_path: Path) -> list[dict[str, Any]]:
+    text = vehicle_path.read_text(encoding="utf-8")
+    sensor_name_by_index: dict[str, str] = {}
+    active_value_by_index: dict[str, bool] = {}
+
+    for line in text.splitlines():
+        name_match = SENSOR_NAME_RE.match(line)
+        if name_match:
+            sensor_name_by_index[name_match.group("index")] = name_match.group("value").strip()
+            continue
+
+        active_match = SENSOR_ACTIVE_RE.match(line)
+        if active_match:
+            active_value_by_index[active_match.group("index")] = active_match.group("value") == "1"
+
+    sensors: list[dict[str, Any]] = []
+    for sensor_index in sorted(sensor_name_by_index, key=int):
+        sensor_name = sensor_name_by_index[sensor_index]
+        sensors.append(
+            {
+                "index": int(sensor_index),
+                "name": sensor_name,
+                "active": bool(active_value_by_index.get(sensor_index, False)),
+                "ipgmovie_sensor_label": f"CAMERA_RSI-SENSOR Vhcl.{sensor_name}",
+            }
+        )
+    return sensors
+
+
 def load_testrun(project_root: Path, testrun_rel_path: Path) -> cmapi.TestRunParametrization:
     cmapi.Project.load(project_root.resolve())
     project = cmapi.Project.instance()
@@ -260,6 +294,12 @@ def parse_args() -> argparse.Namespace:
             "Use CarMaker CMAPI to start CarMaker, load a TestRun, run or stop the "
             "simulation, and optionally open IPG-MOVIE."
         )
+    )
+    parser.add_argument(
+        "--mode",
+        choices=("run", "status", "prepare"),
+        default="run",
+        help="Execution mode: run keeps legacy behavior, status emits a read-only JSON snapshot, prepare emits a prepare-runtime JSON snapshot.",
     )
     parser.add_argument(
         "--testrun",
@@ -404,7 +444,142 @@ def parse_args() -> argparse.Namespace:
         default=0.3,
         help="Retry delay between attempts for the post-start Movie remote-control health check.",
     )
+    parser.add_argument(
+        "--print-summary-json",
+        action="store_true",
+        help="Emit a machine-readable JSON summary line prefixed with CMAPI_CONTROL_SUMMARY_JSON:.",
+    )
     return parser.parse_args()
+
+
+def build_status_summary(
+    *,
+    project_root: Path,
+    cm_install: Path,
+    testrun_rel_path: Path,
+    vehicle_path: Path,
+    vehicle_key: str,
+    camera_sensor: Optional[str],
+) -> dict[str, Any]:
+    processes = list_cm_processes()
+    carmakers = list_carmaker_processes()
+    gui_movies = list_gui_movie_processes()
+    gpusensor_movies = list_gpusensor_movie_processes()
+    running_projectdir = probe_running_carmaker_projectdir()
+    sensors = collect_vehicle_sensor_state(vehicle_path)
+
+    return {
+        "mode": "status",
+        "project_root": str(project_root),
+        "cm_install": str(cm_install),
+        "testrun": testrun_rel_path.as_posix(),
+        "vehicle": vehicle_key,
+        "vehicle_path": str(vehicle_path),
+        "camera_sensor_requested": camera_sensor,
+        "running_projectdir": str(running_projectdir) if running_projectdir else None,
+        "processes": processes,
+        "process_counts": {
+            "carmaker": len(carmakers),
+            "gui_movie": len(gui_movies),
+            "gpusensor_movie": len(gpusensor_movies),
+        },
+        "sensors": sensors,
+        "active_sensors": [sensor["name"] for sensor in sensors if sensor.get("active")],
+    }
+
+
+async def execute_prepare_mode(args: argparse.Namespace) -> dict[str, Any]:
+    project_root = args.project_root.resolve()
+    cm_install = args.cm_install.resolve()
+    testrun_rel_path = normalize_testrun_path(project_root, args.testrun)
+    vehicle_path, vehicle_key = resolve_vehicle_path(project_root, testrun_rel_path)
+
+    sensor_activation_result: Optional[dict[str, Any]] = None
+    if args.camera_sensor:
+        sensor_activation_result = activate_single_vehicle_sensor(vehicle_path, args.camera_sensor)
+
+    carmaker, carmaker_pid, carmaker_owned, carmaker_action = await start_or_reuse_carmaker_for_open_movie(
+        cm_install,
+        args.host,
+        project_root,
+        args.clean_existing_processes,
+    )
+    movie: Optional[cmapi.IPGMovie] = None
+    movie_pid: Optional[int] = None
+    movie_owned = False
+    health_summary: Optional[dict[str, Any]] = None
+    movie_scene: Optional[dict[str, str]] = None
+    selected_testrun_name: Optional[str] = None
+    bootstrapped_testrun_name: Optional[str] = None
+
+    try:
+        selected_testrun_name = sync_gui_testrun_selection(project_root, testrun_rel_path)
+        bootstrapped_testrun_name = bootstrap_testrun_for_movie_via_tcl(
+            testrun_rel_path,
+            args.bootstrap_running_timeout_sec,
+            args.bootstrap_idle_timeout_sec,
+        )
+        if carmaker_pid is None:
+            carmaker_pid = wait_for_runtime_carmaker_pid(project_root, timeout_sec=20.0, poll_interval_sec=0.25)
+        movie, movie_pid, movie_owned, movie_action = await start_or_reuse_movie(
+            cm_install,
+            args.movie_apphost,
+            project_root,
+            carmaker_pid,
+            args.clean_existing_processes,
+        )
+        movie_scene = wait_for_movie_scene_ready(
+            cm_install=cm_install,
+            movie_apphost=args.movie_apphost,
+            project_root=project_root,
+            carmaker_pid=carmaker_pid,
+            timeout_sec=args.movie_settle_sec,
+            poll_interval_sec=args.movie_ready_poll_sec,
+            initial_grace_sec=args.movie_ready_grace_sec,
+        )
+        if args.health_check_after_start:
+            health_summary = run_movie_send_health_check(
+                attempts=args.health_check_attempts,
+                timeout_sec=args.health_check_timeout_sec,
+                settle_sec=args.health_check_settle_sec,
+            )
+        sensors = collect_vehicle_sensor_state(vehicle_path)
+        return {
+            "mode": "prepare",
+            "project_root": str(project_root),
+            "cm_install": str(cm_install),
+            "testrun": testrun_rel_path.as_posix(),
+            "selected_testrun": selected_testrun_name,
+            "bootstrapped_testrun": bootstrapped_testrun_name,
+            "vehicle": vehicle_key,
+            "vehicle_path": str(vehicle_path),
+            "sensor_activation": sensor_activation_result,
+            "carmaker": {
+                "pid": carmaker_pid,
+                "owned": carmaker_owned,
+                "action": carmaker_action,
+            },
+            "movie": {
+                "pid": movie_pid,
+                "owned": movie_owned,
+                "action": movie_action,
+                "scene": movie_scene,
+            },
+            "health": classify_gui_movie_send_health(health_summary) if health_summary else None,
+            "sensors": sensors,
+            "active_sensors": [sensor["name"] for sensor in sensors if sensor.get("active")],
+            "status": "ready",
+        }
+    finally:
+        await cleanup(
+            simcontrol=None,
+            movie=movie,
+            carmaker=carmaker,
+            movie_owned=movie_owned,
+            carmaker_owned=carmaker_owned,
+            keep_movie_open=True,
+            keep_carmaker_open=True,
+        )
 
 
 def normalize_testrun_path(project_root: Path, raw_testrun: str) -> Path:
@@ -1193,6 +1368,29 @@ async def main() -> None:
     cm_install = args.cm_install.resolve()
     testrun_rel_path = normalize_testrun_path(project_root, args.testrun)
     vehicle_path, vehicle_key = resolve_vehicle_path(project_root, testrun_rel_path)
+
+    if args.mode == "status":
+        summary = build_status_summary(
+            project_root=project_root,
+            cm_install=cm_install,
+            testrun_rel_path=testrun_rel_path,
+            vehicle_path=vehicle_path,
+            vehicle_key=vehicle_key,
+            camera_sensor=args.camera_sensor,
+        )
+        if args.print_summary_json:
+            emit_summary_json(summary)
+        else:
+            print(json.dumps(summary, ensure_ascii=False, indent=2))
+        return
+
+    if args.mode == "prepare":
+        summary = await execute_prepare_mode(args)
+        if args.print_summary_json:
+            emit_summary_json(summary)
+        else:
+            print(json.dumps(summary, ensure_ascii=False, indent=2))
+        return
 
     sensor_activation_result: Optional[dict[str, Any]] = None
     if args.camera_sensor:

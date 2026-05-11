@@ -2414,6 +2414,7 @@ def _resolve_round_strategy_autotune_policy(cfg: dict) -> dict:
             "plateau_score_delta": 0.75,
             "top_k_boards": 4,
             "min_board_score": 8.0,
+            "min_target_board_count": 2,
             "min_family_board_count": 2,
             "min_family_share": 0.75,
             "priority_max_total_worsen_step": 0.5,
@@ -2425,7 +2426,8 @@ def _resolve_round_strategy_autotune_policy(cfg: dict) -> dict:
             "restrict_to_priority_boards": True,
             "dominant_family_restrict_to_priority_boards": False,
             "auto_switch_priority_boards": True,
-            "priority_family_switch_streak_rounds": 2,
+            "priority_board_switch_streak_rounds": 2,
+            "priority_board_switch_min_overlap_ratio": 0.6,
             "focus_rank_multiplier_step": 0.35,
             "focus_rank_multiplier_cap": 1.6,
             "focus_priority_multiplier_step": 0.08,
@@ -2471,6 +2473,15 @@ def _resolve_round_strategy_autotune_policy(cfg: dict) -> dict:
         "plateau_score_delta": max(0.0, float(payload.get("plateau_score_delta", 0.75))),
         "top_k_boards": max(2, int(payload.get("top_k_boards", 4))),
         "min_board_score": max(0.0, float(payload.get("min_board_score", 8.0))),
+        "min_target_board_count": max(
+            1,
+            int(
+                payload.get(
+                    "min_target_board_count",
+                    payload.get("min_family_board_count", 2),
+                )
+            ),
+        ),
         "min_family_board_count": max(2, int(payload.get("min_family_board_count", 2))),
         "min_family_share": min(1.0, max(0.0, float(payload.get("min_family_share", 0.75)))),
         "priority_max_total_worsen_step": max(
@@ -2496,8 +2507,21 @@ def _resolve_round_strategy_autotune_policy(cfg: dict) -> dict:
             payload.get("dominant_family_restrict_to_priority_boards", False)
         ),
         "auto_switch_priority_boards": bool(payload.get("auto_switch_priority_boards", True)),
-        "priority_family_switch_streak_rounds": max(
-            1, int(payload.get("priority_family_switch_streak_rounds", 2))
+        "priority_board_switch_streak_rounds": max(
+            1,
+            int(
+                payload.get(
+                    "priority_board_switch_streak_rounds",
+                    payload.get("priority_family_switch_streak_rounds", 2),
+                )
+            ),
+        ),
+        "priority_board_switch_min_overlap_ratio": min(
+            1.0,
+            max(
+                0.0,
+                float(payload.get("priority_board_switch_min_overlap_ratio", 0.6)),
+            ),
         ),
         "focus_rank_multiplier_step": max(
             0.0, float(payload.get("focus_rank_multiplier_step", 0.35))
@@ -2644,7 +2668,7 @@ def _current_round_plateau_stagnation_count(
     return stagnation_count
 
 
-def _dominant_bottleneck_family_from_result_payload(
+def _dominant_bottleneck_target_from_result_payload(
     result_payload: dict,
     cfg: dict,
     policy: dict,
@@ -2728,52 +2752,84 @@ def _dominant_bottleneck_family_from_result_payload(
 
     candidates.sort(key=lambda item: float(item["score"]), reverse=True)
     selected = candidates[: max(1, int(policy.get("top_k_boards", 4)))]
+    if len(selected) < int(policy.get("min_target_board_count", 2)):
+        return None
+
     family_groups: Dict[str, List[dict]] = {}
     for item in selected:
         family_groups.setdefault(str(item["family"]), []).append(item)
-    if not family_groups:
-        return None
-
-    dominant_family, dominant_items = max(
-        family_groups.items(),
-        key=lambda entry: (
-            len(entry[1]),
-            sum(float(item["score"]) for item in entry[1]),
-        ),
-    )
-    if len(dominant_items) < int(policy.get("min_family_board_count", 2)):
-        return None
-    family_share = len(dominant_items) / max(1, len(selected))
-    if family_share < float(policy.get("min_family_share", 0.75)):
-        return None
-
-    dominant_scores = [float(item["score"]) for item in dominant_items]
-    family_board_ids = [
-        str(item["board_id"])
-        for item in sorted(
-            family_candidates.get(str(dominant_family), []),
-            key=lambda item: float(item["score"]),
-            reverse=True,
+    dominant_family = ""
+    dominant_items: List[dict] = []
+    family_share = 0.0
+    if family_groups:
+        dominant_family, dominant_items = max(
+            family_groups.items(),
+            key=lambda entry: (
+                len(entry[1]),
+                sum(float(item["score"]) for item in entry[1]),
+            ),
         )
-    ]
+        family_share = len(dominant_items) / max(1, len(selected))
+        if (
+            len(dominant_items) >= int(policy.get("min_family_board_count", 2))
+            and family_share >= float(policy.get("min_family_share", 0.75))
+        ):
+            dominant_scores = [float(item["score"]) for item in dominant_items]
+            family_board_ids = [
+                str(item["board_id"])
+                for item in sorted(
+                    family_candidates.get(str(dominant_family), []),
+                    key=lambda item: float(item["score"]),
+                    reverse=True,
+                )
+            ]
+            return {
+                "mode": "family",
+                "family": dominant_family,
+                "families": [dominant_family],
+                "board_ids": [str(item["board_id"]) for item in dominant_items],
+                "priority_board_ids": family_board_ids,
+                "focus_board_ids": [str(item["board_id"]) for item in dominant_items],
+                "board_count": len(dominant_items),
+                "family_share": family_share,
+                "max_score": max(dominant_scores),
+                "avg_score": sum(dominant_scores) / len(dominant_scores),
+            }
+
+    selected_scores = [float(item["score"]) for item in selected]
+    selected_families = sorted({str(item["family"]) for item in selected if str(item["family"])})
     return {
-        "family": dominant_family,
-        "board_ids": [str(item["board_id"]) for item in dominant_items],
-        "family_board_ids": family_board_ids,
-        "board_count": len(dominant_items),
+        "mode": "board_set",
+        "family": dominant_family if len(selected_families) == 1 else "",
+        "families": selected_families,
+        "board_ids": [str(item["board_id"]) for item in selected],
+        "priority_board_ids": [str(item["board_id"]) for item in selected],
+        "focus_board_ids": [str(item["board_id"]) for item in selected],
+        "board_count": len(selected),
         "family_share": family_share,
-        "max_score": max(dominant_scores),
-        "avg_score": sum(dominant_scores) / len(dominant_scores),
+        "max_score": max(selected_scores),
+        "avg_score": sum(selected_scores) / len(selected_scores),
     }
 
 
-def _priority_family_switch_streak(
+def _board_id_overlap_ratio(left_board_ids: List[str], right_board_ids: List[str]) -> float:
+    left = {str(board_id).strip() for board_id in left_board_ids if str(board_id).strip()}
+    right = {str(board_id).strip() for board_id in right_board_ids if str(board_id).strip()}
+    if not left or not right:
+        return 0.0
+    return len(left & right) / max(1, min(len(left), len(right)))
+
+
+def _priority_board_target_switch_streak(
     round_summaries: List[dict],
     cfg: dict,
     policy: dict,
 ) -> dict:
     streak = 0
+    mode = ""
     family = ""
+    board_ids: List[str] = []
+    minimum_overlap_ratio = float(policy.get("priority_board_switch_min_overlap_ratio", 0.6))
     for round_entry in reversed(round_summaries):
         result_json = _round_entry_result_json(round_entry)
         if not result_json:
@@ -2781,21 +2837,35 @@ def _priority_family_switch_streak(
         result_payload = _load_json_if_exists(Path(result_json))
         if not isinstance(result_payload, dict):
             break
-        dominant_family = _dominant_bottleneck_family_from_result_payload(result_payload, cfg, policy)
-        if dominant_family is None:
+        dominant_target = _dominant_bottleneck_target_from_result_payload(result_payload, cfg, policy)
+        if dominant_target is None:
             break
-        round_family = str(dominant_family.get("family", "")).strip().upper()
-        if not round_family:
+        round_mode = str(dominant_target.get("mode", "")).strip().lower()
+        round_family = str(dominant_target.get("family", "")).strip().upper()
+        round_board_ids = [
+            str(board_id).strip()
+            for board_id in dominant_target.get("priority_board_ids", dominant_target.get("board_ids", []))
+            if str(board_id).strip()
+        ]
+        if not round_mode or not round_board_ids:
             break
-        if not family:
+        if not board_ids:
+            mode = round_mode
             family = round_family
+            board_ids = round_board_ids
             streak = 1
             continue
-        if round_family != family:
+        if round_mode != mode:
+            break
+        if mode == "family" and family and round_family and round_family != family:
+            break
+        if _board_id_overlap_ratio(board_ids, round_board_ids) < minimum_overlap_ratio:
             break
         streak += 1
     return {
+        "mode": mode,
         "family": family,
+        "board_ids": list(board_ids),
         "streak": streak,
     }
 
@@ -2803,17 +2873,33 @@ def _priority_family_switch_streak(
 def _build_round_strategy_autotune_patch(
     cfg: dict,
     policy: dict,
-    dominant_family: dict,
+    dominant_target: dict,
     current_param_order: List[str],
     *,
     stagnation_rounds: int,
     repeated_signature_count: int,
-    priority_family_switch_streak: int,
+    priority_board_switch_streak: int,
 ) -> dict:
     patch: Dict[str, object] = {}
-    family_board_count = max(1, int(dominant_family.get("board_count", 1)))
-    escalation_steps = max(1, family_board_count - 1)
-    dominant_family_name = str(dominant_family.get("family", "")).strip().upper()
+    target_board_ids = [
+        str(board_id).strip()
+        for board_id in dominant_target.get("board_ids", [])
+        if str(board_id).strip()
+    ]
+    target_priority_board_ids = [
+        str(board_id).strip()
+        for board_id in dominant_target.get("priority_board_ids", target_board_ids)
+        if str(board_id).strip()
+    ]
+    target_focus_board_ids = [
+        str(board_id).strip()
+        for board_id in dominant_target.get("focus_board_ids", target_board_ids)
+        if str(board_id).strip()
+    ]
+    target_board_count = max(1, int(dominant_target.get("board_count", len(target_board_ids) or 1)))
+    escalation_steps = max(1, target_board_count - 1)
+    dominant_mode = str(dominant_target.get("mode", "")).strip().lower()
+    dominant_family_name = str(dominant_target.get("family", "")).strip().upper()
 
     priority_cfg = cfg.get("priority_board_acceptance")
     if isinstance(priority_cfg, dict) and priority_cfg:
@@ -2824,24 +2910,15 @@ def _build_round_strategy_autotune_patch(
             if str(board_id).strip()
         ]
         if bool(policy.get("auto_switch_priority_boards", True)):
-            dominant_family_board_ids = [
-                str(board_id).strip()
-                for board_id in dominant_family.get("family_board_ids", [])
-                if str(board_id).strip()
-            ]
-            if dominant_family_board_ids:
-                current_priority_family = _board_focus_family(current_priority_board_ids[0]) if current_priority_board_ids else ""
-                desired_priority_family = _board_focus_family(dominant_family_board_ids[0])
-                desired_priority_count = max(1, len(current_priority_board_ids))
-                desired_priority_board_ids = dominant_family_board_ids[:desired_priority_count]
-                minimum_switch_streak = int(policy.get("priority_family_switch_streak_rounds", 2))
-                family_switch_allowed = (
-                    not current_priority_family
-                    or not desired_priority_family
-                    or current_priority_family == desired_priority_family
-                    or priority_family_switch_streak >= minimum_switch_streak
+            if target_priority_board_ids:
+                desired_priority_count = max(1, len(current_priority_board_ids) or len(target_priority_board_ids))
+                desired_priority_board_ids = target_priority_board_ids[:desired_priority_count]
+                minimum_switch_streak = int(policy.get("priority_board_switch_streak_rounds", 2))
+                switch_allowed = (
+                    not current_priority_board_ids
+                    or priority_board_switch_streak >= minimum_switch_streak
                 )
-                if desired_priority_board_ids != current_priority_board_ids and family_switch_allowed:
+                if desired_priority_board_ids != current_priority_board_ids and switch_allowed:
                     priority_patch["board_ids"] = desired_priority_board_ids
 
         current_max_total_worsen = float(priority_cfg.get("max_total_score_worsen", 0.0))
@@ -2898,7 +2975,7 @@ def _build_round_strategy_autotune_patch(
             focus_patch["activation_min_stagnation_rounds"] = desired_activation_rounds
 
         current_top_k = max(1, int(focus_cfg.get("top_k", 1)))
-        desired_top_k = max(current_top_k, family_board_count)
+        desired_top_k = max(current_top_k, len(target_focus_board_ids) or target_board_count)
         if desired_top_k > current_top_k:
             focus_patch["top_k"] = desired_top_k
 
@@ -2906,6 +2983,24 @@ def _build_round_strategy_autotune_patch(
             focus_cfg.get("restrict_to_priority_boards", False)
         ):
             focus_patch["restrict_to_priority_boards"] = True
+
+        resulting_priority_board_ids = [
+            str(board_id).strip()
+            for board_id in priority_patch.get("board_ids", current_priority_board_ids)
+            if str(board_id).strip()
+        ]
+        current_focus_board_ids = [
+            str(board_id).strip()
+            for board_id in focus_cfg.get("focus_board_ids", [])
+            if str(board_id).strip()
+        ]
+        focus_ids_allowed = bool(target_focus_board_ids) and (
+            not bool(focus_cfg.get("restrict_to_priority_boards", False))
+            or not resulting_priority_board_ids
+            or all(board_id in resulting_priority_board_ids for board_id in target_focus_board_ids)
+        )
+        if focus_ids_allowed and current_focus_board_ids != target_focus_board_ids:
+            focus_patch["focus_board_ids"] = list(target_focus_board_ids)
 
         current_rank_multipliers = CameraCalibrator._normalize_trial_multiplier_values(
             focus_cfg.get("rank_multipliers", [1.12, 1.08, 1.04]),
@@ -2967,7 +3062,7 @@ def _build_round_strategy_autotune_patch(
     if isinstance(escape_cfg, dict):
         escape_patch: Dict[str, object] = {}
         current_board_focus_top_k = max(1, int(escape_cfg.get("board_focus_top_k", 1)))
-        desired_board_focus_top_k = max(current_board_focus_top_k, family_board_count)
+        desired_board_focus_top_k = max(current_board_focus_top_k, target_board_count)
         if desired_board_focus_top_k > current_board_focus_top_k:
             escape_patch["board_focus_top_k"] = desired_board_focus_top_k
         deanchor_ready = (
@@ -3004,7 +3099,11 @@ def _build_round_strategy_autotune_patch(
         and stagnation_rounds >= int(policy.get("unlock_parameter_activation_rounds", 2))
     ):
         raw_unlock_map = policy.get("unlock_parameter_step_multipliers", {})
-        family_unlock_map = raw_unlock_map.get(dominant_family_name, {}) if isinstance(raw_unlock_map, dict) else {}
+        family_unlock_map = (
+            raw_unlock_map.get(dominant_family_name, {})
+            if dominant_mode == "family" and dominant_family_name and isinstance(raw_unlock_map, dict)
+            else {}
+        )
         if isinstance(family_unlock_map, dict) and family_unlock_map:
             parameters_cfg = cfg.get("parameters")
             parameter_patch: Dict[str, dict] = {}
@@ -3156,12 +3255,12 @@ def _maybe_autotune_round_strategy(
     if not isinstance(result_payload, dict):
         return None
 
-    dominant_family = _dominant_bottleneck_family_from_result_payload(
+    dominant_target = _dominant_bottleneck_target_from_result_payload(
         result_payload,
         cfg,
         policy,
     )
-    if dominant_family is None:
+    if dominant_target is None:
         return None
 
     current_param_order = _round_entry_current_param_order(best_round)
@@ -3170,15 +3269,15 @@ def _maybe_autotune_round_strategy(
         best_round,
         float(policy.get("deanchor_score_delta", 0.05)),
     )
-    priority_family_switch_state = _priority_family_switch_streak(round_summaries, cfg, policy)
+    priority_board_switch_state = _priority_board_target_switch_streak(round_summaries, cfg, policy)
     patch = _build_round_strategy_autotune_patch(
         cfg,
         policy,
-        dominant_family,
+        dominant_target,
         current_param_order,
         stagnation_rounds=stagnation_rounds,
         repeated_signature_count=repeated_signature_count,
-        priority_family_switch_streak=int(priority_family_switch_state.get("streak", 0)),
+        priority_board_switch_streak=int(priority_board_switch_state.get("streak", 0)),
     )
     if not patch:
         return None
@@ -3197,23 +3296,29 @@ def _maybe_autotune_round_strategy(
 
     print(
         "Auto-tuned round strategy: "
-        f"path={config_path}, round={current_round_index}, family={dominant_family['family']}, "
-        f"boards={','.join(dominant_family['board_ids'])}, "
+        f"path={config_path}, round={current_round_index}, mode={dominant_target.get('mode', '')}, "
+        f"family={dominant_target.get('family', '')}, "
+        f"boards={','.join(dominant_target['board_ids'])}, "
         f"stagnation_rounds={stagnation_rounds}, "
-        f"switch_family={priority_family_switch_state.get('family', '')}, "
-        f"switch_streak={int(priority_family_switch_state.get('streak', 0))}, "
+        f"switch_mode={priority_board_switch_state.get('mode', '')}, "
+        f"switch_family={priority_board_switch_state.get('family', '')}, "
+        f"switch_streak={int(priority_board_switch_state.get('streak', 0))}, "
         f"changes={', '.join(config_changed_paths or memory_changed_paths)}"
     )
     return {
         "round_index": int(current_round_index),
-        "family": dominant_family["family"],
-        "board_ids": list(dominant_family["board_ids"]),
+        "mode": str(dominant_target.get("mode", "")),
+        "family": str(dominant_target.get("family", "")),
+        "families": list(dominant_target.get("families", [])),
+        "board_ids": list(dominant_target["board_ids"]),
         "stagnation_rounds": int(stagnation_rounds),
         "repeated_signature_count": int(repeated_signature_count),
-        "priority_family_switch_family": str(priority_family_switch_state.get("family", "")),
-        "priority_family_switch_streak": int(priority_family_switch_state.get("streak", 0)),
-        "priority_family_switch_required_streak": int(
-            policy.get("priority_family_switch_streak_rounds", 2)
+        "priority_board_switch_mode": str(priority_board_switch_state.get("mode", "")),
+        "priority_board_switch_family": str(priority_board_switch_state.get("family", "")),
+        "priority_board_switch_board_ids": list(priority_board_switch_state.get("board_ids", [])),
+        "priority_board_switch_streak": int(priority_board_switch_state.get("streak", 0)),
+        "priority_board_switch_required_streak": int(
+            policy.get("priority_board_switch_streak_rounds", 2)
         ),
         "source_result_json": result_json,
         "changed_paths": list(config_changed_paths or memory_changed_paths),
@@ -3457,6 +3562,7 @@ def _resolve_auto_objective_board_focus_policy(cfg: dict) -> dict:
             "restrict_to_priority_boards": False,
             "max_non_priority_top_boards": 0,
             "require_same_family": True,
+            "focus_board_ids": [],
             "rank_multipliers": [1.12, 1.08, 1.04],
             "priority_board_multiplier": 1.02,
         }
@@ -3484,6 +3590,11 @@ def _resolve_auto_objective_board_focus_policy(cfg: dict) -> dict:
             0, int(payload.get("max_non_priority_top_boards", 0))
         ),
         "require_same_family": bool(payload.get("require_same_family", True)),
+        "focus_board_ids": [
+            str(board_id).strip()
+            for board_id in payload.get("focus_board_ids", [])
+            if str(board_id).strip()
+        ],
         "rank_multipliers": CameraCalibrator._normalize_trial_multiplier_values(
             payload.get("rank_multipliers", [1.12, 1.08, 1.04]),
             [1.12, 1.08, 1.04],
@@ -3571,7 +3682,23 @@ def _build_auto_objective_board_focus_config(
     candidates.sort(key=lambda item: float(item["score"]), reverse=True)
     focus_candidates = candidates[: max(1, int(policy.get("top_k", 3)))]
     selected_focus = list(focus_candidates)
-    if restrict_to_priority_boards:
+    configured_focus_board_ids = [
+        str(board_id).strip()
+        for board_id in policy.get("focus_board_ids", [])
+        if str(board_id).strip()
+    ]
+    if configured_focus_board_ids:
+        if restrict_to_priority_boards and priority_board_ids:
+            configured_focus_board_ids = [
+                board_id for board_id in configured_focus_board_ids if board_id in priority_board_ids
+            ]
+        candidate_map = {str(item["board_id"]): item for item in candidates}
+        selected_focus = [
+            candidate_map[board_id]
+            for board_id in configured_focus_board_ids
+            if board_id in candidate_map
+        ]
+    elif restrict_to_priority_boards:
         priority_focus = [
             item for item in focus_candidates if str(item["board_id"]) in priority_board_ids
         ]
@@ -3583,7 +3710,7 @@ def _build_auto_objective_board_focus_config(
     if not selected_focus:
         return None
 
-    if bool(policy.get("require_same_family", True)):
+    if not configured_focus_board_ids and bool(policy.get("require_same_family", True)):
         family_groups: Dict[str, List[Dict[str, object]]] = {}
         for item in selected_focus:
             family = _board_focus_family(str(item["board_id"]))

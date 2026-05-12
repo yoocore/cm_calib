@@ -241,11 +241,12 @@ c:/CM_Projects/CMO141_Calibration/.venv/Scripts/python.exe Data/Script/CameraCal
 2. 等 `TclEval/CarMaker` 可用
 3. 用 `LoadTestRun` 同步 GUI 里真正选中的 TestRun
 4. 通过 Tcl 执行一次手工等价 bootstrap：`StartSim -> WaitForStatus running -> StopSim -> WaitForStatus idle`
-5. 复用或拉起 GUI `Movie.exe -cmgui CarMaker`
-6. 优先用 `send IPG-MOVIE` 主动探测当前 camera/view 是否就绪
-7. 如果连续两次 `send IPG-MOVIE` 失败，先尝试只重启 GUI Movie 一次，再重新探测
-8. 如果 GUI Movie 重启后 `send IPG-MOVIE` 仍然失败，才退回到较弱的 runtime fallback：`WInfoInterps "IPG-MOVIE"` + `WInfoInterps "GPUSensor_*"` + GUI/GPUSensor Movie 进程同时存在
-9. 如果传入 `--health-check-after-start`，启动链结束前再跑一轮只读 DDE 健康检查，并把 `send IPG-MOVIE` 失败直接视为启动失败
+5. 非 `--open-movie` 的普通启动链也统一改为同一套 Tcl `StartSim` / `StopSim` 控制，不再以 `SimControlInteractive.start_sim()` / `stop_sim()` 作为主路径
+6. 复用或拉起 GUI `Movie.exe -cmgui CarMaker`
+7. 优先用 `send IPG-MOVIE` 主动探测当前 camera/view 是否就绪
+8. 如果连续两次 `send IPG-MOVIE` 失败，先尝试只重启 GUI Movie 一次，再重新探测
+9. 如果 GUI Movie 重启后 `send IPG-MOVIE` 仍然失败，才退回到较弱的 runtime fallback：`WInfoInterps "IPG-MOVIE"` + `WInfoInterps "GPUSensor_*"` + GUI/GPUSensor Movie 进程同时存在
+10. 如果传入 `--health-check-after-start`，启动链结束前再跑一轮只读 DDE 健康检查，并把 `send IPG-MOVIE` 失败直接视为启动失败
 
 这里的关键变化是：
 

@@ -23,6 +23,7 @@ class RuntimePanel(QGroupBox):
         self.status_label = QLabel("idle")
         self.vehicle_label = QLabel("-")
         self.active_sensors_label = QLabel("-")
+        self.testrun_control_label = QLabel("-")
         self.process_label = QLabel("-")
         self.output_dir_label = QLabel("-")
         self.probe_button = QPushButton("Probe Runtime")
@@ -43,6 +44,7 @@ class RuntimePanel(QGroupBox):
         form.addRow("Status", self.status_label)
         form.addRow("Vehicle", self.vehicle_label)
         form.addRow("Active Sensors", self.active_sensors_label)
+        form.addRow("TestRun Control", self.testrun_control_label)
         form.addRow("Processes", self.process_label)
         form.addRow("Task Output", self.output_dir_label)
 
@@ -67,6 +69,7 @@ class RuntimePanel(QGroupBox):
         self.vehicle_label.setText(str(payload.get("vehicle") or "-"))
         active_sensors = payload.get("active_sensors") or []
         self.active_sensors_label.setText(", ".join(str(item) for item in active_sensors) if active_sensors else "-")
+        self.testrun_control_label.setText(str(payload.get("testrun_control") or "-"))
         counts = payload.get("process_counts") if isinstance(payload.get("process_counts"), dict) else {}
         if not counts:
             carmaker = payload.get("carmaker") if isinstance(payload.get("carmaker"), dict) else {}

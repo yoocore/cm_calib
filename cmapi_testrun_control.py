@@ -51,6 +51,7 @@ MOVIE_SCENE_READY_PROBE_NAME = "cmapi_testrun_control_movie_scene_ready_probe"
 MOVIE_SEND_HEALTH_CHECK_NAME = "cmapi_testrun_control_movie_send_health"
 DEFAULT_MOVIE_SCENE_READY_GRACE_SEC = 45.0
 CMAPI_CONTROL_SUMMARY_PREFIX = "CMAPI_CONTROL_SUMMARY_JSON:"
+TESTRUN_CONTROL_LABEL = "Tcl StartSim/StopSim"
 BM_CLICK = 0x00F5
 
 
@@ -578,6 +579,7 @@ def build_status_summary(
         "project_root": str(project_root),
         "cm_install": str(cm_install),
         "testrun": testrun_rel_path.as_posix(),
+        "testrun_control": TESTRUN_CONTROL_LABEL,
         "vehicle": vehicle_key,
         "vehicle_path": str(vehicle_path),
         "camera_sensor_requested": camera_sensor,
@@ -705,6 +707,7 @@ async def execute_prepare_mode(args: argparse.Namespace) -> dict[str, Any]:
             "project_root": str(project_root),
             "cm_install": str(cm_install),
             "testrun": testrun_rel_path.as_posix(),
+            "testrun_control": TESTRUN_CONTROL_LABEL,
             "selected_testrun": selected_testrun_name,
             "bootstrapped_testrun": bootstrapped_testrun_name,
             "vehicle": vehicle_key,
@@ -734,7 +737,6 @@ async def execute_prepare_mode(args: argparse.Namespace) -> dict[str, Any]:
         }
     finally:
         await cleanup(
-            simcontrol=None,
             movie=movie,
             carmaker=carmaker,
             movie_owned=movie_owned,
@@ -972,20 +974,22 @@ async def bootstrap_testrun_for_movie_via_cmapi(
     running_timeout_ms = max(1000, int(max(1.0, float(running_timeout_sec)) * 1000))
     idle_timeout_ms = max(1000, int(max(1.0, float(idle_timeout_sec)) * 1000))
     wait_for_carmaker_status("idle", 10000, probe_name=f"{probe_name}_idle_before")
-    window = wait_for_carmaker_test_window(expected_name)
-    start_button, stop_button = resolve_carmaker_test_window_buttons(window)
 
     try:
-        click_carmaker_test_button(start_button[0], start_button[1])
-        wait_for_carmaker_status("running", running_timeout_ms, probe_name=f"{probe_name}_running")
+        start_simulation_via_tcl(
+            running_timeout_sec=max(1.0, float(running_timeout_ms) / 1000.0),
+            probe_name=f"{probe_name}_start",
+        )
     except Exception as exc:
-        raise RuntimeError(f"Failed to start TestRun from CarMaker test window: {exc}") from exc
+        raise RuntimeError(f"Failed to start TestRun via {TESTRUN_CONTROL_LABEL}: {exc}") from exc
 
     try:
-        click_carmaker_test_button(stop_button[0], stop_button[1])
-        wait_for_carmaker_status("idle", idle_timeout_ms, probe_name=f"{probe_name}_idle_after")
+        stop_simulation_via_tcl(
+            idle_timeout_sec=max(1.0, float(idle_timeout_ms) / 1000.0),
+            probe_name=f"{probe_name}_stop",
+        )
     except Exception as exc:
-        raise RuntimeError(f"Failed to stop TestRun from CarMaker test window: {exc}") from exc
+        raise RuntimeError(f"Failed to stop TestRun via {TESTRUN_CONTROL_LABEL}: {exc}") from exc
 
     selected_name = sync_gui_testrun_selection(project_root, testrun_rel_path)
 
@@ -1787,52 +1791,70 @@ async def start_or_reuse_movie(
     return None, movie_pid, True, "started new GUI IPG-MOVIE instance"
 
 
-async def connect_simcontrol(
-    carmaker: cmapi.CarMaker,
-    variation: cmapi.Variation,
-    retries: int,
-    delay_sec: float,
-) -> cmapi.SimControlInteractive:
-    last_error: Optional[Exception] = None
-    for attempt in range(1, retries + 1):
-        simcontrol: Optional[cmapi.SimControlInteractive] = None
-        try:
-            simcontrol = cmapi.SimControlInteractive()
-            await simcontrol.set_master(carmaker)
-            simcontrol.set_variation(variation)
-            await simcontrol.connect()
-            return simcontrol
-        except Exception as exc:
-            last_error = exc
-            if simcontrol is not None:
-                try:
-                    await simcontrol.disconnect()
-                except Exception:
-                    pass
-            if attempt >= retries:
-                break
-            await asyncio.sleep(delay_sec)
-
-    raise RuntimeError(
-        f"Failed to connect SimControlInteractive after {retries} attempts"
-    ) from last_error
-
-
-async def wait_for_simstate(
-    simcontrol: cmapi.SimControlInteractive,
-    sim_state: cmapi.ConditionSimState,
+def run_tcl_sim_command(
+    *,
+    commands: list[str],
+    probe_name: str,
     timeout_sec: float,
-    label: str,
-) -> None:
-    condition = simcontrol.create_simstate_condition(sim_state)
-    try:
-        await asyncio.wait_for(condition.wait(), timeout=timeout_sec)
-    except asyncio.TimeoutError as exc:
-        raise RuntimeError(f"Timed out waiting for simulation state {label} after {timeout_sec:.1f} s") from exc
+) -> dict[str, Any]:
+    wait_for_carmaker_tcleval_ready()
+    output_dir = default_output_dir()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return run_check_attempt(
+        name=probe_name,
+        service="TclEval",
+        topic="CarMaker",
+        output_dir=output_dir,
+        script_text=render_result_script(
+            output_dir / f"{probe_name}.txt",
+            [
+                *commands,
+                "set status ok",
+            ],
+        ),
+        timeout_sec=max(1.0, float(timeout_sec)),
+    )
+
+
+def start_simulation_via_tcl(*, running_timeout_sec: float, probe_name: str) -> dict[str, Any]:
+    result = run_tcl_sim_command(
+        commands=[
+            "StartSim",
+            "update",
+            "update idletasks",
+        ],
+        probe_name=probe_name,
+        timeout_sec=max(10.0, float(running_timeout_sec) + 5.0),
+    )
+    if not result.get("ok"):
+        raise RuntimeError(f"Failed to invoke StartSim: {result.get('kind')}: {result.get('detail')}")
+    return wait_for_carmaker_status(
+        "running",
+        max(1000, int(max(1.0, float(running_timeout_sec)) * 1000)),
+        probe_name=f"{probe_name}_running",
+    )
+
+
+def stop_simulation_via_tcl(*, idle_timeout_sec: float, probe_name: str) -> dict[str, Any]:
+    result = run_tcl_sim_command(
+        commands=[
+            "StopSim",
+            "update",
+            "update idletasks",
+        ],
+        probe_name=probe_name,
+        timeout_sec=max(10.0, float(idle_timeout_sec) + 5.0),
+    )
+    if not result.get("ok"):
+        raise RuntimeError(f"Failed to invoke StopSim: {result.get('kind')}: {result.get('detail')}")
+    return wait_for_carmaker_status(
+        "idle",
+        max(1000, int(max(1.0, float(idle_timeout_sec)) * 1000)),
+        probe_name=f"{probe_name}_idle",
+    )
 
 
 async def cleanup(
-    simcontrol: Optional[cmapi.SimControlInteractive],
     movie: Optional[cmapi.IPGMovie],
     carmaker: Optional[cmapi.CarMaker],
     movie_owned: bool,
@@ -1840,12 +1862,6 @@ async def cleanup(
     keep_movie_open: bool,
     keep_carmaker_open: bool,
 ) -> None:
-    if simcontrol is not None:
-        try:
-            await simcontrol.disconnect()
-        except Exception:
-            pass
-
     if carmaker_owned and not keep_carmaker_open:
         kill_existing_cm_processes()
         return
@@ -1908,7 +1924,6 @@ async def main() -> None:
 
     carmaker: Optional[cmapi.CarMaker] = None
     movie: Optional[cmapi.IPGMovie] = None
-    simcontrol: Optional[cmapi.SimControlInteractive] = None
     carmaker_owned = False
     movie_owned = False
     carmaker_pid: Optional[int] = None
@@ -1969,7 +1984,7 @@ async def main() -> None:
                 carmaker_pid=carmaker_pid,
             )
             print(
-                "Bootstrap run: CarMaker GUI Start/Stop reached running state and returned to idle "
+                f"Bootstrap run: {TESTRUN_CONTROL_LABEL} reached running state and returned to idle "
                 f"for TestRun {bootstrapped_testrun_name}"
             )
 
@@ -2102,27 +2117,28 @@ async def main() -> None:
             return
 
         kill_movie_stack_if_gpusensor_present()
-        simcontrol = await connect_simcontrol(
-            carmaker,
-            variation,
-            args.apo_connect_retries,
-            args.apo_connect_delay_sec,
+        start_simulation_via_tcl(
+            running_timeout_sec=args.bootstrap_running_timeout_sec,
+            probe_name="cmapi_testrun_control_run_start",
         )
-        print("SimControlInteractive connected")
-
-        await simcontrol.start_sim()
-        print("Simulation started")
+        print(f"{TESTRUN_CONTROL_LABEL} reached running state")
 
         if args.stop_after is not None:
             await asyncio.sleep(args.stop_after)
-            await simcontrol.stop_sim()
-            print(f"Simulation stop requested after {args.stop_after:.3f} s")
+            stop_simulation_via_tcl(
+                idle_timeout_sec=args.bootstrap_idle_timeout_sec,
+                probe_name="cmapi_testrun_control_run_stop",
+            )
+            print(f"{TESTRUN_CONTROL_LABEL} returned to idle after {args.stop_after:.3f} s")
         else:
-            await simcontrol.create_simstate_condition(cmapi.ConditionSimState.finished).wait()
-            print("Simulation finished")
+            wait_for_carmaker_status(
+                "idle",
+                24 * 60 * 60 * 1000,
+                probe_name="cmapi_testrun_control_run_finished",
+            )
+            print("Simulation finished; CarMaker returned to idle")
     finally:
         await cleanup(
-            simcontrol,
             movie,
             carmaker,
             movie_owned=movie_owned,

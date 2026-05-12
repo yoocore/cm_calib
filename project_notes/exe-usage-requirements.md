@@ -206,7 +206,7 @@ GUI 内部应至少维护以下状态：
 3. 根据中栏CM Prepare按钮后面的复选框内容，打开对应版本的CarMaker
 4. 根据左栏的projectdir，切换到对应工程目录
 5. 根据左栏的testrun，切换到对应TestRun
-6. start testrun等待处于running状态后stop testrun
+6. 通过 Tcl 执行 StartSim，等待处于running状态后，再通过 Tcl 执行 StopSim
 7. 打开ipgmoive，等待画面加载完成
 8. 切换ipgmoive-view-show-ABRAXAS，使其处于被勾选
 9. 切换 ipgmoive-camera-sensor-xxxx，使其处于被勾选
@@ -244,7 +244,17 @@ GUI 内部应至少维护以下状态：
 标定脚本在执行第一个摄像头标定的时候，环境准备工作已经被CM Prepare 步骤准备好，但是后续摄像头的标定需要执行一些特殊的步骤（因为涉及到配置的更改及CarMaker的运行等），需要在标定脚本中实现：
 1.假设在“标定前置文件检查”阶段，被勾选的摄像头的名称会以文本的形式保存下来，其表示了本次标定涉及的摄像头，在启动标定时，需要将这些摄像头的名称传递给底层脚本。
 2. 在底层脚本中，将该文本作为参数输入。点击 Calib Start 时，应跳过 CM Prepare，直接继续执行标定流程。
-1. 在执行完第一个摄像头的标定后，根据下一次要执行的摄像头名称，更改CarMaker的配置文件（testrun所使用的vehicle文件），仅active被执行的摄像头，然后start testrun等待处于running状态后stop testrun，切换ipgmoive-camera-sensor-xxxx，使其处于被勾选，执行健康检查，再运行实质标定。以此循环，直到所有摄像头标定完成。
+1. 在执行完第一个摄像头的标定后，根据下一次要执行的摄像头名称，更改CarMaker的配置文件（testrun所使用的vehicle文件），仅active被执行的摄像头，然后通过 Tcl 执行 StartSim，等待处于running状态后，再通过 Tcl 执行 StopSim，切换ipgmoive-camera-sensor-xxxx，使其处于被勾选，执行健康检查，再运行实质标定。以此循环，直到所有摄像头标定完成。
+
+### 10.9 TestRun 启停口径
+
+当前需要明确 Prepare 和后续多 camera 切换时，TestRun 的启停控制方式。
+
+确定口径：
+
+1. TestRun 的启停统一走 TclEval/CarMaker 下的 `StartSim` 和 `StopSim`
+2. 不再把 `SimControlInteractive.start_sim()` 和 `SimControlInteractive.stop_sim()` 作为一期主路径
+3. 不接受物理点击作为正式实现路径
 
 
 成功结果：

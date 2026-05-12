@@ -219,6 +219,7 @@ class MainWindow(QMainWindow):
         self._runtime_recent_lines.clear()
         self.calibration_panel.clear_failure_summary()
         if self._runtime_mode == "prepare":
+            self.output_panel.append_log("[runtime] CM Prepare uses Tcl StartSim/StopSim for the TestRun bootstrap")
             self._apply_status(AppStatus.PREPARING)
         else:
             self._sync_control_states()
@@ -235,7 +236,14 @@ class MainWindow(QMainWindow):
     @Slot(dict)
     def _on_runtime_summary(self, payload: dict) -> None:
         self.runtime_panel.set_runtime_summary(payload)
-        self.output_panel.append_log(f"[runtime] summary mode={payload.get('mode')} status={payload.get('status', payload.get('mode'))}")
+        summary_parts = [
+            f"mode={payload.get('mode')}",
+            f"status={payload.get('status', payload.get('mode'))}",
+        ]
+        testrun_control = self._as_text(payload.get("testrun_control"))
+        if testrun_control:
+            summary_parts.append(f"testrun_control={testrun_control}")
+        self.output_panel.append_log(f"[runtime] summary {' '.join(summary_parts)}")
         mode = str(payload.get("mode") or "")
         status = str(payload.get("status") or "")
         if mode == "prepare":
@@ -416,6 +424,10 @@ class MainWindow(QMainWindow):
 
     def _build_runtime_unhealthy_summary(self, payload: dict, launch: CalibrationLaunchConfig) -> str:
         details: list[str] = []
+        testrun_control = self._as_text(payload.get("testrun_control"))
+        if testrun_control:
+            details.append(f"CM Prepare TestRun control: {testrun_control}")
+
         status_reason = self._as_text(payload.get("status_reason"))
         if status_reason and status_reason != "runtime ready":
             details.append(status_reason)

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import deque
 from pathlib import Path
 
-from PySide6.QtCore import Slot
+from PySide6.QtCore import QTimer, Slot
 from PySide6.QtWidgets import QHBoxLayout, QMainWindow, QMessageBox, QWidget
 
 from gui_app.models.state import AppStatus, ApplicationState, CalibrationLaunchConfig, CameraResult
@@ -11,6 +11,7 @@ from gui_app.services.calibration_service import CalibrationService
 from gui_app.services.config_service import ConfigService
 from gui_app.services.precheck_service import PrecheckService
 from gui_app.services.runtime_service import RuntimeService
+from gui_app.services.static_vehicle_reader import resolve_vehicle_info
 from gui_app.widgets.calibration_panel import CalibrationPanel
 from gui_app.widgets.output_panel import OutputPanel
 from gui_app.widgets.runtime_panel import RuntimePanel
@@ -47,6 +48,10 @@ class MainWindow(QMainWindow):
         self._wire_signals()
         self._refresh_camera_list()
         self._apply_status(AppStatus.IDLE)
+        self._refresh_static_timer = QTimer(self)
+        self._refresh_static_timer.setInterval(1000)
+        self._refresh_static_timer.timeout.connect(self._refresh_static_info)
+        self._refresh_static_timer.start()
 
     def _wire_signals(self) -> None:
         self.calibration_panel.start_button.clicked.connect(self._start_calibration)
@@ -70,6 +75,20 @@ class MainWindow(QMainWindow):
 
     def _refresh_camera_list(self) -> None:
         self.calibration_panel.set_cameras(self.config_service.list_cameras())
+
+    def _refresh_static_info(self) -> None:
+        project_root = Path(self.runtime_panel.project_root_edit.text().strip() or self.project_root)
+        testrun = self.runtime_panel.testrun_edit.text().strip()
+        if not testrun:
+            self.runtime_panel.clear_sensor_list()
+            return
+        try:
+            info = resolve_vehicle_info(project_root, testrun)
+            self.runtime_panel.vehicle_label.setText(info["vehicle_key"])
+            self.runtime_panel.update_sensor_list(info["sensors"])
+        except Exception:
+            self.runtime_panel.vehicle_label.setText("-")
+            self.runtime_panel.clear_sensor_list()
 
     def _build_launch_config(self) -> CalibrationLaunchConfig:
         selected_cameras = self.calibration_panel.selected_cameras()

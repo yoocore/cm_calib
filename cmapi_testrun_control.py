@@ -13,7 +13,7 @@ from typing import Any, Optional
 
 import cmapi
 from dde_health_check import classify_health_summary, default_output_dir, render_dde_execute_script, render_result_script, run_check_attempt, run_read_only_health_suite
-from runtime_config_bootstrap import bootstrap_runtime_configs_for_cameras, capture_initial_values_to_config
+from runtime_config_bootstrap import bootstrap_runtime_configs_for_cameras, capture_initial_values_to_config, load_movie_view_size_from_config
 
 
 if not hasattr(cmapi, "InvalidConfigurationException"):
@@ -41,7 +41,6 @@ if ($null -eq $procs) {
 GUI_MOVIE_MARKERS = ("-cmgui", "-apppid", "-cminstance")
 GPUSENSOR_MOVIE_MARKERS = ("-mode GPUSensor", "-headless")
 SENSOR_NAME_RE = re.compile(r"^(?P<prefix>\s*Sensor\.(?P<index>\d+)\.name\s*=\s*)(?P<value>.*?)(?P<suffix>\s*)$")
-SENSOR_ACTIVE_RE = re.compile(r"^(?P<prefix>\s*Sensor\.(?P<index>\d+)\.Active\s*=\s*)(?P<value>[01])(?P<suffix>\s*)$")
 IPGMOVIE_SENSOR_PREFIX_RE = re.compile(
     r"^CAMERA_RSI-SENSOR\s+Vh(?:cl|ic)\.(?P<name>.+)$",
     re.IGNORECASE,
@@ -682,14 +681,10 @@ async def execute_prepare_mode(args: argparse.Namespace) -> dict[str, Any]:
             movie_scene["camera_name"] = str(camera_selection.get("current") or movie_scene.get("camera_name") or "")
             selected_config_path = config_dir / f"camera.{sensor_activation_result['selected_sensor_name']}.json"
             if selected_config_path.exists():
-                with selected_config_path.open("r", encoding="utf-8-sig") as handle:
-                    config_payload = json.load(handle)
-                width = config_payload.get("movie_view_width")
-                height = config_payload.get("movie_view_height")
-                if width is not None and height is not None:
-                    view_size = ensure_movie_view_size(int(width), int(height))
-                    movie_scene["width"] = str(width)
-                    movie_scene["height"] = str(height)
+                width, height = load_movie_view_size_from_config(selected_config_path)
+                view_size = ensure_movie_view_size(width, height)
+                movie_scene["width"] = str(width)
+                movie_scene["height"] = str(height)
         camera_widgets = ensure_movie_camera_widgets(timeout_sec=args.health_check_timeout_sec)
         if sensor_activation_result is not None:
             selected_config_path = config_dir / f"camera.{sensor_activation_result['selected_sensor_name']}.json"
@@ -1355,9 +1350,10 @@ def wait_for_movie_scene_ready(
                 "IPG-MOVIE",
                 [
                     'if {![info exists View(ev.view)]} {error "missing View(ev.view)"}',
-                    'set vno $View(ev.view)',
-                    'set wi [dict get $View($vno) Width]',
-                    'set he [dict get $View($vno) Height]',
+                    'set view_key $View(ev.view)',
+                    'scan $view_key %d vno',
+                    'set wi [dict get $View($view_key) Width]',
+                    'set he [dict get $View($view_key) Height]',
                     'set abraxas_menu ".view${vno}.mbar.view.m.show"',
                     'set abraxas_menu_ready [expr {[winfo exists $abraxas_menu] ? 1 : 0}]',
                     'set camera_widget [expr {[winfo exists .camera] ? 1 : 0}]',
@@ -1539,6 +1535,9 @@ def ensure_movie_camera_selected(
     output_dir = default_output_dir()
     output_dir.mkdir(parents=True, exist_ok=True)
     probe_name = "cmapi_testrun_control_movie_camera_select_probe"
+    capture_dir = output_dir / "sensor_view_probe"
+    capture_dir.mkdir(parents=True, exist_ok=True)
+    capture_path = capture_dir / "selected_sensor_render.png"
     result = run_check_attempt(
         name=probe_name,
         service=service,
@@ -1549,45 +1548,40 @@ def ensure_movie_camera_selected(
             "IPG-MOVIE",
             [
                 'if {![info exists View(ev.view)]} {error "missing View(ev.view)"}',
-                'scan $View(ev.view) %d vno',
-                'set menu ".view${vno}.mbar.camera.m.sens"',
+                'set vno $View(ev.view)',
+                'Camera::ShowSettingsDlg',
+                'update',
+                'update idletasks',
                 f'set target "{escaped_label}"',
-                'set target_key [string tolower [regsub {^camera_rsi-sensor\\s+vh(?:cl|ic)\\.} $target ""]]',
-                'set labels {}',
-                'set candidates [list $target]',
-                'if {$target_key ne $target} {lappend candidates $target_key}',
-                'if {[winfo exists $menu]} {',
-                '    set end [$menu index end]',
-                '    if {$end ne "none"} {',
-                '        for {set idx 0} {$idx <= $end} {incr idx} {',
-                '            set label [$menu entrycget $idx -label]',
-                '            lappend labels $label',
-                '            if {[lsearch -exact $candidates $label] < 0} {lappend candidates $label}',
-                '        }',
-                '    }',
+                'Camera::Select $target $vno',
+                'update',
+                'update idletasks',
+                'if {![winfo exists .camera.btn.set]} {error "missing widget .camera.btn.set"}',
+                '.camera.btn.set invoke',
+                'update',
+                'update idletasks',
+                'set wi [dict get $View($vno) Width]',
+                'set he [dict get $View($vno) Height]',
+                'set captureFBO [FBO new $wi $he -tex rgb -noclear]',
+                'set update_rc [catch {',
+                '    FBO begin $captureFBO',
+                '    UpdateView $vno',
+                '    FBO end',
+                '} update_msg]',
+                'catch {FBO end}',
+                'if {$update_rc != 0} {',
+                '    catch {FBO delete $captureFBO}',
+                '    error $update_msg',
                 '}',
-                'set matched ""',
-                'set current ""',
-                'set current_key ""',
-                'foreach candidate $candidates {',
-                '    if {$candidate eq ""} {continue}',
-                '    Camera::Select $candidate $vno',
-                '    update',
-                '    update idletasks',
-                '    catch {UpdateView $View(ev.view)}',
-                '    catch {UpdateView_TimerProc}',
-                '    catch {event generate .view${vno}.gl0 <Expose>}',
-                '    update',
-                '    update idletasks',
-                '    if {[info exists Camera::v(Name)]} {set current $Camera::v(Name)} else {set current ""}',
-                '    set current_key [string tolower [regsub {^camera_rsi-sensor\\s+vh(?:cl|ic)\\.} $current ""]]',
-                '    if {$current eq $candidate || $current eq $target || $current_key eq $target_key} {',
-                '        set matched $candidate',
-                '        break',
-                '        }',
-                '}',
-                'if {$matched eq ""} {error "sensor select failed: target=$target current=$current labels=[join $labels {, }] candidates=[join $candidates {, }]"}',
-                'format "selected=%s;matched=%s;current=%s;current_key=%s;view=%s" $target $matched $current $current_key $vno',
+                'catch {image delete probeImg}',
+                'image create photo probeImg -width $wi -height $he',
+                'gl bindframebuffer_read $captureFBO',
+                'gl readpixels 0 0 probeImg',
+                f'probeImg write "{capture_path.as_posix()}" -format png',
+                'catch {gl bindframebuffer_read 0}',
+                'catch {FBO delete $captureFBO}',
+                'if {[info exists Camera::v(Name)]} {set current $Camera::v(Name)} else {set current ""}',
+                'format "state=selected;selected=%s;current=%s;view=%s;apply_invoked=1;capture_path=%s" $target $current $vno {' + capture_path.as_posix() + '}',
             ],
         ),
         timeout_sec=max(1.0, float(timeout_sec)),
@@ -1597,15 +1591,25 @@ def ensure_movie_camera_selected(
 
     detail = str(result.get("detail") or "").strip()
     payload = _parse_probe_detail(detail)
+    if payload.get("state") != "selected":
+        raise RuntimeError(
+            "IPG-MOVIE camera sensor selection did not report selected state: "
+            f"requested={target_label}, detail={detail or '<empty>'}"
+        )
     current_label = str(payload.get("current") or "")
     target_key = re.sub(r"^camera_rsi-sensor\s+vh(?:cl|ic)\.", "", target_label, flags=re.IGNORECASE).casefold()
     current_key = re.sub(r"^camera_rsi-sensor\s+vh(?:cl|ic)\.", "", current_label, flags=re.IGNORECASE).casefold()
     if current_label != target_label and current_key != target_key:
         raise RuntimeError(
             "IPG-MOVIE camera sensor selection did not latch to the requested sensor: "
-            f"requested={target_label}, matched={payload.get('matched') or '<empty>'}, actual={current_label or '<empty>'}"
+            f"requested={target_label}, actual={current_label or '<empty>'}"
         )
-    payload["mode"] = "camera_selected"
+    if str(payload.get("apply_invoked") or "0") != "1":
+        raise RuntimeError(
+            "IPG-MOVIE camera sensor selection did not apply through Camera Settings Add/Set; "
+            f"requested={target_label}, current={current_label or '<empty>'}"
+        )
+    payload["mode"] = "camera_select_render_verified"
     return payload
 
 
@@ -2028,15 +2032,11 @@ async def main() -> None:
                 )
                 selected_config_path = args.config_dir.resolve() / f"camera.{sensor_activation_result['selected_sensor_name']}.json"
                 if selected_config_path.exists():
-                    with selected_config_path.open("r", encoding="utf-8-sig") as handle:
-                        config_payload = json.load(handle)
-                    width = config_payload.get("movie_view_width")
-                    height = config_payload.get("movie_view_height")
-                    if width is not None and height is not None:
-                        applied_view = ensure_movie_view_size(int(width), int(height))
-                        movie_scene["width"] = str(width)
-                        movie_scene["height"] = str(height)
-                        movie_scene["view_widget"] = str(applied_view.get("widget") or "")
+                    width, height = load_movie_view_size_from_config(selected_config_path)
+                    applied_view = ensure_movie_view_size(width, height)
+                    movie_scene["width"] = str(width)
+                    movie_scene["height"] = str(height)
+                    movie_scene["view_widget"] = str(applied_view.get("widget") or "")
             camera_widgets = ensure_movie_camera_widgets(timeout_sec=args.health_check_timeout_sec)
             print(
                 "IPG-MOVIE camera widgets: "

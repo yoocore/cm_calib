@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import cmapi_testrun_control as cmctrl
+from runtime_config_bootstrap import load_movie_view_size_from_config
 
 
 CALIBRATION_SUMMARY_PREFIX = "CALIBRATION_SUMMARY_JSON:"
@@ -177,20 +178,7 @@ def _resolve_config_path(config_dir: Path, camera_name: str) -> Path:
 
 
 def _load_movie_view_size(config_path: Path) -> tuple[int, int] | None:
-    payload = json.loads(config_path.read_text(encoding="utf-8"))
-    raw_width = payload.get("movie_view_width")
-    raw_height = payload.get("movie_view_height")
-    if raw_width is None and raw_height is None:
-        return None
-    if raw_width is None or raw_height is None:
-        raise ValueError(
-            f"Config {config_path} must define both movie_view_width and movie_view_height when either is present"
-        )
-    width = int(raw_width)
-    height = int(raw_height)
-    if width <= 0 or height <= 0:
-        raise ValueError(f"Config {config_path} declares invalid movie view size {width}x{height}")
-    return width, height
+    return load_movie_view_size_from_config(config_path)
 
 
 def _append_optional_arg(command: list[str], name: str, value: Optional[object]) -> None:

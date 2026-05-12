@@ -858,11 +858,28 @@ Camera::Select Name ?vno?
 
 1. 普通项例如 `Bird's Eye View` 走 `Camera::Select {Bird's Eye View}`
 2. Sensors 里的具体传感器也走 `Camera::Select {CAMERA_RSI-SENSOR ...}`
+3. `Sensors` 子菜单当前按实测是 command 项，不提供独立的勾选态
+4. 仅执行 `Camera::Select` 只能把当前 camera 名称和 Camera Settings 当前项切到目标 sensor，不足以保证主视图已经切成该 sensor 视角
+5. 若要把目标 sensor 真正应用到当前 view，还要补一条 Camera Settings 的 `Add/Set` 动作：`.camera.btn.set invoke`
 
-所以如果后续想后台切到某个 sensor，优先直接调用：
+所以如果后续想后台切到某个 sensor，当前推荐顺序是：
 
 ```tcl
+Camera::ShowSettingsDlg
+update
+update idletasks
 Camera::Select {<exact sensor label>}
+update
+update idletasks
+if {[winfo exists .camera.btn.set]} {
+    .camera.btn.set invoke
+}
+update
+update idletasks
 ```
 
-而不是模拟点开 `Camera -> Sensors` 菜单。
+其中：
+
+1. `Camera::Select` 负责把目标 sensor 选成当前 camera 项
+2. `.camera.btn.set invoke` 负责把该 camera 真正应用到活动 view
+3. 不需要模拟点开 `Camera -> Sensors` 菜单，但也不能把 `Camera::Select` 误当成完整的可见视角切换动作

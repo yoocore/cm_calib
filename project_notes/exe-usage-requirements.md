@@ -209,7 +209,7 @@ GUI 内部应至少维护以下状态：
 6. 通过 Tcl 执行 StartSim，等待处于running状态后，再通过 Tcl 执行 StopSim
 7. 打开ipgmoive，等待画面加载完成
 8. 切换ipgmoive-view-show-ABRAXAS，使其处于被勾选
-9. 切换 ipgmoive-camera-sensor-xxxx，使其处于被勾选
+9. 切换 ipgmoive-camera-sensor-xxxx，使目标 sensor 成为当前 camera
 10. 设置ipgmoive-view-size-custom中的尺寸，使其与真实图片的尺寸一致
 11. 打开ipgmoive-camera-settings
 12. 打开ipgmoive-camara lens parameters
@@ -218,6 +218,7 @@ GUI 内部应至少维护以下状态：
 注意事项：
 
 1. 当 Vehicle 文件中仅 active 了一个摄像头时，IPG-MOVIE 中只有一个 camera sensor 可选项，因此不会选错
+2. 当前 IPG-MOVIE 的 `Camera -> Sensors` 菜单项按实测是 command 语义，不提供独立的勾选态；因此本步骤的验收口径以“目标 sensor 成为当前 camera”为准，而不是观察菜单是否出现对勾
 
 成功结果：
 1. 未点击prepare之前，status: idle
@@ -244,7 +245,7 @@ GUI 内部应至少维护以下状态：
 标定脚本在执行第一个摄像头标定的时候，环境准备工作已经被CM Prepare 步骤准备好，但是后续摄像头的标定需要执行一些特殊的步骤（因为涉及到配置的更改及CarMaker的运行等），需要在标定脚本中实现：
 1.假设在“标定前置文件检查”阶段，被勾选的摄像头的名称会以文本的形式保存下来，其表示了本次标定涉及的摄像头，在启动标定时，需要将这些摄像头的名称传递给底层脚本。
 2. 在底层脚本中，将该文本作为参数输入。点击 Calib Start 时，应跳过 CM Prepare，直接继续执行标定流程。
-1. 在执行完第一个摄像头的标定后，根据下一次要执行的摄像头名称，更改CarMaker的配置文件（testrun所使用的vehicle文件），仅active被执行的摄像头，然后通过 Tcl 执行 StartSim，等待处于running状态后，再通过 Tcl 执行 StopSim，切换ipgmoive-camera-sensor-xxxx，使其处于被勾选，执行健康检查，再运行实质标定。以此循环，直到所有摄像头标定完成。
+1. 在执行完第一个摄像头的标定后，根据下一次要执行的摄像头名称，更改CarMaker的配置文件（testrun所使用的vehicle文件），仅active被执行的摄像头，然后通过 Tcl 执行 StartSim，等待处于running状态后，再通过 Tcl 执行 StopSim，切换ipgmoive-camera-sensor-xxxx，使下一次要执行的 sensor 成为当前 camera，执行健康检查，再运行实质标定。以此循环，直到所有摄像头标定完成。
 
 ### 10.9 TestRun 启停口径
 
@@ -252,9 +253,31 @@ GUI 内部应至少维护以下状态：
 
 确定口径：
 
-1. TestRun 的启停统一走 TclEval/CarMaker 下的 `StartSim` 和 `StopSim`
-2. 不再把 `SimControlInteractive.start_sim()` 和 `SimControlInteractive.stop_sim()` 作为一期主路径
-3. 不接受物理点击作为正式实现路径
+1. TestRun 启停保留两种冻结基线：纯 Tcl `StartSim -> WaitForStatus running -> StopSim -> WaitForStatus idle`，以及 Tcl/Tk 控件层 `.f.btn.start/.f.btn.stop invoke`
+2. 当前实现主路径仍优先使用纯 Tcl `StartSim` / `StopSim`
+3. 不再把 `SimControlInteractive.start_sim()` 和 `SimControlInteractive.stop_sim()` 作为一期主路径
+4. 不接受物理点击作为正式实现路径
+5. 已验证完整链和 Tcl 示例固定归档在 `project_notes/verified_prepare_runtime_baseline_2026-05-12.md`，后续若无明确需求不再改动该基线文档
+
+### 10.9.1 已验证冻结基线
+
+当前需要给已实测通过的 Prepare 关键运行链一个固定基准，避免后续口径漂移。
+
+确定口径：
+
+1. 已验证冻结基线文档为 `project_notes/verified_prepare_runtime_baseline_2026-05-12.md`
+2. 该文档收口本轮已实测通过的 TestRun 启停、ABRAXAS、sensor 切换、view size、Camera Settings、Lens Parameters 和 DDE 健康检查链路
+3. 后续如需试验新链路，应新增补充文档，不直接改写该冻结基线
+
+### 10.10 IPG-MOVIE Camera Sensor 切换口径
+
+当前需要明确 Prepare 和后续多 camera 切换时，IPG-MOVIE 的 camera sensor 切换成功应如何判定。
+
+确定口径：
+
+1. `Camera -> Sensors` 当前按实测是 command 菜单，不以菜单勾选态作为验收依据
+2. 本步骤成功标准是目标 sensor 成为当前 camera
+3. 运行态验收不要求菜单对勾，但不能只凭当前 camera 名称回读；应以主视图已切到目标 sensor 视角为准
 
 
 成功结果：

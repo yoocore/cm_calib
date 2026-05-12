@@ -62,15 +62,22 @@ def _read_image_size(image_path: Path) -> tuple[int, int]:
     return int(width), int(height)
 
 
-def _write_movie_view_size(config_path: Path, width: int, height: int) -> None:
-    with config_path.open("r", encoding="utf-8-sig") as handle:
+def load_movie_view_size_from_config(config_path: Path) -> tuple[int, int]:
+    resolved_config_path = config_path.resolve()
+    with resolved_config_path.open("r", encoding="utf-8-sig") as handle:
         payload = json.load(handle)
 
-    payload["movie_view_width"] = int(width)
-    payload["movie_view_height"] = int(height)
+    raw_real_image = str(payload.get("real_image") or "").strip()
+    if not raw_real_image:
+        raise ValueError(f"Config {resolved_config_path} must define real_image")
 
-    with config_path.open("w", encoding="utf-8") as handle:
-        json.dump(payload, handle, ensure_ascii=False, indent=4)
+    real_image_path = Path(raw_real_image)
+    if not real_image_path.is_absolute():
+        real_image_path = (resolved_config_path.parent / real_image_path).resolve()
+    else:
+        real_image_path = real_image_path.resolve()
+
+    return _read_image_size(real_image_path)
 
 
 def _build_backup_path(config_path: Path) -> Path:
@@ -143,7 +150,6 @@ def bootstrap_runtime_config(
         capture_current_params=capture_current_params,
     )
     width, height = _read_image_size(raw_image_path)
-    _write_movie_view_size(generated_config_path, width, height)
 
     return {
         "camera": camera_name,

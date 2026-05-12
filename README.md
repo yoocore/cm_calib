@@ -14,6 +14,7 @@
 
 文件说明
 - camera_calibration.py：主脚本
+- verify_runtime_chain_baseline.py：已验证运行链的冻结参考脚本，作为回归对照、参考文档和新链路模板，不作为主运行链唯一入口
 - configs/camera.<camera>.json：每个摄像头维护一份运行输入配置，例如 configs/camera.rear_tv.json
 - configs/bootstrap.template.json：独立的 bootstrap 模板输入配置，用于在第一个摄像头还没有现成 camera config 时生成新配置；文件里尽量只保留项目相关的板原型和少量覆盖项
 - script_control_apply.tcl：唯一维护的 Script Control 命令脚本

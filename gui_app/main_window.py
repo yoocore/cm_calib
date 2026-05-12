@@ -321,7 +321,12 @@ class MainWindow(QMainWindow):
                 self._pending_launch = None
                 if self._is_runtime_ready_for_launch(payload, launch):
                     self.calibration_panel.clear_failure_summary()
-                    self.calibration_service.start(launch)
+                    try:
+                        self.calibration_service.start(launch)
+                    except Exception as exc:
+                        self.calibration_panel.set_failure_summary("Calibration start failed: " + str(exc))
+                        self._apply_status(AppStatus.FAILED)
+                        QMessageBox.critical(self, "Calibration Start Failed", str(exc))
                     return
                 self.calibration_panel.set_failure_summary(self._build_runtime_unhealthy_summary(payload, launch))
                 self._apply_status(AppStatus.PASSIVE)

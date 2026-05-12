@@ -154,10 +154,6 @@ class CalibrationPanel(QGroupBox):
         estimate_row.addWidget(QLabel("Estimated Time"))
         estimate_row.addWidget(self.estimate_label, 1)
         rounds_inner.addLayout(estimate_row)
-        status_row = QHBoxLayout()
-        status_row.addWidget(QLabel("Status"))
-        status_row.addWidget(self.status_label, 1)
-        rounds_inner.addLayout(status_row)
 
         # --- Buttons ---
         button_row = QWidget(self)
@@ -184,6 +180,10 @@ class CalibrationPanel(QGroupBox):
         layout.addWidget(precheck_row)
         layout.addWidget(self.precheck_tree, 1)
         layout.addWidget(rounds_group)
+        status_row = QHBoxLayout()
+        status_row.addWidget(QLabel("Status"))
+        status_row.addWidget(self.status_label, 1)
+        layout.addLayout(status_row)
         layout.addWidget(self.phase_label)
         layout.addWidget(cm_row)
         layout.addWidget(button_row)

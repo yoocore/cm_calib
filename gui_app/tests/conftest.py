@@ -19,9 +19,27 @@ def main_window(qtbot, tmp_path):
     project_root = tmp_path / "project"
     (project_root / "Data" / "Script" / "CameraCalibration" / "configs").mkdir(parents=True)
     (project_root / "Movie").mkdir()
+    (project_root / "Data" / "TestRun").mkdir(parents=True)
+    testrun_file = project_root / "Data" / "TestRun" / "vctc_ngxpro"
+    testrun_file.write_text(
+        "#INFOFILE1.1 (UTF-8) - Do not remove this line!\n"
+        "FileIdent = CarMaker-TestRun 14\n"
+        "Vehicle = Examples/TestVehicle\n",
+        encoding="utf-8",
+    )
+    (project_root / "Data" / "Vehicle" / "Examples").mkdir(parents=True)
+    vehicle_file = project_root / "Data" / "Vehicle" / "Examples" / "TestVehicle"
+    vehicle_file.write_text(
+        "Sensor.0.name = cam1\n"
+        "Sensor.0.Active = 1\n"
+        "Sensor.Param.0.Type = CameraRSI\n"
+        "Sensor.Param.0.Name = cam1\n",
+        encoding="utf-8",
+    )
     camera_config = project_root / "Data" / "Script" / "CameraCalibration" / "configs" / "camera.cam1.json"
     camera_config.write_text('{"camera": "cam1"}', encoding="utf-8")
     win = MainWindow(project_root)
+    win.runtime_panel.testrun_edit.setText("vctc_ngxpro")
     for i in range(win.calibration_panel.camera_list.count()):
         item = win.calibration_panel.camera_list.item(i)
         item.setCheckState(Qt.Checked)

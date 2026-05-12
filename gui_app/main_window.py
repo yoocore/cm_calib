@@ -95,8 +95,12 @@ class MainWindow(QMainWindow):
             self.runtime_panel.vehicle_label.setText("-")
             self.runtime_panel.clear_sensor_list()
 
-    def _on_project_root_changed(self, _path: str) -> None:
-        self._refresh_camera_list()
+    def _on_project_root_changed(self, path_text: str) -> None:
+        new_root = Path(path_text.strip()).resolve() if path_text.strip() else None
+        if new_root and new_root != self.config_service.project_root:
+            self.config_service = ConfigService(new_root)
+            self.precheck_service = PrecheckService(new_root)
+            self._refresh_camera_list()
 
     def _build_launch_config(self) -> CalibrationLaunchConfig:
         selected_cameras = self.calibration_panel.selected_cameras()
@@ -246,7 +250,6 @@ class MainWindow(QMainWindow):
 
     def _apply_status(self, status: AppStatus) -> None:
         self.state.status = status
-        self.runtime_panel.status_label.setText(status.value)
         self.calibration_panel.status_label.setText(status.value)
         self._sync_control_states()
         if status in (AppStatus.READY, AppStatus.RUNNING):
@@ -406,7 +409,6 @@ class MainWindow(QMainWindow):
         if event_name == "task_started":
             output_dir = str(payload.get("output_dir") or "")
             self.state.output_dir = Path(output_dir) if output_dir else None
-            self.runtime_panel.output_dir_label.setText(output_dir or "-")
             self.output_panel.set_output_dir(output_dir or None)
             self.output_panel.set_log_path(str(Path(output_dir) / "events.jsonl") if output_dir else None)
             for camera_name in self.state.selected_cameras:

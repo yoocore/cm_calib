@@ -29,10 +29,16 @@ _RED = QBrush(QColor("#e53935"))
 _CM_ROOTS = [
     "D:/IPG/carmaker",
     "C:/IPG/carmaker",
+    "D:/IPG",
+    "C:/IPG",
+    "D:/CarMaker",
+    "C:/CarMaker",
     "D:/Program Files/IPG/carmaker",
     "C:/Program Files/IPG/carmaker",
-    "C:/IPG",
-    "D:/IPG",
+    "D:/Program Files/CarMaker",
+    "C:/Program Files/CarMaker",
+    "D:/Program Files (x86)/IPG/carmaker",
+    "C:/Program Files (x86)/IPG/carmaker",
 ]
 
 

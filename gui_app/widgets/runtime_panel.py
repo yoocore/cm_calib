@@ -38,7 +38,6 @@ class RuntimePanel(QGroupBox):
         self.testrun_control_label = QLabel("-")
         self.process_label = QLabel("-")
         self.output_dir_label = QLabel("-")
-        self.probe_button = QPushButton("Probe Runtime")
         self.browse_button = QPushButton("Browse")
         self.testrun_browse_button = QPushButton("Browse")
 
@@ -69,7 +68,6 @@ class RuntimePanel(QGroupBox):
 
         wrapper = QVBoxLayout(self)
         wrapper.addLayout(form)
-        wrapper.addWidget(self.probe_button)
         wrapper.addStretch(1)
 
     def _browse_project_root(self) -> None:

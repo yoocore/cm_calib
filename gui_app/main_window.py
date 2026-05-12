@@ -60,7 +60,6 @@ class MainWindow(QMainWindow):
         self.calibration_panel.precheck_button.clicked.connect(self._run_precheck)
         self.calibration_panel.generate_config_button.clicked.connect(self._generate_configs)
         self.calibration_panel.prepare_clicked.connect(self._prepare_runtime)
-        self.runtime_panel.probe_button.clicked.connect(self._probe_runtime)
         self.runtime_panel.project_root_changed.connect(self._on_project_root_changed)
 
         self.runtime_service.line_received.connect(self._on_runtime_line)
@@ -171,21 +170,6 @@ class MainWindow(QMainWindow):
             self.calibration_service.stop()
 
     @Slot()
-    def _probe_runtime(self) -> None:
-        try:
-            project_root = Path(self.runtime_panel.project_root_edit.text().strip() or self.project_root)
-            testrun = self.runtime_panel.testrun_edit.text().strip()
-            if not testrun:
-                raise ValueError("TestRun is required")
-            self._runtime_mode = "status"
-            self.calibration_panel.clear_failure_summary()
-            self.runtime_service.probe_status(project_root, testrun)
-        except Exception as exc:
-            self._runtime_mode = None
-            self.calibration_panel.set_failure_summary(str(exc))
-            QMessageBox.critical(self, "Runtime Probe Failed", str(exc))
-
-    @Slot()
     def _prepare_runtime(self) -> None:
         try:
             project_root = Path(self.runtime_panel.project_root_edit.text().strip() or self.project_root)
@@ -257,7 +241,6 @@ class MainWindow(QMainWindow):
         self.calibration_panel.stop_button.setEnabled(calibration_running or preparing)
         controls_enabled = not runtime_busy and not calibration_running and not preparing
         self.calibration_panel.precheck_button.setEnabled(controls_enabled)
-        self.runtime_panel.probe_button.setEnabled(controls_enabled)
         self.calibration_panel.set_inputs_locked(not controls_enabled)
         self.runtime_panel.set_inputs_locked(not controls_enabled)
 

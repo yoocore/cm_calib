@@ -51,31 +51,86 @@ class TestBuildVehiclePath:
 
 
 class TestReadVehicleSensors:
-    def test_reads_sensors_with_active_status(self, tmp_path):
+    def test_filters_to_camera_rsi_only(self, tmp_path):
         vfile = tmp_path / "vehicle"
         vfile.write_text(
             "Sensor.0.name = FW\n"
-            "Sensor.0.Active = 1\n"
-            "Sensor.1.name = Rear\n"
-            "Sensor.1.Active = 0\n"
-            "Sensor.2.name = left_tv\n"
-            "Sensor.2.Active = 1\n",
+            "Sensor.0.Active = 0\n"
+            "Sensor.1.name = right_rear\n"
+            "Sensor.1.Active = 1\n"
+            "Sensor.2.name = Rear\n"
+            "Sensor.2.Active = 0\n"
+            "Sensor.3.name = TF\n"
+            "Sensor.3.Active = 0\n"
+            "Sensor.4.name = rear_tv\n"
+            "Sensor.4.Active = 1\n"
+            "Sensor.5.name = left_tv\n"
+            "Sensor.5.Active = 0\n"
+            "Sensor.6.name = TRight\n"
+            "Sensor.6.Active = 0\n"
+            "Sensor.Param.0.Type = SAngle\n"
+            "Sensor.Param.0.Name = SL_Param\n"
+            "Sensor.Param.1.Type = CameraRSI\n"
+            "Sensor.Param.1.Name = FrontWide\n"
+            "Sensor.Param.2.Type = CameraRSI\n"
+            "Sensor.Param.2.Name = Rear\n"
+            "Sensor.Param.3.Type = CameraRSI\n"
+            "Sensor.Param.3.Name = TopView_Front\n"
+            "Sensor.Param.4.Type = CameraRSI\n"
+            "Sensor.Param.4.Name = TopView_Rear\n"
+            "Sensor.Param.5.Type = CameraRSI\n"
+            "Sensor.Param.5.Name = TopView_Left\n"
+            "Sensor.Param.6.Type = CameraRSI\n"
+            "Sensor.Param.6.Name = TopView_Right\n",
             encoding="utf-8",
         )
         sensors = read_vehicle_sensors(vfile)
-        assert len(sensors) == 3
-        assert sensors[0] == {"index": 0, "name": "FW", "active": True}
-        assert sensors[1] == {"index": 1, "name": "Rear", "active": False}
-        assert sensors[2] == {"index": 2, "name": "left_tv", "active": True}
+        names = [s["name"] for s in sensors]
+        assert "FW" in names          # FrontWide → FW (substring match)
+        assert "Rear" in names        # exact match
+        assert "TF" in names          # TopView_Front → TF (substring)
+        assert "rear_tv" in names     # TopView_Rear → rear_tv (substring)
+        assert "left_tv" in names     # TopView_Left → left_tv (substring)
+        assert "right_rear" in names  # TopView_Right → right_rear
+        assert "TRight" in names      # TopView_Right → TRight (substring)
+        # Sensor 0 is CameraRSI via Param.1.Name = FrontWide → FW
+        assert sensors[0]["name"] == "FW"
+        assert sensors[0]["active"] is False
+        # Sensor 4 (rear_tv) is active
+        rear_tv = [s for s in sensors if s["name"] == "rear_tv"][0]
+        assert rear_tv["active"] is True
+
+    def test_excludes_non_camera_sensors(self, tmp_path):
+        vfile = tmp_path / "vehicle"
+        vfile.write_text(
+            "Sensor.0.name = SteeringAngle\n"
+            "Sensor.0.Active = 1\n"
+            "Sensor.Param.0.Type = SAngle\n"
+            "Sensor.Param.0.Name = SL_Param\n"
+            "Sensor.Param.1.Type = CameraRSI\n"
+            "Sensor.Param.1.Name = FrontCam\n",
+            encoding="utf-8",
+        )
+        sensors = read_vehicle_sensors(vfile)
+        # SteeringAngle should be excluded (type = SAngle, not CameraRSI)
+        names = [s["name"] for s in sensors]
+        assert "SteeringAngle" not in names
 
     def test_empty_file_returns_empty_list(self, tmp_path):
         vfile = tmp_path / "empty"
         vfile.write_text("", encoding="utf-8")
         assert read_vehicle_sensors(vfile) == []
 
-    def test_no_sensor_entries_returns_empty(self, tmp_path):
+    def test_no_camera_rsi_params_returns_empty(self, tmp_path):
         vfile = tmp_path / "vehicle"
-        vfile.write_text("SomeKey = 123\nOther = value\n", encoding="utf-8")
+        vfile.write_text(
+            "Sensor.0.name = FW\n"
+            "Sensor.0.Active = 0\n"
+            "Sensor.1.name = Rear\n"
+            "Sensor.Param.0.Type = SAngle\n"
+            "Sensor.Param.0.Name = SL_Param\n",
+            encoding="utf-8",
+        )
         assert read_vehicle_sensors(vfile) == []
 
 
@@ -93,7 +148,11 @@ class TestResolveVehicleInfo:
             "Sensor.0.name = cam1\n"
             "Sensor.0.Active = 1\n"
             "Sensor.1.name = cam2\n"
-            "Sensor.1.Active = 0\n",
+            "Sensor.1.Active = 0\n"
+            "Sensor.Param.0.Type = CameraRSI\n"
+            "Sensor.Param.0.Name = cam1\n"
+            "Sensor.Param.1.Type = CameraRSI\n"
+            "Sensor.Param.1.Name = cam2\n",
             encoding="utf-8",
         )
 

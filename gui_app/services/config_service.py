@@ -6,6 +6,7 @@ from pathlib import Path
 
 class ConfigService:
     CAMERA_CONFIG_RE = re.compile(r"^camera\.(?P<name>.+)\.json$", re.IGNORECASE)
+    BACKUP_CONFIG_SUFFIX = ".bak.json"
 
     def __init__(self, project_root: Path):
         self.project_root = project_root.resolve()
@@ -17,6 +18,8 @@ class ConfigService:
             return []
         cameras: list[str] = []
         for path in sorted(self.config_dir.glob("camera.*.json")):
+            if path.name.lower().endswith(self.BACKUP_CONFIG_SUFFIX):
+                continue
             match = self.CAMERA_CONFIG_RE.match(path.name)
             if not match:
                 continue

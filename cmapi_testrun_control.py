@@ -13,7 +13,7 @@ from typing import Any, Optional
 
 import cmapi
 from dde_health_check import classify_health_summary, default_output_dir, render_dde_execute_script, render_result_script, run_check_attempt, run_read_only_health_suite
-from runtime_config_bootstrap import bootstrap_runtime_configs_for_cameras, capture_initial_values_to_config, load_movie_view_size_from_config
+from runtime_config_bootstrap import bootstrap_runtime_configs_for_cameras, capture_initial_values_to_config, load_movie_view_size_from_real_image
 
 
 if not hasattr(cmapi, "InvalidConfigurationException"):
@@ -41,6 +41,7 @@ if ($null -eq $procs) {
 GUI_MOVIE_MARKERS = ("-cmgui", "-apppid", "-cminstance")
 GPUSENSOR_MOVIE_MARKERS = ("-mode GPUSensor", "-headless")
 SENSOR_NAME_RE = re.compile(r"^(?P<prefix>\s*Sensor\.(?P<index>\d+)\.name\s*=\s*)(?P<value>.*?)(?P<suffix>\s*)$")
+SENSOR_ACTIVE_RE = re.compile(r"^(?P<prefix>\s*Sensor\.(?P<index>\d+)\.Active\s*=\s*)(?P<value>[01])(?P<suffix>\s*)$")
 IPGMOVIE_SENSOR_PREFIX_RE = re.compile(
     r"^CAMERA_RSI-SENSOR\s+Vh(?:cl|ic)\.(?P<name>.+)$",
     re.IGNORECASE,
@@ -49,8 +50,13 @@ RUNTIME_PROJECTDIR_PROBE_NAME = "cmapi_testrun_control_projectdir_probe"
 MOVIE_SCENE_READY_PROBE_NAME = "cmapi_testrun_control_movie_scene_ready_probe"
 MOVIE_SEND_HEALTH_CHECK_NAME = "cmapi_testrun_control_movie_send_health"
 DEFAULT_MOVIE_SCENE_READY_GRACE_SEC = 45.0
+DEFAULT_MOVIE_QUIT_TIMEOUT_SEC = 8.0
 CMAPI_CONTROL_SUMMARY_PREFIX = "CMAPI_CONTROL_SUMMARY_JSON:"
 TESTRUN_CONTROL_LABEL = "Tcl StartSim/StopSim"
+TESTRUN_CONTROL_MODE_LABELS = {
+    "tcl": "StartSim/WaitForStatus/StopSim",
+    "tk-buttons": ".f.btn.start/.f.btn.stop invoke",
+}
 BM_CLICK = 0x00F5
 
 
@@ -121,6 +127,13 @@ def list_gpusensor_movie_processes() -> list[dict[str, Any]]:
     return [proc for proc in list_cm_processes() if is_gpusensor_movie_process(proc)]
 
 
+def snapshot_movie_stack() -> dict[str, list[int]]:
+    return {
+        "gui": [int(proc["ProcessId"]) for proc in list_gui_movie_processes()],
+        "gpu": [int(proc["ProcessId"]) for proc in list_gpusensor_movie_processes()],
+    }
+
+
 def kill_gui_movie_processes() -> list[dict[str, Any]]:
     gui_movies = list_gui_movie_processes()
     if not gui_movies:
@@ -155,7 +168,11 @@ def kill_movie_stack_if_gpusensor_present() -> list[dict[str, Any]]:
     gpusensor_movies = list_gpusensor_movie_processes()
     if not gpusensor_movies:
         return []
-    return kill_all_movie_processes()
+    stop_movie_stack_via_movie_quit(
+        timeout_sec=DEFAULT_MOVIE_QUIT_TIMEOUT_SEC,
+        probe_name="cmapi_testrun_control_movie_quit_gpusensor_reset",
+    )
+    return kill_all_movie_processes() if snapshot_movie_stack()["gui"] or snapshot_movie_stack()["gpu"] else []
 
 
 def kill_all_movie_processes() -> list[dict[str, Any]]:
@@ -171,6 +188,56 @@ def kill_all_movie_processes() -> list[dict[str, Any]]:
             check=False,
         )
     return movie_processes
+
+
+def stop_movie_stack_via_movie_quit(
+    *,
+    timeout_sec: float,
+    probe_name: str,
+) -> dict[str, Any]:
+    before = snapshot_movie_stack()
+    if not before["gui"] and not before["gpu"]:
+        return {
+            "mode": "movie_quit_noop",
+            "before": before,
+            "after": before,
+            "fallback": False,
+        }
+
+    command_result = run_tcl_sim_command(
+        commands=[
+            "Movie::Quit *",
+            "update",
+            "update idletasks",
+        ],
+        probe_name=probe_name,
+        timeout_sec=max(5.0, float(timeout_sec)),
+    )
+
+    deadline = time.monotonic() + max(0.5, float(timeout_sec))
+    after = before
+    while time.monotonic() < deadline:
+        after = snapshot_movie_stack()
+        if not after["gui"] and not after["gpu"]:
+            return {
+                "mode": "movie_quit",
+                "before": before,
+                "after": after,
+                "fallback": False,
+                "command_result": command_result,
+            }
+        time.sleep(0.2)
+
+    killed = kill_all_movie_processes()
+    fallback_after = snapshot_movie_stack()
+    return {
+        "mode": "movie_quit_fallback_taskkill",
+        "before": before,
+        "after": fallback_after,
+        "fallback": True,
+        "command_result": command_result,
+        "fallback_killed_pids": [int(proc["ProcessId"]) for proc in killed],
+    }
 
 
 def kill_existing_cm_processes() -> list[dict[str, Any]]:
@@ -321,7 +388,7 @@ def activate_single_vehicle_sensor(vehicle_path: Path, requested_sensor: str) ->
         vehicle_path.write_text("".join(lines), encoding="utf-8")
 
     return {
-        "vehicle_path": vehicle_path,
+        "vehicle_path": str(vehicle_path),
         "selected_sensor_name": sensor_name_by_index[target_index],
         "selected_sensor_index": int(target_index),
         "ipgmovie_sensor_label": f"CAMERA_RSI-SENSOR Vhcl.{sensor_name_by_index[target_index]}",
@@ -382,7 +449,7 @@ def parse_args() -> argparse.Namespace:
         action="append",
         dest="prepare_cameras",
         default=[],
-        help="Camera sensor name whose runtime config should be generated during prepare. Repeat for multiple cameras.",
+        help="Deprecated. Prepare no longer generates camera configs; use the precheck/config-generation step instead.",
     )
     parser.add_argument(
         "--config-dir",
@@ -463,6 +530,12 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=30.0,
         help="Maximum seconds to wait for the bootstrap TestRun to return to idle after stop is requested.",
+    )
+    parser.add_argument(
+        "--testrun-control-mode",
+        choices=("tcl", "tk-buttons"),
+        default="tcl",
+        help="Bootstrap TestRun via pure Tcl StartSim/StopSim or via CarMaker Tk button invoke semantics.",
     )
     parser.add_argument(
         "--apo-connect-retries",
@@ -601,28 +674,26 @@ async def execute_prepare_mode(args: argparse.Namespace) -> dict[str, Any]:
     project_root = args.project_root.resolve()
     cm_install = args.cm_install.resolve()
     config_dir = args.config_dir.resolve()
-    movie_dir = args.movie_dir.resolve() if args.movie_dir is not None else (project_root / "Movie").resolve()
-    bootstrap_template = args.bootstrap_template.resolve() if args.bootstrap_template is not None else (DEFAULT_CONFIG_DIR / "bootstrap.template.json").resolve()
     testrun_rel_path = normalize_testrun_path(project_root, args.testrun)
     vehicle_path, vehicle_key = resolve_vehicle_path(project_root, testrun_rel_path)
     variation = load_variation(project_root, testrun_rel_path)
 
-    prepare_cameras = normalize_camera_names([*args.prepare_cameras, *( [args.camera_sensor] if args.camera_sensor else [])])
     config_bootstrap: list[dict[str, Any]] = []
-    if prepare_cameras:
-        config_bootstrap = bootstrap_runtime_configs_for_cameras(
-            project_root=project_root,
-            camera_names=prepare_cameras,
-            config_dir=config_dir,
-            template_path=bootstrap_template,
-            movie_dir=movie_dir,
-            overwrite_existing=True,
-            capture_current_params=False,
+    config_bootstrap_warning: Optional[str] = None
+    if args.prepare_cameras:
+        config_bootstrap_warning = (
+            "prepare no longer generates camera configs; ignored --prepare-camera and expected configs to exist already"
         )
 
     sensor_activation_result: Optional[dict[str, Any]] = None
+    selected_config_path: Optional[Path] = None
     if args.camera_sensor:
         sensor_activation_result = activate_single_vehicle_sensor(vehicle_path, args.camera_sensor)
+        selected_config_path = (config_dir / f"camera.{sensor_activation_result['selected_sensor_name']}.json").resolve()
+        if not selected_config_path.exists():
+            raise FileNotFoundError(
+                f"Prepare requires an existing config file before runtime setup: {selected_config_path}"
+            )
 
     carmaker, carmaker_pid, carmaker_owned, carmaker_action = await start_or_reuse_carmaker_for_open_movie(
         cm_install,
@@ -637,25 +708,40 @@ async def execute_prepare_mode(args: argparse.Namespace) -> dict[str, Any]:
     movie_scene: Optional[dict[str, str]] = None
     selected_testrun_name: Optional[str] = None
     bootstrapped_testrun_name: Optional[str] = None
+    bootstrap_step: Optional[dict[str, Any]] = None
     abraxas: Optional[dict[str, str]] = None
     camera_selection: Optional[dict[str, str]] = None
     view_size: Optional[dict[str, str]] = None
+    camera_dialogs: Optional[dict[str, str]] = None
     initial_capture: Optional[dict[str, Any]] = None
 
     try:
         selected_testrun_name = sync_gui_testrun_selection(project_root, testrun_rel_path)
-        carmaker, carmaker_pid, bootstrapped_testrun_name = await bootstrap_testrun_for_movie_via_cmapi(
-            project_root=project_root,
-            testrun_rel_path=testrun_rel_path,
-            variation=variation,
-            running_timeout_sec=args.bootstrap_running_timeout_sec,
-            idle_timeout_sec=args.bootstrap_idle_timeout_sec,
-            apo_connect_retries=args.apo_connect_retries,
-            apo_connect_delay_sec=args.apo_connect_delay_sec,
-            host=args.host,
-            carmaker=carmaker,
-            carmaker_pid=carmaker_pid,
-        )
+        if args.testrun_control_mode == "tcl":
+            carmaker, carmaker_pid, bootstrapped_testrun_name = await bootstrap_testrun_for_movie_via_cmapi(
+                project_root=project_root,
+                testrun_rel_path=testrun_rel_path,
+                variation=variation,
+                running_timeout_sec=args.bootstrap_running_timeout_sec,
+                idle_timeout_sec=args.bootstrap_idle_timeout_sec,
+                apo_connect_retries=args.apo_connect_retries,
+                apo_connect_delay_sec=args.apo_connect_delay_sec,
+                host=args.host,
+                carmaker=carmaker,
+                carmaker_pid=carmaker_pid,
+            )
+            bootstrap_step = {
+                "mode": "tcl",
+                "label": TESTRUN_CONTROL_MODE_LABELS["tcl"],
+                "testrun": bootstrapped_testrun_name,
+            }
+        else:
+            bootstrap_step = bootstrap_testrun_via_tk_buttons(
+                selected_testrun_name,
+                running_timeout_sec=args.bootstrap_running_timeout_sec,
+                idle_timeout_sec=args.bootstrap_idle_timeout_sec,
+            )
+            bootstrapped_testrun_name = selected_testrun_name
         movie, movie_pid, movie_owned, movie_action = await start_or_reuse_movie(
             cm_install,
             args.movie_apphost,
@@ -663,15 +749,24 @@ async def execute_prepare_mode(args: argparse.Namespace) -> dict[str, Any]:
             carmaker_pid,
             args.clean_existing_processes,
         )
-        movie_scene = wait_for_movie_scene_ready(
-            cm_install=cm_install,
-            movie_apphost=args.movie_apphost,
-            project_root=project_root,
-            carmaker_pid=carmaker_pid,
-            timeout_sec=args.movie_settle_sec,
-            poll_interval_sec=args.movie_ready_poll_sec,
-            initial_grace_sec=args.movie_ready_grace_sec,
-        )
+        try:
+            movie_scene = wait_for_movie_scene_ready(
+                cm_install=cm_install,
+                movie_apphost=args.movie_apphost,
+                project_root=project_root,
+                carmaker_pid=carmaker_pid,
+                timeout_sec=args.movie_settle_sec,
+                poll_interval_sec=args.movie_ready_poll_sec,
+                initial_grace_sec=args.movie_ready_grace_sec,
+            )
+        except RuntimeError as exc:
+            if "camera_name=DEFAULT" not in str(exc):
+                raise
+            movie_scene = wait_for_movie_runtime_online_relaxed(
+                timeout_sec=args.movie_settle_sec,
+                poll_interval_sec=args.movie_ready_poll_sec,
+            )
+            movie_scene["strict_scene_ready_fallback"] = str(exc)
         abraxas = ensure_movie_abraxas_enabled(timeout_sec=args.health_check_timeout_sec)
         if sensor_activation_result is not None:
             camera_selection = ensure_movie_camera_selected(
@@ -679,17 +774,14 @@ async def execute_prepare_mode(args: argparse.Namespace) -> dict[str, Any]:
                 timeout_sec=args.health_check_timeout_sec,
             )
             movie_scene["camera_name"] = str(camera_selection.get("current") or movie_scene.get("camera_name") or "")
-            selected_config_path = config_dir / f"camera.{sensor_activation_result['selected_sensor_name']}.json"
-            if selected_config_path.exists():
-                width, height = load_movie_view_size_from_config(selected_config_path)
-                view_size = ensure_movie_view_size(width, height)
-                movie_scene["width"] = str(width)
-                movie_scene["height"] = str(height)
+            width, height = load_movie_view_size_from_real_image(selected_config_path)
+            view_size = ensure_movie_view_size(width, height, timeout_sec=args.health_check_timeout_sec)
+            movie_scene["width"] = str(width)
+            movie_scene["height"] = str(height)
         camera_widgets = ensure_movie_camera_widgets(timeout_sec=args.health_check_timeout_sec)
+        camera_dialogs = ensure_movie_camera_dialogs_normal(timeout_sec=args.health_check_timeout_sec)
         if sensor_activation_result is not None:
-            selected_config_path = config_dir / f"camera.{sensor_activation_result['selected_sensor_name']}.json"
-            if selected_config_path.exists():
-                initial_capture = capture_initial_values_to_config(selected_config_path)
+            initial_capture = capture_initial_values_to_config(selected_config_path)
         if args.health_check_after_start:
             health_summary = run_movie_send_health_check(
                 attempts=args.health_check_attempts,
@@ -702,13 +794,16 @@ async def execute_prepare_mode(args: argparse.Namespace) -> dict[str, Any]:
             "project_root": str(project_root),
             "cm_install": str(cm_install),
             "testrun": testrun_rel_path.as_posix(),
-            "testrun_control": TESTRUN_CONTROL_LABEL,
+            "testrun_control": TESTRUN_CONTROL_MODE_LABELS[args.testrun_control_mode],
+            "testrun_control_mode": args.testrun_control_mode,
             "selected_testrun": selected_testrun_name,
             "bootstrapped_testrun": bootstrapped_testrun_name,
+            "testrun_bootstrap": bootstrap_step,
             "vehicle": vehicle_key,
             "vehicle_path": str(vehicle_path),
             "sensor_activation": sensor_activation_result,
             "config_bootstrap": config_bootstrap,
+            "config_bootstrap_warning": config_bootstrap_warning,
             "carmaker": {
                 "pid": carmaker_pid,
                 "owned": carmaker_owned,
@@ -723,6 +818,7 @@ async def execute_prepare_mode(args: argparse.Namespace) -> dict[str, Any]:
                 "view_size": view_size,
                 "camera_selection": camera_selection,
                 "camera_widgets": camera_widgets,
+                "camera_dialogs": camera_dialogs,
             },
             "config_initial_capture": initial_capture,
             "health": classify_gui_movie_send_health(health_summary) if health_summary else None,
@@ -930,6 +1026,69 @@ def wait_for_carmaker_status(status: str, timeout_ms: int, *, probe_name: str) -
     if not result.get("ok"):
         raise RuntimeError(f"Failed waiting for CarMaker status {status}: {result.get('kind')}: {result.get('detail')}")
     return _parse_probe_detail(str(result.get("detail") or "").strip())
+
+
+def bootstrap_testrun_via_tk_buttons(
+    expected_testrun_name: str,
+    *,
+    running_timeout_sec: float,
+    idle_timeout_sec: float,
+) -> dict[str, Any]:
+    running_timeout_ms = max(1000, int(max(1.0, float(running_timeout_sec)) * 1000))
+    idle_timeout_ms = max(1000, int(max(1.0, float(idle_timeout_sec)) * 1000))
+
+    wait_for_carmaker_status("idle", 10000, probe_name="cmapi_prepare_tk_buttons_idle_before")
+    start_invoke = run_tcl_sim_command(
+        commands=[
+            'if {![winfo exists .f.btn.start]} {error "missing widget .f.btn.start"}',
+            ".f.btn.start invoke",
+            "update",
+            "update idletasks",
+        ],
+        probe_name="cmapi_prepare_tk_buttons_start_invoke",
+        timeout_sec=max(10.0, float(running_timeout_sec) + 5.0),
+    )
+    if not start_invoke.get("ok"):
+        raise RuntimeError(
+            "Failed to invoke CarMaker Tcl/Tk start button: "
+            f"{start_invoke.get('kind')}: {start_invoke.get('detail')}"
+        )
+    running = wait_for_carmaker_status(
+        "running",
+        running_timeout_ms,
+        probe_name="cmapi_prepare_tk_buttons_running",
+    )
+
+    stop_invoke = run_tcl_sim_command(
+        commands=[
+            'if {![winfo exists .f.btn.stop]} {error "missing widget .f.btn.stop"}',
+            ".f.btn.stop invoke",
+            "update",
+            "update idletasks",
+        ],
+        probe_name="cmapi_prepare_tk_buttons_stop_invoke",
+        timeout_sec=max(10.0, float(idle_timeout_sec) + 5.0),
+    )
+    if not stop_invoke.get("ok"):
+        raise RuntimeError(
+            "Failed to invoke CarMaker Tcl/Tk stop button: "
+            f"{stop_invoke.get('kind')}: {stop_invoke.get('detail')}"
+        )
+    idle = wait_for_carmaker_status(
+        "idle",
+        idle_timeout_ms,
+        probe_name="cmapi_prepare_tk_buttons_idle",
+    )
+
+    return {
+        "mode": "tk-buttons",
+        "label": TESTRUN_CONTROL_MODE_LABELS["tk-buttons"],
+        "testrun": expected_testrun_name,
+        "start_invoke": start_invoke,
+        "stop_invoke": stop_invoke,
+        "running": running,
+        "idle": idle,
+    }
 
 
 def click_carmaker_test_button(
@@ -1206,8 +1365,12 @@ def restart_gui_movie_for_send_recovery(
     project_root: Path,
     carmaker_pid: int,
 ) -> int:
-    killed = kill_gui_movie_processes()
-    existing_pids = {int(proc["ProcessId"]) for proc in killed}
+    before = snapshot_movie_stack()
+    stop_movie_stack_via_movie_quit(
+        timeout_sec=DEFAULT_MOVIE_QUIT_TIMEOUT_SEC,
+        probe_name="cmapi_testrun_control_movie_quit_send_recovery",
+    )
+    existing_pids = set(before["gui"])
     command = build_gui_movie_command(cm_install, movie_apphost, project_root, carmaker_pid)
     subprocess.Popen(command, cwd=str((cm_install / "GUI").resolve()))
     movie_pid = wait_for_gui_movie_pid(existing_pids)
@@ -1294,8 +1457,14 @@ async def recover_movie_send_surface_after_health_failure(
     health_timeout_sec: float,
     health_settle_sec: float,
 ) -> tuple[Optional[cmapi.IPGMovie], Optional[int], bool, str, dict[str, str], dict[str, Any]]:
-    killed_movies = kill_gui_movie_processes()
-    killed_summary = summarize_processes(killed_movies)
+    movie_reset = stop_movie_stack_via_movie_quit(
+        timeout_sec=DEFAULT_MOVIE_QUIT_TIMEOUT_SEC,
+        probe_name="cmapi_testrun_control_movie_quit_health_recovery",
+    )
+    killed_summary = (
+        f"mode={movie_reset.get('mode')} before_gui={movie_reset.get('before', {}).get('gui', [])} "
+        f"before_gpu={movie_reset.get('before', {}).get('gpu', [])}"
+    )
     movie, movie_pid, movie_owned, movie_action = await start_or_reuse_movie(
         cm_install,
         movie_apphost,
@@ -1418,6 +1587,57 @@ def wait_for_movie_scene_ready(
     raise RuntimeError(f"Timed out waiting for IPG-MOVIE calibration scene readiness: {last_detail}")
 
 
+def wait_for_movie_runtime_online_relaxed(
+    *,
+    timeout_sec: float,
+    poll_interval_sec: float,
+) -> dict[str, str]:
+    output_dir = default_output_dir()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    probe_name = "cmapi_prepare_movie_runtime_online_probe"
+    deadline = time.monotonic() + max(1.0, float(timeout_sec))
+    last_detail = "not_ready"
+
+    while time.monotonic() < deadline:
+        result = run_check_attempt(
+            name=probe_name,
+            service="TclEval",
+            topic="CarMaker",
+            output_dir=output_dir,
+            script_text=render_dde_execute_script(
+                output_dir / f"{probe_name}.txt",
+                "IPG-MOVIE",
+                [
+                    'if {![info exists View(ev.view)]} {error "missing View(ev.view)"}',
+                    'set view_key $View(ev.view)',
+                    'scan $view_key %d vno',
+                    'set wi [dict get $View($view_key) Width]',
+                    'set he [dict get $View($view_key) Height]',
+                    'set abraxas_menu ".view${vno}.mbar.view.m.show"',
+                    'set abraxas_menu_ready [expr {[winfo exists $abraxas_menu] ? 1 : 0}]',
+                    'if {[info exists Camera::v(Name)]} {set camera_name $Camera::v(Name)} else {set camera_name ""}',
+                    'format "width=%s;height=%s;camera_name=%s;abraxas_menu_ready=%s" $wi $he $camera_name $abraxas_menu_ready',
+                ],
+            ),
+            timeout_sec=min(3.0, max(0.5, deadline - time.monotonic())),
+        )
+        if result.get("ok"):
+            detail = str(result.get("detail") or "").strip()
+            payload = _parse_probe_detail(detail)
+            width = int(payload.get("width", "0") or "0")
+            height = int(payload.get("height", "0") or "0")
+            if width > 0 and height > 0 and payload.get("abraxas_menu_ready") == "1":
+                payload["mode"] = "runtime_online_relaxed"
+                return payload
+            last_detail = detail or "runtime_not_ready"
+        else:
+            last_detail = f"{result.get('kind')}: {result.get('detail')}"
+
+        time.sleep(max(0.1, float(poll_interval_sec)))
+
+    raise RuntimeError(f"Timed out waiting for relaxed IPG-MOVIE runtime readiness: {last_detail}")
+
+
 def ensure_movie_view_size(
     width: int,
     height: int,
@@ -1538,6 +1758,21 @@ def ensure_movie_camera_selected(
     capture_dir = output_dir / "sensor_view_probe"
     capture_dir.mkdir(parents=True, exist_ok=True)
     capture_path = capture_dir / "selected_sensor_render.png"
+    select_body_lines = [
+        'if {![info exists View(ev.view)]} {error "missing View(ev.view)"}',
+        'set vno $View(ev.view)',
+        'Camera::ShowSettingsDlg',
+        'update',
+        'update idletasks',
+        f'set target "{escaped_label}"',
+        'Camera::Select $target $vno',
+        'update',
+        'update idletasks',
+        'if {![winfo exists .camera.btn.set]} {error "missing widget .camera.btn.set"}',
+        '.camera.btn.set invoke',
+        'update',
+        'update idletasks',
+    ]
     result = run_check_attempt(
         name=probe_name,
         service=service,
@@ -1547,19 +1782,7 @@ def ensure_movie_camera_selected(
             output_dir / f"{probe_name}.txt",
             "IPG-MOVIE",
             [
-                'if {![info exists View(ev.view)]} {error "missing View(ev.view)"}',
-                'set vno $View(ev.view)',
-                'Camera::ShowSettingsDlg',
-                'update',
-                'update idletasks',
-                f'set target "{escaped_label}"',
-                'Camera::Select $target $vno',
-                'update',
-                'update idletasks',
-                'if {![winfo exists .camera.btn.set]} {error "missing widget .camera.btn.set"}',
-                '.camera.btn.set invoke',
-                'update',
-                'update idletasks',
+                *select_body_lines,
                 'set wi [dict get $View($vno) Width]',
                 'set he [dict get $View($vno) Height]',
                 'set captureFBO [FBO new $wi $he -tex rgb -noclear]',
@@ -1586,6 +1809,23 @@ def ensure_movie_camera_selected(
         ),
         timeout_sec=max(1.0, float(timeout_sec)),
     )
+    if not result.get("ok") and 'View(FBO)' in str(result.get("detail") or ""):
+        result = run_check_attempt(
+            name=f"{probe_name}_no_fbo_fallback",
+            service=service,
+            topic=topic,
+            output_dir=output_dir,
+            script_text=render_dde_execute_script(
+                output_dir / f"{probe_name}_no_fbo_fallback.txt",
+                "IPG-MOVIE",
+                [
+                    *select_body_lines,
+                    'if {[info exists Camera::v(Name)]} {set current $Camera::v(Name)} else {set current ""}',
+                    'format "state=selected;selected=%s;current=%s;view=%s;apply_invoked=1;capture_path=;render_fallback=1" $target $current $vno',
+                ],
+            ),
+            timeout_sec=max(1.0, float(timeout_sec)),
+        )
     if not result.get("ok"):
         raise RuntimeError(f"Failed to select IPG-MOVIE camera sensor {target_label}: {result.get('kind')}: {result.get('detail')}")
 
@@ -1609,7 +1849,10 @@ def ensure_movie_camera_selected(
             "IPG-MOVIE camera sensor selection did not apply through Camera Settings Add/Set; "
             f"requested={target_label}, current={current_label or '<empty>'}"
         )
-    payload["mode"] = "camera_select_render_verified"
+    if payload.get("render_fallback") == "1":
+        payload["mode"] = "camera_select_apply_verified"
+    else:
+        payload["mode"] = "camera_select_render_verified"
     return payload
 
 
@@ -1664,6 +1907,68 @@ def ensure_movie_camera_widgets(
     if str(payload.get("after_lens") or "0") != "1":
         raise RuntimeError("IPG-MOVIE Camera Lens Parameters dialog did not initialize")
     payload["mode"] = "camera_widgets_ready"
+    return payload
+
+
+def ensure_movie_camera_dialogs_normal(
+    *,
+    service: str = "TclEval",
+    topic: str = "CarMaker",
+    timeout_sec: float = 8.0,
+) -> dict[str, str]:
+    output_dir = default_output_dir()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    probe_name = "cmapi_testrun_control_camera_dialogs_normal_probe"
+    result = run_check_attempt(
+        name=probe_name,
+        service=service,
+        topic=topic,
+        output_dir=output_dir,
+        script_text=render_dde_execute_script(
+            output_dir / f"{probe_name}.txt",
+            "IPG-MOVIE",
+            [
+                "Camera::ShowSettingsDlg",
+                "update",
+                "update idletasks",
+                'if {[winfo exists .camera]} { wm deiconify .camera }',
+                "update",
+                "update idletasks",
+                'if {[winfo exists .camera.cammoddlg]} {',
+                '    wm deiconify .camera.cammoddlg',
+                '} elseif {[winfo exists .camera.fmore.bcammod]} {',
+                '    .camera.fmore.bcammod invoke',
+                '}',
+                "update",
+                "update idletasks",
+                'set camera_exists [expr {[winfo exists .camera] ? 1 : 0}]',
+                'set camera_title [expr {[winfo exists .camera] ? [wm title .camera] : ""}]',
+                'set camera_state [expr {[winfo exists .camera] ? [wm state .camera] : "missing"}]',
+                'set lens_exists [expr {[winfo exists .camera.cammoddlg] ? 1 : 0}]',
+                'set lens_title [expr {[winfo exists .camera.cammoddlg] ? [wm title .camera.cammoddlg] : ""}]',
+                'set lens_state [expr {[winfo exists .camera.cammoddlg] ? [wm state .camera.cammoddlg] : "missing"}]',
+                'format "camera_exists=%s;camera_title=%s;camera_state=%s;lens_exists=%s;lens_title=%s;lens_state=%s" $camera_exists $camera_title $camera_state $lens_exists $lens_title $lens_state',
+            ],
+        ),
+        timeout_sec=max(1.0, float(timeout_sec)),
+    )
+    if not result.get("ok"):
+        raise RuntimeError(
+            "Failed to deiconify IPG-MOVIE Camera Settings/Lens Parameters: "
+            f"{result.get('kind')}: {result.get('detail')}"
+        )
+
+    payload = _parse_probe_detail(str(result.get("detail") or "").strip())
+    if payload.get("camera_exists") != "1":
+        raise RuntimeError("IPG-MOVIE Camera Settings dialog is missing after deiconify probe")
+    if payload.get("lens_exists") != "1":
+        raise RuntimeError("IPG-MOVIE Camera Lens Parameters dialog is missing after deiconify probe")
+    if payload.get("camera_state") != "normal":
+        raise RuntimeError(f"IPG-MOVIE Camera Settings dialog is not normal: {payload.get('camera_state')}")
+    if payload.get("lens_state") != "normal":
+        raise RuntimeError(f"IPG-MOVIE Camera Lens Parameters dialog is not normal: {payload.get('lens_state')}")
+
+    payload["mode"] = "camera_dialogs_normal"
     return payload
 
 
@@ -1783,8 +2088,14 @@ async def start_or_reuse_movie(
 
     if len(existing_gui_movies) > 1:
         if clean_existing_processes:
-            killed = kill_gui_movie_processes()
-            summary = ", ".join(f"Movie.exe[{proc['ProcessId']}]" for proc in killed)
+            movie_reset = stop_movie_stack_via_movie_quit(
+                timeout_sec=DEFAULT_MOVIE_QUIT_TIMEOUT_SEC,
+                probe_name="cmapi_testrun_control_movie_quit_conflicting_gui",
+            )
+            summary = (
+                f"mode={movie_reset.get('mode')} before_gui={movie_reset.get('before', {}).get('gui', [])} "
+                f"before_gpu={movie_reset.get('before', {}).get('gpu', [])}"
+            )
             movie_pid = await start_movie(cm_install, movie_apphost, project_root, carmaker_pid)
             return None, movie_pid, True, f"cleared conflicting GUI IPG-MOVIE processes: {summary}"
         raise RuntimeError(
@@ -1871,13 +2182,10 @@ async def cleanup(
         return
 
     if movie_owned and not keep_movie_open:
-        if movie is not None:
-            try:
-                await movie.stop()
-            except Exception:
-                pass
-        else:
-            kill_gui_movie_processes()
+        stop_movie_stack_via_movie_quit(
+            timeout_sec=DEFAULT_MOVIE_QUIT_TIMEOUT_SEC,
+            probe_name="cmapi_testrun_control_movie_quit_cleanup",
+        )
 
     if carmaker is not None and carmaker_owned and not keep_carmaker_open:
         try:
@@ -1975,20 +2283,28 @@ async def main() -> None:
 
         if args.open_movie:
             print("Bootstrap run: starting TestRun before IPG-MOVIE")
-            carmaker, carmaker_pid, bootstrapped_testrun_name = await bootstrap_testrun_for_movie_via_cmapi(
-                project_root=project_root,
-                testrun_rel_path=testrun_rel_path,
-                variation=variation,
-                running_timeout_sec=args.bootstrap_running_timeout_sec,
-                idle_timeout_sec=args.bootstrap_idle_timeout_sec,
-                apo_connect_retries=args.apo_connect_retries,
-                apo_connect_delay_sec=args.apo_connect_delay_sec,
-                host=args.host,
-                carmaker=carmaker,
-                carmaker_pid=carmaker_pid,
-            )
+            if args.testrun_control_mode == "tcl":
+                carmaker, carmaker_pid, bootstrapped_testrun_name = await bootstrap_testrun_for_movie_via_cmapi(
+                    project_root=project_root,
+                    testrun_rel_path=testrun_rel_path,
+                    variation=variation,
+                    running_timeout_sec=args.bootstrap_running_timeout_sec,
+                    idle_timeout_sec=args.bootstrap_idle_timeout_sec,
+                    apo_connect_retries=args.apo_connect_retries,
+                    apo_connect_delay_sec=args.apo_connect_delay_sec,
+                    host=args.host,
+                    carmaker=carmaker,
+                    carmaker_pid=carmaker_pid,
+                )
+            else:
+                bootstrap_testrun_via_tk_buttons(
+                    selected_testrun_name,
+                    running_timeout_sec=args.bootstrap_running_timeout_sec,
+                    idle_timeout_sec=args.bootstrap_idle_timeout_sec,
+                )
+                bootstrapped_testrun_name = selected_testrun_name
             print(
-                f"Bootstrap run: {TESTRUN_CONTROL_LABEL} reached running state and returned to idle "
+                f"Bootstrap run: {TESTRUN_CONTROL_MODE_LABELS[args.testrun_control_mode]} reached running state and returned to idle "
                 f"for TestRun {bootstrapped_testrun_name}"
             )
 
@@ -2032,7 +2348,7 @@ async def main() -> None:
                 )
                 selected_config_path = args.config_dir.resolve() / f"camera.{sensor_activation_result['selected_sensor_name']}.json"
                 if selected_config_path.exists():
-                    width, height = load_movie_view_size_from_config(selected_config_path)
+                    width, height = load_movie_view_size_from_real_image(selected_config_path)
                     applied_view = ensure_movie_view_size(width, height)
                     movie_scene["width"] = str(width)
                     movie_scene["height"] = str(height)

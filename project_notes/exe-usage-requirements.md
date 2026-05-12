@@ -165,15 +165,18 @@ GUI 内部应至少维护以下状态：
 用户步骤：
 1. 中栏选择要标定的Camera
 2. 点击中栏检查按钮
+3. 检查通过后，点击配置生成
 
 系统步骤：
 
 1. 检查选择的 camera 是否满足标定前提条件：是否具备原始图像，标注的原始图像，标注图像中的标注名称是否都涵盖在 bootstrap-template.json 中。
 2. 检查原始图像文件名和标注图像文件名是否包含对应 Vehicle 中的 sensor 名称。
 3. 原始图像和标注图像统一从当前 projectdir 下的 Movie 目录中检索，并按对应 sensor 名称匹配相关文件。
+4. 根据上述检查结果，为每个摄像头在脚本代码目录下的 config 文件夹中生成 camera.xxx.json 文件；若同名 json 文件已存在，则先备份旧文件，再生成新的 json 文件。（先不填入camera的内外参，因为这些信息依赖ipgmoive打开）
 
 成功结果：
 1. 在中栏显示所有被选择的 camera 是否满足标定前提条件
+2. 为每个被选camera生成了camera.xxx.json 文件
 
 失败结果：
 1. 若原始图像或标注图像文件名中未包含对应 sensor 名称，则在“标定前置文件检查”中报错，并明确指出具体 camera、具体文件名和缺失的 sensor 名称
@@ -202,17 +205,17 @@ GUI 内部应至少维护以下状态：
 系统步骤：
 
 1. 关闭已有的 CarMaker 进程、GUI IPG-MOVIE 进程、GPUSensor 进程
-2. 根据已选择的camera，为每个摄像头在脚本代码目录下的 config 文件夹中生成 camera.xxx.json 文件；若同名 json 文件已存在，则先备份旧文件，再生成新的 json 文件。
-3. 根据中栏CM Prepare按钮后面的复选框内容，打开对应版本的CarMaker
-4. 根据左栏的projectdir，切换到对应工程目录
-5. 根据左栏的testrun，切换到对应TestRun
-6. 通过 Tcl 执行 StartSim，等待处于running状态后，再通过 Tcl 执行 StopSim
-7. 打开ipgmoive，等待画面加载完成
-8. 切换ipgmoive-view-show-ABRAXAS，使其处于被勾选
-9. 切换 ipgmoive-camera-sensor-xxxx，使目标 sensor 成为当前 camera
-10. 设置ipgmoive-view-size-custom中的尺寸，使其与真实图片的尺寸一致
-11. 打开ipgmoive-camera-settings
-12. 打开ipgmoive-camara lens parameters
+2. 根据中栏CM Prepare按钮后面的复选框内容，打开对应版本的CarMaker
+3. 根据左栏的projectdir，切换到对应工程目录
+4. 根据左栏的testrun，切换到对应TestRun
+5. 通过 Tcl 执行 StartSim，等待处于running状态后，再通过 Tcl 执行 StopSim
+6. 打开ipgmoive，等待画面加载完成
+7. 切换ipgmoive-view-show-ABRAXAS，使其处于被勾选
+8. 切换 ipgmoive-camera-sensor-xxxx，使目标 sensor 成为当前 camera
+9.  设置ipgmoive-view-size-custom中的尺寸，使其与真实图片的尺寸一致
+10. 打开ipgmoive-camera-settings
+11. 打开ipgmoive-camara lens parameters
+12. 获取ipgmoive-camera-settings中的内外参，并将其填入之前生成的 camera.xxx.json 文件中（此处需要用到DDE）
 13. 执行DDE健康检查
 
 注意事项：

@@ -14,7 +14,7 @@ except Exception:
     ImageGrab = None
 
 from dde_health_check import default_output_dir, render_dde_execute_script, run_check_attempt
-from runtime_config_bootstrap import load_movie_view_size_from_config
+from runtime_config_bootstrap import load_movie_view_size_from_real_image
 
 from cmapi_testrun_control import (
     DEFAULT_CM_INSTALL,
@@ -773,7 +773,7 @@ async def run_verification(args: argparse.Namespace) -> dict[str, Any]:
                 )
                 summary["steps"]["camera_selection"] = camera_selection
 
-                width, height = load_movie_view_size_from_config(selected_config_path)
+                width, height = load_movie_view_size_from_real_image(selected_config_path)
                 applied_view = ensure_movie_view_size(width, height, timeout_sec=args.health_check_timeout_sec)
                 print(f"IPG-MOVIE view size: {width}x{height}")
                 summary["steps"]["view_size"] = {

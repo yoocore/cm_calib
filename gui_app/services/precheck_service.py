@@ -4,20 +4,23 @@ import json
 from pathlib import Path
 from typing import Any
 
+from runtime_config_bootstrap import bootstrap_runtime_configs_for_cameras
+
 
 class PrecheckService:
     def __init__(self, project_root: Path):
         self.project_root = project_root.resolve()
         self.calibration_root = self.project_root / "Data" / "Script" / "CameraCalibration"
         self.bootstrap_template_path = self.calibration_root / "configs" / "bootstrap.template.json"
+        self.config_dir = self.calibration_root / "configs"
+        self.movie_dir = self.project_root / "Movie"
 
     def run_for_cameras(self, camera_names: list[str]) -> list[dict[str, Any]]:
-        movie_dir = self.project_root / "Movie"
         bootstrap_ok, bootstrap_message = self._validate_bootstrap_template()
         results: list[dict[str, Any]] = []
         for camera_name in camera_names:
-            raw_matches = self._find_movie_files(movie_dir, camera_name, require_origin=True)
-            annotated_matches = self._find_movie_files(movie_dir, camera_name, require_origin=False)
+            raw_matches = self._find_movie_files(self.movie_dir, camera_name, require_origin=True)
+            annotated_matches = self._find_movie_files(self.movie_dir, camera_name, require_origin=False)
             ok = bool(raw_matches) and bool(annotated_matches) and bootstrap_ok
             messages: list[str] = []
             if not raw_matches:
@@ -35,6 +38,41 @@ class PrecheckService:
                     "raw_matches": [str(path) for path in raw_matches],
                     "annotated_matches": [str(path) for path in annotated_matches],
                     "message": "; ".join(messages),
+                }
+            )
+        return results
+
+    def generate_configs_for_cameras(self, camera_names: list[str]) -> list[dict[str, Any]]:
+        generated = bootstrap_runtime_configs_for_cameras(
+            project_root=self.project_root,
+            camera_names=camera_names,
+            config_dir=self.config_dir,
+            template_path=self.bootstrap_template_path,
+            movie_dir=self.movie_dir,
+            overwrite_existing=True,
+            capture_current_params=False,
+        )
+        results: list[dict[str, Any]] = []
+        for item in generated:
+            action = str(item.get("action") or "generated")
+            config_path = str(item.get("config_path") or "")
+            backup_path = str(item.get("backup_path") or "")
+            preview_path = str(item.get("preview_path") or "")
+            message_parts = [action]
+            if config_path:
+                message_parts.append(f"config={config_path}")
+            if backup_path:
+                message_parts.append(f"backup={backup_path}")
+            results.append(
+                {
+                    "camera": str(item.get("camera") or ""),
+                    "ok": True,
+                    "raw_matches": [str(item.get("raw_image_path") or "")],
+                    "annotated_matches": [str(item.get("annotated_image_path") or "")],
+                    "config_path": config_path,
+                    "backup_path": backup_path,
+                    "preview_path": preview_path,
+                    "message": "; ".join(part for part in message_parts if part),
                 }
             )
         return results

@@ -52,6 +52,7 @@ class MainWindow(QMainWindow):
         self.calibration_panel.start_button.clicked.connect(self._start_calibration)
         self.calibration_panel.stop_button.clicked.connect(self._stop_calibration)
         self.calibration_panel.precheck_button.clicked.connect(self._run_precheck)
+        self.calibration_panel.generate_config_button.clicked.connect(self._generate_configs)
         self.runtime_panel.probe_button.clicked.connect(self._probe_runtime)
         self.runtime_panel.prepare_button.clicked.connect(self._prepare_runtime)
 
@@ -169,10 +170,12 @@ class MainWindow(QMainWindow):
             if not testrun:
                 raise ValueError("TestRun is required")
             selected_cameras = self.calibration_panel.selected_cameras()
+            if not selected_cameras:
+                raise ValueError("Please select at least one camera")
             self.state.selected_cameras = selected_cameras
             self._runtime_mode = "prepare"
             self.calibration_panel.clear_failure_summary()
-            self.runtime_service.prepare_runtime(project_root, testrun, cameras=selected_cameras)
+            self.runtime_service.prepare_runtime(project_root, testrun, camera_sensor=selected_cameras[0])
         except Exception as exc:
             self._runtime_mode = None
             self.calibration_panel.set_failure_summary(str(exc))
@@ -192,6 +195,27 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self.calibration_panel.set_failure_summary(str(exc))
             QMessageBox.critical(self, "Precheck Failed", str(exc))
+
+    @Slot()
+    def _generate_configs(self) -> None:
+        try:
+            selected_cameras = self.calibration_panel.selected_cameras()
+            if not selected_cameras:
+                raise ValueError("Please select at least one camera")
+            project_root = Path(self.runtime_panel.project_root_edit.text().strip() or self.project_root)
+            if project_root.resolve() != self.precheck_service.project_root:
+                self.precheck_service = PrecheckService(project_root)
+            precheck_results = self.precheck_service.run_for_cameras(selected_cameras)
+            self.calibration_panel.update_precheck_results(precheck_results)
+            failed = [result for result in precheck_results if not result.get("ok")]
+            if failed:
+                raise ValueError("Input check failed; fix the reported camera inputs before generating configs")
+            generated_results = self.precheck_service.generate_configs_for_cameras(selected_cameras)
+            self.calibration_panel.update_precheck_results(generated_results)
+            self.calibration_panel.clear_failure_summary()
+        except Exception as exc:
+            self.calibration_panel.set_failure_summary(str(exc))
+            QMessageBox.critical(self, "Config Generation Failed", str(exc))
 
     def _apply_status(self, status: AppStatus) -> None:
         self.state.status = status

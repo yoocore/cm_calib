@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import cmapi_testrun_control as cmctrl
-from runtime_config_bootstrap import load_movie_view_size_from_config
+from runtime_config_bootstrap import load_movie_view_size_from_real_image
 
 
 CALIBRATION_SUMMARY_PREFIX = "CALIBRATION_SUMMARY_JSON:"
@@ -178,7 +178,7 @@ def _resolve_config_path(config_dir: Path, camera_name: str) -> Path:
 
 
 def _load_movie_view_size(config_path: Path) -> tuple[int, int] | None:
-    return load_movie_view_size_from_config(config_path)
+    return load_movie_view_size_from_real_image(config_path)
 
 
 def _append_optional_arg(command: list[str], name: str, value: Optional[object]) -> None:

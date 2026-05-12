@@ -62,7 +62,7 @@ def _read_image_size(image_path: Path) -> tuple[int, int]:
     return int(width), int(height)
 
 
-def load_movie_view_size_from_config(config_path: Path) -> tuple[int, int]:
+def load_movie_view_size_from_real_image(config_path: Path) -> tuple[int, int]:
     resolved_config_path = config_path.resolve()
     with resolved_config_path.open("r", encoding="utf-8-sig") as handle:
         payload = json.load(handle)

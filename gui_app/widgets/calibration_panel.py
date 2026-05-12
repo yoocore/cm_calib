@@ -152,8 +152,8 @@ class CalibrationPanel(QGroupBox):
     def clear_failure_summary(self) -> None:
         self.failure_summary.clear()
 
-    def set_phase_label(self, text: str) -> None:
-        self.phase_label.setText(text)
+    def set_phase_label(self, text: str | None) -> None:
+        self.phase_label.setText(text or "")
 
     def _update_estimated_time(self) -> None:
         camera_count = len(self.selected_cameras())

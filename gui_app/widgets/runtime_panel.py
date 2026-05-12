@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -33,7 +34,7 @@ class RuntimePanel(QGroupBox):
         self.status_label = QLabel("idle")
         self.vehicle_label = QLabel("-")
         self.sensor_list = QListWidget()
-        self.sensor_list.setMaximumHeight(120)
+        self.sensor_list.setSpacing(2)
         self.testrun_control_label = QLabel("-")
         self.process_label = QLabel("-")
         self.output_dir_label = QLabel("-")
@@ -60,7 +61,6 @@ class RuntimePanel(QGroupBox):
         form = QFormLayout()
         form.addRow("ProjectDir", proj_row)
         form.addRow("TestRun", testrun_row)
-        form.addRow("Status", self.status_label)
         form.addRow("Vehicle", self.vehicle_label)
         form.addRow("Sensors", self.sensor_list)
         form.addRow("TestRun Control", self.testrun_control_label)

@@ -114,8 +114,6 @@ class MainWindow(QMainWindow):
             multi_start_iters=self._spin_value_or_none(self.calibration_panel.multi_start_iters_spin),
             multi_start_jitter_steps=self.calibration_panel.jitter_spin.value(),
             refine_iters=self._spin_value_or_none(self.calibration_panel.refine_iters_spin),
-            explore_then_refine=self.calibration_panel.explore_then_refine_check.isChecked(),
-            resume_from_result=self.calibration_panel.resume_from_result_check.isChecked(),
         )
 
     @staticmethod
@@ -246,6 +244,7 @@ class MainWindow(QMainWindow):
     def _apply_status(self, status: AppStatus) -> None:
         self.state.status = status
         self.runtime_panel.status_label.setText(status.value)
+        self.calibration_panel.status_label.setText(status.value)
         self._sync_control_states()
 
     def _sync_control_states(self) -> None:

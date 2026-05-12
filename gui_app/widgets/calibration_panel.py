@@ -74,25 +74,22 @@ class CalibrationPanel(QGroupBox):
 
         self.multi_start_count_spin = QSpinBox()
         self.multi_start_count_spin.setRange(0, 999)
-        self.multi_start_count_spin.setValue(0)
+        self.multi_start_count_spin.setValue(5)
 
         self.multi_start_iters_spin = QSpinBox()
         self.multi_start_iters_spin.setRange(0, 100000)
         self.multi_start_iters_spin.setSpecialValueText("default")
-        self.multi_start_iters_spin.setValue(0)
+        self.multi_start_iters_spin.setValue(30)
 
         self.refine_iters_spin = QSpinBox()
         self.refine_iters_spin.setRange(0, 100000)
         self.refine_iters_spin.setSpecialValueText("default")
-        self.refine_iters_spin.setValue(0)
+        self.refine_iters_spin.setValue(80)
 
         self.jitter_spin = QDoubleSpinBox()
         self.jitter_spin.setRange(0.0, 999.0)
         self.jitter_spin.setValue(2.0)
         self.jitter_spin.setDecimals(2)
-
-        self.explore_then_refine_check = QCheckBox("Explore Then Refine")
-        self.resume_from_result_check = QCheckBox("Resume From Result")
         self.precheck_button = QPushButton("Check Inputs")
         self.generate_config_button = QPushButton("Generate Configs")
         self._generate_configs_ready = False
@@ -100,7 +97,8 @@ class CalibrationPanel(QGroupBox):
         self.precheck_tree = QTreeWidget()
         self.precheck_tree.setColumnCount(3)
         self.precheck_tree.setHeaderLabels(["Camera", "Check", "Message"])
-        self.estimate_label = QLabel("~ 0s (excluding CM Prepare)")
+        self.status_label = QLabel("idle")
+        self.estimate_label = QLabel("~ 0s")
         self.phase_label = QLabel("")
         self.phase_label.setStyleSheet("color: #888; font-style: italic;")
         self.failure_summary = QTextEdit()
@@ -156,6 +154,10 @@ class CalibrationPanel(QGroupBox):
         estimate_row.addWidget(QLabel("Estimated Time"))
         estimate_row.addWidget(self.estimate_label, 1)
         rounds_inner.addLayout(estimate_row)
+        status_row = QHBoxLayout()
+        status_row.addWidget(QLabel("Status"))
+        status_row.addWidget(self.status_label, 1)
+        rounds_inner.addLayout(status_row)
 
         # --- Buttons ---
         button_row = QWidget(self)
@@ -183,8 +185,6 @@ class CalibrationPanel(QGroupBox):
         layout.addWidget(self.precheck_tree, 1)
         layout.addWidget(rounds_group)
         layout.addWidget(self.phase_label)
-        layout.addWidget(self.explore_then_refine_check)
-        layout.addWidget(self.resume_from_result_check)
         layout.addWidget(cm_row)
         layout.addWidget(button_row)
         layout.addWidget(self.failure_summary)
@@ -196,7 +196,6 @@ class CalibrationPanel(QGroupBox):
         self.multi_start_iters_spin.valueChanged.connect(lambda _v: self._update_estimated_time())
         self.refine_iters_spin.valueChanged.connect(lambda _v: self._update_estimated_time())
         self.jitter_spin.valueChanged.connect(lambda _v: self._update_estimated_time())
-        self.explore_then_refine_check.toggled.connect(lambda _c: self._update_estimated_time())
 
         self._update_estimated_time()
 
@@ -261,8 +260,6 @@ class CalibrationPanel(QGroupBox):
         self.multi_start_iters_spin.setEnabled(not locked)
         self.refine_iters_spin.setEnabled(not locked)
         self.jitter_spin.setEnabled(not locked)
-        self.explore_then_refine_check.setEnabled(not locked)
-        self.resume_from_result_check.setEnabled(not locked)
         self.precheck_button.setEnabled(not locked)
         self.generate_config_button.setEnabled((not locked) and self._generate_configs_ready)
         self.prepare_button.setEnabled(not locked)
@@ -293,18 +290,14 @@ class CalibrationPanel(QGroupBox):
         refine_iters = int(self.refine_iters_spin.value()) or 80
 
         if camera_count <= 0:
-            self.estimate_label.setText("~ 0s (excluding CM Prepare)")
+            self.estimate_label.setText("~ 0s")
             return
 
-        base_iter_count = refine_iters
-        if self.explore_then_refine_check.isChecked():
-            base_iter_count += multi_start_count * multi_start_iters
-        else:
-            base_iter_count += max(0, multi_start_count) * max(10, multi_start_iters // 2)
+        base_iter_count = refine_iters + max(0, multi_start_count) * max(10, multi_start_iters // 2)
 
         per_camera_seconds = max(45, int(round(base_iter_count * 2.5 + float(self.jitter_spin.value()) * 8.0)))
         total_seconds = camera_count * campaign_rounds * per_camera_seconds
-        self.estimate_label.setText(f"~ {self._format_duration(total_seconds)} (excluding CM Prepare)")
+        self.estimate_label.setText(f"~ {self._format_duration(total_seconds)}")
 
     @staticmethod
     def _format_duration(total_seconds: int) -> str:

@@ -12,7 +12,7 @@ from gui_app.services.config_service import ConfigService
 from gui_app.services.precheck_service import PrecheckService
 from gui_app.services.runtime_service import RuntimeService
 from gui_app.services.static_vehicle_reader import resolve_vehicle_info
-from gui_app.widgets.runtime_panel import CM_ROOT
+
 from gui_app.widgets.calibration_panel import CalibrationPanel
 from gui_app.widgets.output_panel import OutputPanel
 from gui_app.widgets.runtime_panel import RuntimePanel
@@ -150,8 +150,7 @@ class MainWindow(QMainWindow):
         try:
             self.output_panel.log_view.clear()
             self.calibration_panel.clear_failure_summary()
-            cm_version = self.runtime_panel.cm_version_combo.currentText().strip()
-            cm_install = Path(f"{CM_ROOT}/win64-{cm_version}") if cm_version else None
+            cm_install = self.runtime_panel.cm_install_path
             self._pending_launch = launch
             self._runtime_mode = "prepare"
             self.runtime_service.prepare_runtime(launch.project_root, launch.testrun, cameras=launch.cameras, cm_install=cm_install)
@@ -195,8 +194,7 @@ class MainWindow(QMainWindow):
             if not selected_cameras:
                 raise ValueError("Please select at least one camera")
             self.state.selected_cameras = selected_cameras
-            cm_version = self.runtime_panel.cm_version_combo.currentText().strip()
-            cm_install = Path(f"{CM_ROOT}/win64-{cm_version}") if cm_version else None
+            cm_install = self.runtime_panel.cm_install_path
             self._runtime_mode = "prepare"
             self.calibration_panel.clear_failure_summary()
             self.runtime_service.prepare_runtime(project_root, testrun, cameras=selected_cameras, cm_install=cm_install)

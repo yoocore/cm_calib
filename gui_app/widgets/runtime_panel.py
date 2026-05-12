@@ -19,8 +19,23 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-CM_ROOT = "D:/IPG/carmaker"
-_DEFAULT_CM_VERSIONS = ["14.1", "14.0", "13.0"]
+_CM_ROOTS = ["D:/IPG/carmaker", "C:/IPG/carmaker"]
+
+
+def detect_cm_versions() -> dict[str, Path]:
+    versions: dict[str, Path] = {}
+    for root in _CM_ROOTS:
+        root_path = Path(root)
+        if not root_path.is_dir():
+            continue
+        for entry in root_path.iterdir():
+            if not entry.is_dir() or not entry.name.startswith("win64-"):
+                continue
+            cm_office = entry / "GUI" / "CM_Office.exe"
+            if cm_office.is_file():
+                version = entry.name[len("win64-"):]
+                versions[version] = entry
+    return dict(sorted(versions.items(), key=lambda x: x[0], reverse=True))
 
 
 _GREEN = QBrush(QColor("#4caf50"))
@@ -43,12 +58,6 @@ class RuntimePanel(QGroupBox):
         self.prepare_button = QPushButton("CM Prepare")
         self.browse_button = QPushButton("Browse")
         self.testrun_browse_button = QPushButton("Browse")
-        self.cm_version_combo = QComboBox()
-        self.cm_version_combo.setEditable(True)
-        self.cm_version_combo.setMinimumWidth(80)
-        for ver in _DEFAULT_CM_VERSIONS:
-            self.cm_version_combo.addItem(ver)
-        self.cm_version_combo.setCurrentText(_DEFAULT_CM_VERSIONS[0])
 
         self.browse_button.clicked.connect(self._browse_project_root)
         self.testrun_browse_button.clicked.connect(self._browse_testrun)
@@ -81,6 +90,12 @@ class RuntimePanel(QGroupBox):
         action_layout.addWidget(self.probe_button)
         action_layout.addWidget(self.prepare_button)
 
+        cm_versions = detect_cm_versions()
+        self.cm_version_combo = QComboBox()
+        for ver in cm_versions:
+            self.cm_version_combo.addItem(ver, cm_versions[ver])
+        self._cm_install_dir: Path | None = None
+
         cm_row = QWidget(self)
         cm_layout = QHBoxLayout(cm_row)
         cm_layout.setContentsMargins(0, 0, 0, 0)
@@ -92,6 +107,24 @@ class RuntimePanel(QGroupBox):
         wrapper.addWidget(action_row)
         wrapper.addWidget(cm_row)
         wrapper.addStretch(1)
+
+    @property
+    def cm_install_path(self) -> Path | None:
+        """
+        Returns the full CM install directory for the selected version,
+        or the directory from userdata if a custom version was typed.
+        """
+        data = self.cm_version_combo.currentData()
+        if data is not None:
+            return data  # type: ignore[return-value]
+        text = self.cm_version_combo.currentText().strip()
+        if not text:
+            return None
+        # Try to resolve as version string
+        cm_versions = detect_cm_versions()
+        if text in cm_versions:
+            return cm_versions[text]
+        return None
 
     def _browse_project_root(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "Select Project Root", self.project_root_edit.text())

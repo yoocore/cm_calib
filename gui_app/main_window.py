@@ -102,19 +102,38 @@ class MainWindow(QMainWindow):
     def _start_calibration(self) -> None:
         try:
             launch = self._build_launch_config()
-            self.output_panel.log_view.clear()
-            self.calibration_panel.clear_failure_summary()
-            self._pending_launch = launch
-            self._runtime_mode = "status"
-            self.runtime_service.probe_status(launch.project_root, launch.testrun, verify_health=True)
         except Exception as exc:
-            self._pending_launch = None
             self.calibration_panel.set_failure_summary(str(exc))
             QMessageBox.critical(self, "Start Failed", str(exc))
+            return
+
+        # --- Precheck ---
+        project_root = Path(self.runtime_panel.project_root_edit.text().strip() or self.project_root)
+        if project_root.resolve() != self.precheck_service.project_root:
+            self.precheck_service = PrecheckService(project_root)
+        precheck_results = self.precheck_service.run_for_cameras(launch.cameras)
+        self.calibration_panel.update_precheck_results(precheck_results)
+        failed = [r for r in precheck_results if not r.get("ok")]
+        if failed:
+            messages = [str(r.get("message", "")) for r in failed]
+            self.calibration_panel.set_failure_summary("Precheck failed: " + "; ".join(messages))
+            QMessageBox.critical(self, "Precheck Failed", "Precheck failed. See the Precheck tree and failure summary for details.")
+            return
+
+        # --- Prepare ---
+        self.output_panel.log_view.clear()
+        self.calibration_panel.clear_failure_summary()
+        self._pending_launch = launch
+        self._runtime_mode = "prepare"
+        self.runtime_service.prepare_runtime(launch.project_root, launch.testrun, cameras=launch.cameras)
 
     @Slot()
     def _stop_calibration(self) -> None:
-        self.calibration_service.stop()
+        if self.state.status == AppStatus.PREPARING:
+            self._pending_launch = None
+            self.runtime_service.stop()
+        elif self.state.status == AppStatus.RUNNING:
+            self.calibration_service.stop()
 
     @Slot()
     def _probe_runtime(self) -> None:
@@ -171,11 +190,12 @@ class MainWindow(QMainWindow):
     def _sync_control_states(self) -> None:
         runtime_busy = self.runtime_service.is_running
         calibration_running = self.state.status == AppStatus.RUNNING
+        preparing = self.state.status == AppStatus.PREPARING
         can_start = self.state.status in {AppStatus.READY, AppStatus.FINISHED, AppStatus.FAILED, AppStatus.STOPPED}
 
         self.calibration_panel.start_button.setEnabled(can_start and not runtime_busy and not calibration_running)
-        self.calibration_panel.stop_button.setEnabled(calibration_running)
-        controls_enabled = not runtime_busy and not calibration_running
+        self.calibration_panel.stop_button.setEnabled(calibration_running or preparing)
+        controls_enabled = not runtime_busy and not calibration_running and not preparing
         self.calibration_panel.precheck_button.setEnabled(controls_enabled)
         self.runtime_panel.probe_button.setEnabled(controls_enabled)
         self.runtime_panel.prepare_button.setEnabled(controls_enabled)
@@ -186,6 +206,7 @@ class MainWindow(QMainWindow):
     def _on_process_started(self) -> None:
         self._calibration_recent_lines.clear()
         self.calibration_panel.clear_failure_summary()
+        self.calibration_panel.set_phase_label("标定进行中...")
         self._apply_status(AppStatus.RUNNING)
 
     @Slot(int)
@@ -194,20 +215,22 @@ class MainWindow(QMainWindow):
             return
         if exit_code != 0:
             self.calibration_panel.set_failure_summary(self._build_failure_summary("Calibration failed", self._calibration_recent_lines))
+        self.calibration_panel.set_phase_label("")
         self._apply_status(AppStatus.FINISHED if exit_code == 0 else AppStatus.FAILED)
 
     @Slot(str)
     def _on_process_failed(self, error_text: str) -> None:
         self.calibration_panel.set_failure_summary(self._build_failure_summary("Calibration process error", [error_text, *self._calibration_recent_lines]))
+        self.calibration_panel.set_phase_label("")
         self._apply_status(AppStatus.FAILED)
         QMessageBox.critical(self, "Process Error", error_text)
 
     @Slot(str)
     def _on_runtime_process_failed(self, error_text: str) -> None:
-        if self._pending_launch is not None:
-            self._pending_launch = None
+        self._pending_launch = None
         self.calibration_panel.set_failure_summary(self._build_failure_summary("Runtime process error", [error_text, *self._runtime_recent_lines]))
         if self._runtime_mode == "prepare":
+            self.calibration_panel.set_phase_label("CM Prepare 失败")
             self._apply_status(AppStatus.PASSIVE)
         else:
             self._sync_control_states()
@@ -220,15 +243,27 @@ class MainWindow(QMainWindow):
         self.calibration_panel.clear_failure_summary()
         if self._runtime_mode == "prepare":
             self.output_panel.append_log("[runtime] CM Prepare uses Tcl StartSim/StopSim for the TestRun bootstrap")
+            self.calibration_panel.set_phase_label("CM Prepare 进行中...")
             self._apply_status(AppStatus.PREPARING)
         else:
             self._sync_control_states()
 
     @Slot(int)
     def _on_runtime_process_finished(self, exit_code: int) -> None:
-        if self._runtime_mode == "prepare" and exit_code != 0 and self.state.status == AppStatus.PREPARING:
-            self.calibration_panel.set_failure_summary(self._build_failure_summary("Prepare failed", self._runtime_recent_lines))
-            self._apply_status(AppStatus.PASSIVE)
+        if self._runtime_mode == "prepare":
+            if self._pending_launch is None and exit_code != 0:
+                self.calibration_panel.set_phase_label("")
+                self._sync_control_states()
+            elif exit_code != 0:
+                self._pending_launch = None
+                if self.state.status == AppStatus.PREPARING:
+                    self.calibration_panel.set_failure_summary(
+                        self._build_failure_summary("Prepare failed", self._runtime_recent_lines)
+                    )
+                    self.calibration_panel.set_phase_label("CM Prepare 失败")
+                    self._apply_status(AppStatus.PASSIVE)
+                else:
+                    self._sync_control_states()
         else:
             self._sync_control_states()
         self._runtime_mode = None
@@ -249,6 +284,12 @@ class MainWindow(QMainWindow):
         if mode == "prepare":
             if status == "ready":
                 self.calibration_panel.clear_failure_summary()
+            if status == "ready" and self._pending_launch is not None:
+                launch = self._pending_launch
+                self._pending_launch = None
+                self.calibration_panel.set_phase_label("CM Prepare 完成，正在启动标定...")
+                self.calibration_service.start(launch)
+                return
             self._apply_status(AppStatus.READY if status == "ready" else AppStatus.PASSIVE)
         elif mode == "status":
             if self._pending_launch is not None:

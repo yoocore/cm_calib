@@ -149,9 +149,11 @@ class MainWindow(QMainWindow):
         try:
             self.output_panel.log_view.clear()
             self.calibration_panel.clear_failure_summary()
+            cm_install_text = self.runtime_panel.cm_install_combo.currentText().strip()
+            cm_install = Path(cm_install_text) if cm_install_text else None
             self._pending_launch = launch
             self._runtime_mode = "prepare"
-            self.runtime_service.prepare_runtime(launch.project_root, launch.testrun, cameras=launch.cameras)
+            self.runtime_service.prepare_runtime(launch.project_root, launch.testrun, cameras=launch.cameras, cm_install=cm_install)
         except Exception as exc:
             self._pending_launch = None
             self._runtime_mode = None
@@ -192,9 +194,11 @@ class MainWindow(QMainWindow):
             if not selected_cameras:
                 raise ValueError("Please select at least one camera")
             self.state.selected_cameras = selected_cameras
+            cm_install_text = self.runtime_panel.cm_install_combo.currentText().strip()
+            cm_install = Path(cm_install_text) if cm_install_text else None
             self._runtime_mode = "prepare"
             self.calibration_panel.clear_failure_summary()
-            self.runtime_service.prepare_runtime(project_root, testrun, camera_sensor=selected_cameras[0])
+            self.runtime_service.prepare_runtime(project_root, testrun, cameras=selected_cameras, cm_install=cm_install)
         except Exception as exc:
             self._runtime_mode = None
             self.calibration_panel.set_failure_summary(str(exc))

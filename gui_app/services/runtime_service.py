@@ -32,8 +32,8 @@ class RuntimeService(QObject):
     def probe_status(self, project_root: Path, testrun: str, *, verify_health: bool = False) -> None:
         self._start_mode("status", project_root, testrun, verify_health=verify_health)
 
-    def prepare_runtime(self, project_root: Path, testrun: str, *, camera_sensor: str | None = None) -> None:
-        self._start_mode("prepare", project_root, testrun, camera_sensor=camera_sensor)
+    def prepare_runtime(self, project_root: Path, testrun: str, *, cameras: list[str] | None = None, cm_install: Path | None = None) -> None:
+        self._start_mode("prepare", project_root, testrun, cameras=cameras, cm_install=cm_install)
 
     def stop(self) -> None:
         self.process_service.stop()
@@ -45,7 +45,8 @@ class RuntimeService(QObject):
         testrun: str,
         *,
         verify_health: bool = False,
-        camera_sensor: str | None = None,
+        cameras: list[str] | None = None,
+        cm_install: Path | None = None,
     ) -> None:
         script_path = self.calibration_root / "cmapi_testrun_control.py"
         arguments = [
@@ -60,6 +61,9 @@ class RuntimeService(QObject):
         ]
         if mode == "status" and verify_health:
             arguments.append("--health-check-after-start")
-        if mode == "prepare" and camera_sensor:
-            arguments.extend(["--camera-sensor", camera_sensor])
+        if mode == "prepare":
+            for camera_name in cameras or []:
+                arguments.extend(["--camera-sensor", camera_name])
+            if cm_install is not None:
+                arguments.extend(["--cm-install", str(cm_install)])
         self.process_service.start_python(script_path, arguments[1:], self.calibration_root)

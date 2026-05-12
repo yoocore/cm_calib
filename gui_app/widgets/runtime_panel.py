@@ -19,13 +19,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-_DEFAULT_CM_PATHS = [
-    "D:/IPG/carmaker/win64-14.1",
-    "D:/IPG/carmaker/win64-14.0",
-    "D:/IPG/carmaker/win64-13.0",
-    "C:/IPG/carmaker/win64-14.1",
-    "C:/IPG/carmaker/win64-14.0",
-]
+CM_ROOT = "D:/IPG/carmaker"
+_DEFAULT_CM_VERSIONS = ["14.1", "14.0", "13.0"]
 
 
 _GREEN = QBrush(QColor("#4caf50"))
@@ -48,12 +43,12 @@ class RuntimePanel(QGroupBox):
         self.prepare_button = QPushButton("CM Prepare")
         self.browse_button = QPushButton("Browse")
         self.testrun_browse_button = QPushButton("Browse")
-        self.cm_install_combo = QComboBox()
-        self.cm_install_combo.setEditable(True)
-        self.cm_install_combo.setMinimumWidth(200)
-        for path in _DEFAULT_CM_PATHS:
-            self.cm_install_combo.addItem(path)
-        self.cm_install_combo.setCurrentText(_DEFAULT_CM_PATHS[0])
+        self.cm_version_combo = QComboBox()
+        self.cm_version_combo.setEditable(True)
+        self.cm_version_combo.setMinimumWidth(80)
+        for ver in _DEFAULT_CM_VERSIONS:
+            self.cm_version_combo.addItem(ver)
+        self.cm_version_combo.setCurrentText(_DEFAULT_CM_VERSIONS[0])
 
         self.browse_button.clicked.connect(self._browse_project_root)
         self.testrun_browse_button.clicked.connect(self._browse_testrun)
@@ -89,8 +84,8 @@ class RuntimePanel(QGroupBox):
         cm_row = QWidget(self)
         cm_layout = QHBoxLayout(cm_row)
         cm_layout.setContentsMargins(0, 0, 0, 0)
-        cm_layout.addWidget(QLabel("CM Install:"))
-        cm_layout.addWidget(self.cm_install_combo, 1)
+        cm_layout.addWidget(QLabel("CM Version:"))
+        cm_layout.addWidget(self.cm_version_combo, 1)
 
         wrapper = QVBoxLayout(self)
         wrapper.addLayout(form)
@@ -150,4 +145,4 @@ class RuntimePanel(QGroupBox):
         self.testrun_edit.setEnabled(not locked)
         self.browse_button.setEnabled(not locked)
         self.testrun_browse_button.setEnabled(not locked)
-        self.cm_install_combo.setEnabled(not locked)
+        self.cm_version_combo.setEnabled(not locked)

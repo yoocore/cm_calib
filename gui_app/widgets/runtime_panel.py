@@ -174,8 +174,14 @@ class RuntimePanel(QGroupBox):
         )
 
     def set_inputs_locked(self, locked: bool) -> None:
+        tip = "Stop calibration first to modify" if locked else ""
         self.project_root_edit.setEnabled(not locked)
+        self.project_root_edit.setToolTip(tip)
         self.testrun_edit.setEnabled(not locked)
+        self.testrun_edit.setToolTip(tip)
         self.browse_button.setEnabled(not locked)
+        self.browse_button.setToolTip(tip)
         self.testrun_browse_button.setEnabled(not locked)
+        self.testrun_browse_button.setToolTip(tip)
         self.cm_version_combo.setEnabled(not locked)
+        self.cm_version_combo.setToolTip(tip)

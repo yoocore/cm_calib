@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QBrush
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -19,6 +20,9 @@ from PySide6.QtWidgets import (
     QTreeWidget,
     QTreeWidgetItem,
 )
+
+_GREEN = QBrush(QColor("#4caf50"))
+_RED = QBrush(QColor("#e53935"))
 
 
 class CalibrationPanel(QGroupBox):
@@ -142,7 +146,9 @@ class CalibrationPanel(QGroupBox):
             ok = bool(result.get("ok"))
             item = QTreeWidgetItem(self.precheck_tree)
             item.setText(0, camera_name)
-            item.setText(1, "ok" if ok else "failed")
+            status_text = "✓" if ok else "✗"
+            item.setText(1, status_text)
+            item.setForeground(1, _GREEN if ok else _RED)
             item.setText(2, str(result.get("message") or ""))
             tooltip_lines = [
                 *[str(path) for path in result.get("raw_matches", []) if path],
@@ -152,6 +158,7 @@ class CalibrationPanel(QGroupBox):
                 value = str(result.get(key) or "")
                 if value:
                     tooltip_lines.append(value)
+            item.setToolTip(1, "\n".join(tooltip_lines))
             item.setToolTip(2, "\n".join(tooltip_lines))
         self._generate_configs_ready = bool(results) and all(bool(result.get("ok")) for result in results)
         self.generate_config_button.setEnabled(self._generate_configs_ready)

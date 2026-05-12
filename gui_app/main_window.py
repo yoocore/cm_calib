@@ -59,8 +59,9 @@ class MainWindow(QMainWindow):
         self.calibration_panel.stop_button.clicked.connect(self._stop_calibration)
         self.calibration_panel.precheck_button.clicked.connect(self._run_precheck)
         self.calibration_panel.generate_config_button.clicked.connect(self._generate_configs)
+        self.calibration_panel.prepare_clicked.connect(self._prepare_runtime)
         self.runtime_panel.probe_button.clicked.connect(self._probe_runtime)
-        self.runtime_panel.prepare_button.clicked.connect(self._prepare_runtime)
+        self.runtime_panel.project_root_changed.connect(self._on_project_root_changed)
 
         self.runtime_service.line_received.connect(self._on_runtime_line)
         self.runtime_service.runtime_summary.connect(self._on_runtime_summary)
@@ -90,6 +91,9 @@ class MainWindow(QMainWindow):
         except Exception:
             self.runtime_panel.vehicle_label.setText("-")
             self.runtime_panel.clear_sensor_list()
+
+    def _on_project_root_changed(self, _path: str) -> None:
+        self._refresh_camera_list()
 
     def _build_launch_config(self) -> CalibrationLaunchConfig:
         selected_cameras = self.calibration_panel.selected_cameras()
@@ -150,7 +154,7 @@ class MainWindow(QMainWindow):
         try:
             self.output_panel.log_view.clear()
             self.calibration_panel.clear_failure_summary()
-            cm_install = self.runtime_panel.cm_install_path
+            cm_install = self.calibration_panel.cm_install_path
             self._pending_launch = launch
             self._runtime_mode = "prepare"
             self.runtime_service.prepare_runtime(launch.project_root, launch.testrun, cameras=launch.cameras, cm_install=cm_install)
@@ -194,7 +198,7 @@ class MainWindow(QMainWindow):
             if not selected_cameras:
                 raise ValueError("Please select at least one camera")
             self.state.selected_cameras = selected_cameras
-            cm_install = self.runtime_panel.cm_install_path
+            cm_install = self.calibration_panel.cm_install_path
             self._runtime_mode = "prepare"
             self.calibration_panel.clear_failure_summary()
             self.runtime_service.prepare_runtime(project_root, testrun, cameras=selected_cameras, cm_install=cm_install)
@@ -255,7 +259,6 @@ class MainWindow(QMainWindow):
         controls_enabled = not runtime_busy and not calibration_running and not preparing
         self.calibration_panel.precheck_button.setEnabled(controls_enabled)
         self.runtime_panel.probe_button.setEnabled(controls_enabled)
-        self.runtime_panel.prepare_button.setEnabled(controls_enabled)
         self.calibration_panel.set_inputs_locked(not controls_enabled)
         self.runtime_panel.set_inputs_locked(not controls_enabled)
 

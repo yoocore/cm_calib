@@ -205,7 +205,7 @@ GUI 内部应至少维护以下状态：
 系统步骤：
 
 1. 关闭已有的 CarMaker 进程、GUI IPG-MOVIE 进程、GPUSensor 进程
-2. 根据中栏CM Prepare按钮后面的复选框内容，打开对应版本的CarMaker
+2. 根据中栏CM Prepare按钮后面的下拉框内容，打开对应版本的CarMaker，下拉框内容是自动检测系统中已安装的 CM 版本，其下拉选项不可编辑
 3. 根据左栏的projectdir，切换到对应工程目录
 4. 根据左栏的testrun，切换到对应TestRun
 5. 通过 Tcl 执行 StartSim，等待处于running状态后，再通过 Tcl 执行 StopSim

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from pathlib import Path
+
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QBrush
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
-    QFormLayout,
-    QGroupBox,
+    QComboBox,
     QHBoxLayout,
+    QGroupBox,
     QLabel,
     QListWidget,
     QListWidgetItem,
@@ -24,8 +26,39 @@ from PySide6.QtWidgets import (
 _GREEN = QBrush(QColor("#4caf50"))
 _RED = QBrush(QColor("#e53935"))
 
+_CM_ROOTS = ["D:/IPG/carmaker", "C:/IPG/carmaker"]
+
+
+def detect_cm_versions() -> dict[str, Path]:
+    versions: dict[str, Path] = {}
+    for root in _CM_ROOTS:
+        root_path = Path(root)
+        if not root_path.is_dir():
+            continue
+        for entry in root_path.iterdir():
+            if not entry.is_dir() or not entry.name.startswith("win64-"):
+                continue
+            cm_office = entry / "GUI" / "CM_Office.exe"
+            if cm_office.is_file():
+                version = entry.name[len("win64-"):]
+                versions[version] = entry
+    return dict(sorted(versions.items(), key=lambda x: x[0], reverse=True))
+
+
+class _SubGroup(QGroupBox):
+    """A styled sub-group for Explore/Refine sections."""
+    def __init__(self, title: str, parent: QWidget | None = None):
+        super().__init__(title, parent)
+        self.setStyleSheet(
+            "QGroupBox { border: 1px solid #555; border-radius: 4px;"
+            " margin-top: 4px; padding-top: 12px; font-weight: normal; }"
+            "QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; }"
+        )
+
 
 class CalibrationPanel(QGroupBox):
+    prepare_clicked = Signal()
+
     def __init__(self, parent: QWidget | None = None):
         super().__init__("Calibration", parent)
         self.camera_list = QListWidget()
@@ -79,42 +112,52 @@ class CalibrationPanel(QGroupBox):
         self.stop_button = QPushButton("Calib Stop")
         self.stop_button.setEnabled(False)
 
-        rounds_row = QHBoxLayout()
-        rounds_row.addWidget(QLabel("Campaign Rounds"))
-        rounds_row.addWidget(self.campaign_rounds_spin, 1)
+        self.prepare_button = QPushButton("CM Prepare")
+        self.prepare_button.clicked.connect(self.prepare_clicked.emit)
 
-        explore_label = QLabel("Explore")
-        explore_label.setStyleSheet("font-weight: bold; color: #888;")
-        explore_directions_row = QHBoxLayout()
-        explore_directions_row.setContentsMargins(20, 0, 0, 0)
-        explore_directions_row.addWidget(QLabel("Directions"))
-        explore_directions_row.addWidget(self.multi_start_count_spin, 1)
-        explore_iters_row = QHBoxLayout()
-        explore_iters_row.setContentsMargins(20, 0, 0, 0)
-        explore_iters_row.addWidget(QLabel("Iters"))
-        explore_iters_row.addWidget(self.multi_start_iters_spin, 1)
+        cm_versions = detect_cm_versions()
+        self.cm_version_combo = QComboBox()
+        for ver in cm_versions:
+            self.cm_version_combo.addItem(ver, cm_versions[ver])
 
-        refine_label = QLabel("Refine")
-        refine_label.setStyleSheet("font-weight: bold; color: #888;")
-        refine_iters_row = QHBoxLayout()
-        refine_iters_row.setContentsMargins(20, 0, 0, 0)
-        refine_iters_row.addWidget(QLabel("Iters"))
-        refine_iters_row.addWidget(self.refine_iters_spin, 1)
+        # --- Config hierarchy ---
+        rounds_group = _SubGroup("Campaign Rounds")
+        rounds_inner = QVBoxLayout(rounds_group)
+        rounds_inner.setContentsMargins(8, 4, 8, 4)
 
-        estimate_layout = QHBoxLayout()
-        estimate_layout.addWidget(QLabel("Estimated Time"))
-        estimate_layout.addWidget(self.estimate_label, 1)
+        rounds_top = QHBoxLayout()
+        rounds_top.addWidget(QLabel("Rounds"))
+        rounds_top.addWidget(self.campaign_rounds_spin, 1)
+        rounds_inner.addLayout(rounds_top)
 
-        config_layout = QVBoxLayout()
-        config_layout.setSpacing(2)
-        config_layout.addLayout(rounds_row)
-        config_layout.addWidget(explore_label)
-        config_layout.addLayout(explore_directions_row)
-        config_layout.addLayout(explore_iters_row)
-        config_layout.addWidget(refine_label)
-        config_layout.addLayout(refine_iters_row)
-        config_layout.addLayout(estimate_layout)
+        explore_group = _SubGroup("Explore")
+        explore_inner = QVBoxLayout(explore_group)
+        explore_inner.setContentsMargins(8, 4, 8, 4)
+        explore_dir = QHBoxLayout()
+        explore_dir.addWidget(QLabel("Directions"))
+        explore_dir.addWidget(self.multi_start_count_spin, 1)
+        explore_iters = QHBoxLayout()
+        explore_iters.addWidget(QLabel("Iters"))
+        explore_iters.addWidget(self.multi_start_iters_spin, 1)
+        explore_inner.addLayout(explore_dir)
+        explore_inner.addLayout(explore_iters)
+        rounds_inner.addWidget(explore_group)
 
+        refine_group = _SubGroup("Refine")
+        refine_inner = QVBoxLayout(refine_group)
+        refine_inner.setContentsMargins(8, 4, 8, 4)
+        refine_iters = QHBoxLayout()
+        refine_iters.addWidget(QLabel("Iters"))
+        refine_iters.addWidget(self.refine_iters_spin, 1)
+        refine_inner.addLayout(refine_iters)
+        rounds_inner.addWidget(refine_group)
+
+        estimate_row = QHBoxLayout()
+        estimate_row.addWidget(QLabel("Estimated Time"))
+        estimate_row.addWidget(self.estimate_label, 1)
+        rounds_inner.addLayout(estimate_row)
+
+        # --- Buttons ---
         button_row = QWidget(self)
         button_layout = QHBoxLayout(button_row)
         button_layout.setContentsMargins(0, 0, 0, 0)
@@ -127,27 +170,42 @@ class CalibrationPanel(QGroupBox):
         precheck_layout.addWidget(self.precheck_button)
         precheck_layout.addWidget(self.generate_config_button)
 
+        cm_row = QWidget(self)
+        cm_layout = QHBoxLayout(cm_row)
+        cm_layout.setContentsMargins(0, 0, 0, 0)
+        cm_layout.addWidget(self.prepare_button)
+        cm_layout.addWidget(QLabel("CM Version:"))
+        cm_layout.addWidget(self.cm_version_combo, 1)
+
         layout = QVBoxLayout(self)
         layout.addWidget(self.camera_list, 1)
         layout.addWidget(precheck_row)
         layout.addWidget(self.precheck_tree, 1)
-        layout.addLayout(config_layout)
+        layout.addWidget(rounds_group)
         layout.addWidget(self.phase_label)
         layout.addWidget(self.explore_then_refine_check)
         layout.addWidget(self.resume_from_result_check)
+        layout.addWidget(cm_row)
         layout.addWidget(button_row)
         layout.addWidget(self.failure_summary)
 
         self.camera_list.itemChanged.connect(self._on_camera_selection_changed)
         self.camera_list.model().rowsMoved.connect(self._on_camera_rows_moved)
-        self.campaign_rounds_spin.valueChanged.connect(lambda _value: self._update_estimated_time())
-        self.multi_start_count_spin.valueChanged.connect(lambda _value: self._update_estimated_time())
-        self.multi_start_iters_spin.valueChanged.connect(lambda _value: self._update_estimated_time())
-        self.refine_iters_spin.valueChanged.connect(lambda _value: self._update_estimated_time())
-        self.jitter_spin.valueChanged.connect(lambda _value: self._update_estimated_time())
-        self.explore_then_refine_check.toggled.connect(lambda _checked: self._update_estimated_time())
+        self.campaign_rounds_spin.valueChanged.connect(lambda _v: self._update_estimated_time())
+        self.multi_start_count_spin.valueChanged.connect(lambda _v: self._update_estimated_time())
+        self.multi_start_iters_spin.valueChanged.connect(lambda _v: self._update_estimated_time())
+        self.refine_iters_spin.valueChanged.connect(lambda _v: self._update_estimated_time())
+        self.jitter_spin.valueChanged.connect(lambda _v: self._update_estimated_time())
+        self.explore_then_refine_check.toggled.connect(lambda _c: self._update_estimated_time())
 
         self._update_estimated_time()
+
+    @property
+    def cm_install_path(self) -> Path | None:
+        data = self.cm_version_combo.currentData()
+        if data is not None:
+            return data
+        return None
 
     def set_cameras(self, cameras: list[str]) -> None:
         self.camera_list.clear()
@@ -178,17 +236,17 @@ class CalibrationPanel(QGroupBox):
             item.setText(1, status_text)
             item.setForeground(1, _GREEN if ok else _RED)
             item.setText(2, str(result.get("message") or ""))
-            tooltip_lines = [
-                *[str(path) for path in result.get("raw_matches", []) if path],
-                *[str(path) for path in result.get("annotated_matches", []) if path],
+            tl = [
+                *(str(p) for p in result.get("raw_matches", []) if p),
+                *(str(p) for p in result.get("annotated_matches", []) if p),
             ]
             for key in ("config_path", "backup_path", "preview_path"):
-                value = str(result.get(key) or "")
-                if value:
-                    tooltip_lines.append(value)
-            item.setToolTip(1, "\n".join(tooltip_lines))
-            item.setToolTip(2, "\n".join(tooltip_lines))
-        self._generate_configs_ready = bool(results) and all(bool(result.get("ok")) for result in results)
+                v = str(result.get(key) or "")
+                if v:
+                    tl.append(v)
+            item.setToolTip(1, "\n".join(tl))
+            item.setToolTip(2, "\n".join(tl))
+        self._generate_configs_ready = bool(results) and all(bool(r.get("ok")) for r in results)
         self.generate_config_button.setEnabled(self._generate_configs_ready)
 
     def clear_precheck_results(self) -> None:
@@ -207,6 +265,8 @@ class CalibrationPanel(QGroupBox):
         self.resume_from_result_check.setEnabled(not locked)
         self.precheck_button.setEnabled(not locked)
         self.generate_config_button.setEnabled((not locked) and self._generate_configs_ready)
+        self.prepare_button.setEnabled(not locked)
+        self.cm_version_combo.setEnabled(not locked)
 
     def set_failure_summary(self, text: str | None) -> None:
         self.failure_summary.setPlainText((text or "").strip())
@@ -257,4 +317,3 @@ class CalibrationPanel(QGroupBox):
             parts.append(f"{minutes}m")
         parts.append(f"{seconds}s")
         return " ".join(parts)
-

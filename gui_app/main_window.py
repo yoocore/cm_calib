@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import deque
 from pathlib import Path
 
-from PySide6.QtCore import QTimer, Slot
+from PySide6.QtCore import QCoreApplication, QTimer, Slot
 from PySide6.QtWidgets import QHBoxLayout, QMainWindow, QMessageBox, QWidget
 
 from gui_app.models.state import AppStatus, ApplicationState, CalibrationLaunchConfig, CameraResult
@@ -105,6 +105,11 @@ class MainWindow(QMainWindow):
         except Exception:
             self.runtime_panel.vehicle_label.setText("-")
             self.runtime_panel.clear_sensor_list()
+
+    def _set_red_failure(self, text: str) -> None:
+        self.calibration_panel.failure_summary.setHtml(
+            f'<p style="color:#e53935;font-weight:bold;margin:0;">{text}</p>'
+        )
 
     def _on_project_root_changed(self, path_text: str) -> None:
         new_root = Path(path_text.strip()).resolve() if path_text.strip() else None
@@ -229,6 +234,9 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _generate_configs(self) -> None:
+        self.calibration_panel.generate_config_button.setEnabled(False)
+        self.calibration_panel.generate_config_button.setText("Generating...")
+        QCoreApplication.processEvents()
         try:
             selected_cameras = self.calibration_panel.selected_cameras()
             if not selected_cameras:
@@ -246,11 +254,16 @@ class MainWindow(QMainWindow):
             self.calibration_panel.clear_failure_summary()
         except ModuleNotFoundError as exc:
             msg = f"缺少 Python 包: {exc.name}。请在终端运行: python -m pip install {exc.name}"
-            self.calibration_panel.set_failure_summary(msg)
+            self._set_red_failure(msg)
             QMessageBox.critical(self, "缺少依赖包", msg)
         except Exception as exc:
-            self.calibration_panel.set_failure_summary(str(exc))
+            self._set_red_failure(str(exc))
             QMessageBox.critical(self, "Config Generation Failed", str(exc))
+        finally:
+            self.calibration_panel.generate_config_button.setText("Generate Configs")
+            self.calibration_panel.generate_config_button.setEnabled(
+                not self.calibration_panel._generate_configs_ready
+            )
 
     def _check_runtime_health(self) -> None:
         if self.runtime_service.is_running:

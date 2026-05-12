@@ -10,7 +10,6 @@
     "comparison_mode": "direct",
     "overlay_residual_threshold": 12,
     "overlay_residual_blur": 0,
-    "score_scope": "right_rear_direct_v2_20260508",
     "keep_aspect_resize": true,
     "verify_all_coordinate_fields": false,
     "stop_after_first_accepted_direction": true,
@@ -31,31 +30,15 @@
             "C3",
             "C4"
         ],
-        "min_board_score_improvement": 0.35,
-        "max_total_score_worsen": 4.5,
-        "min_total_board_score_improvement": 0.6000000000000001,
-        "total_worsen_tradeoff_ratio": 0.6,
-        "min_board_count": 1
-    },
-    "auto_objective_board_focus": {
-        "enabled": true,
-        "activation_min_stagnation_rounds": 1,
-        "score_threshold": 8.0,
-        "top_k": 4,
-        "min_focus_board_count": 2,
-        "restrict_to_priority_boards": true,
-        "require_same_family": true,
-        "rank_multipliers": [
-            1.14,
-            1.1,
-            1.06,
-            1.03
-        ],
-        "priority_board_multiplier": 1.06
+        "min_board_score_improvement": 0.75,
+        "max_total_score_worsen": 1.0,
+        "min_board_count": 1,
+        "min_total_board_score_improvement": 0.0,
+        "total_worsen_tradeoff_ratio": 0.0
     },
     "joint_exploration": {
         "apply_to_all_params": true,
-        "max_single_score_worsen": 4.5,
+        "max_single_score_worsen": 2.5,
         "trial_multipliers": [
             1.0,
             2.0,
@@ -63,13 +46,13 @@
         ]
     },
     "strategy_adaptation": {
-        "enabled": true,
+        "enabled": false,
         "reorder_params": true,
         "adjust_step_scale": true,
         "focus_on_joint_candidates": true,
         "bottleneck_board_awareness": true,
-        "bottleneck_top_k": 4,
-        "bottleneck_min_improvement": 0.05,
+        "bottleneck_top_k": 2,
+        "bottleneck_min_improvement": 0.1,
         "bottleneck_priority_boost": 1.25,
         "priority_decay": 0.82,
         "accepted_priority_boost": 2.5,
@@ -116,91 +99,21 @@
             }
         ]
     },
-    "escape_exploration": {
-        "enabled": true,
-        "coarse_start_multipliers": [
-            8.0,
-            16.0,
-            28.0
-        ],
-        "local_jitter_scale": 1.5,
-        "stagnation_round_scale_up": 0.35,
-        "focus_param_budget": 4,
-        "focus_rank_decay": 0.2,
-        "board_focus_top_k": 4,
-        "global_param_order": [
-            "lens_fov",
-            "pos_z",
-            "pitch",
-            "yaw",
-            "pos_x",
-            "pos_y",
-            "roll"
-        ],
-        "board_param_groups": {
-            "S": [
-                "lens_fov",
-                "pitch",
-                "yaw",
-                "pos_z"
-            ],
-            "C": [
-                "lens_fov",
-                "yaw",
-                "roll",
-                "pos_x",
-                "pos_y"
-            ]
-        },
-        "profile_scale_map": {
-            "baseline": 1.0,
-            "expanded": 1.35,
-            "aggressive": 1.7
-        },
-        "deanchor_baseline_start": true
-    },
-    "round_seeding": {
-        "enabled": true,
-        "prefer_history_best": true,
-        "carry_forward_only_if_improved": true,
-        "score_tolerance": 1e-06
-    },
-    "round_strategy_autotune": {
-        "enabled": true,
-        "activation_stagnation_rounds": 2,
-        "plateau_score_delta": 0.2,
-        "top_k_boards": 4,
-        "min_board_score": 8.0,
-        "unlock_parameters_enabled": true,
-        "unlock_parameter_activation_rounds": 2,
-        "unlock_parameter_step_multipliers": {
-            "C": {
-                "lens_scale": 6.0
-            }
-        },
-        "deanchor_baseline_enabled": true,
-        "deanchor_activation_stagnation_rounds": 2,
-        "deanchor_repeated_signature_count": 2,
-        "deanchor_score_delta": 0.05,
-        "skip_refine_on_plateau": true,
-        "skip_refine_activation_stagnation_rounds": 2,
-        "skip_refine_score_delta": 0.05
-    },
     "optimization_order": [
-        "lens_scale",
-        "lens_fov",
-        "pos_y",
-        "pos_x",
-        "yaw",
         "pos_z",
         "pitch",
+        "yaw",
+        "pos_x",
         "roll",
+        "pos_y",
+        "lens_fov",
+        "lens_scale",
         "lens_offset_x",
         "lens_offset_y"
     ],
     "parameters": {
         "pos_x": {
-            "initial": 3.4413,
+            "initial": 0.0,
             "step": 0.002,
             "min_offset": -0.02,
             "max_offset": 0.02,
@@ -208,7 +121,7 @@
             "decimals": 4
         },
         "pos_y": {
-            "initial": -0.9532,
+            "initial": 0.0,
             "step": 0.001,
             "min_offset": -0.01,
             "max_offset": 0.01,
@@ -216,7 +129,7 @@
             "decimals": 4
         },
         "pos_z": {
-            "initial": 0.9608,
+            "initial": 0.0,
             "step": 0.002,
             "min_offset": -0.03,
             "max_offset": 0.03,
@@ -224,7 +137,7 @@
             "decimals": 4
         },
         "yaw": {
-            "initial": 227.8997,
+            "initial": 0.0,
             "step": 0.01,
             "min_offset": -0.25,
             "max_offset": 0.25,
@@ -232,7 +145,7 @@
             "decimals": 4
         },
         "pitch": {
-            "initial": -1.0052,
+            "initial": 0.0,
             "step": 0.02,
             "min_offset": -0.45,
             "max_offset": 0.45,
@@ -240,7 +153,7 @@
             "decimals": 4
         },
         "roll": {
-            "initial": 0.3714,
+            "initial": 0.0,
             "step": 0.01,
             "min_offset": -0.2,
             "max_offset": 0.2,
@@ -248,7 +161,7 @@
             "decimals": 4
         },
         "lens_fov": {
-            "initial": 124.7,
+            "initial": 195.0,
             "step": 0.2,
             "min_offset": -6.0,
             "max_offset": 6.0,
@@ -258,8 +171,8 @@
         "lens_scale": {
             "initial": 1.0,
             "step": 0.005,
-            "min_offset": -0.03,
-            "max_offset": 0.03,
+            "min_offset": 0.0,
+            "max_offset": 0.0,
             "min_step": 0.005,
             "decimals": 3
         },

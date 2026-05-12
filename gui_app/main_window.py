@@ -108,24 +108,35 @@ class MainWindow(QMainWindow):
             return
 
         # --- Precheck ---
-        project_root = Path(self.runtime_panel.project_root_edit.text().strip() or self.project_root)
-        if project_root.resolve() != self.precheck_service.project_root:
-            self.precheck_service = PrecheckService(project_root)
-        precheck_results = self.precheck_service.run_for_cameras(launch.cameras)
-        self.calibration_panel.update_precheck_results(precheck_results)
-        failed = [r for r in precheck_results if not r.get("ok")]
-        if failed:
-            messages = [str(r.get("message", "")) for r in failed]
-            self.calibration_panel.set_failure_summary("Precheck failed: " + "; ".join(messages))
-            QMessageBox.critical(self, "Precheck Failed", "Precheck failed. See the Precheck tree and failure summary for details.")
+        try:
+            project_root = Path(self.runtime_panel.project_root_edit.text().strip() or self.project_root)
+            if project_root.resolve() != self.precheck_service.project_root:
+                self.precheck_service = PrecheckService(project_root)
+            precheck_results = self.precheck_service.run_for_cameras(launch.cameras)
+            self.calibration_panel.update_precheck_results(precheck_results)
+            failed = [r for r in precheck_results if not r.get("ok")]
+            if failed:
+                messages = [str(r.get("message", "")) for r in failed]
+                self.calibration_panel.set_failure_summary("Precheck failed: " + "; ".join(messages))
+                QMessageBox.critical(self, "Precheck Failed", "Precheck failed. See the Precheck tree and failure summary for details.")
+                return
+        except Exception as exc:
+            self.calibration_panel.set_failure_summary("Precheck error: " + str(exc))
+            QMessageBox.critical(self, "Precheck Error", str(exc))
             return
 
         # --- Prepare ---
-        self.output_panel.log_view.clear()
-        self.calibration_panel.clear_failure_summary()
-        self._pending_launch = launch
-        self._runtime_mode = "prepare"
-        self.runtime_service.prepare_runtime(launch.project_root, launch.testrun, cameras=launch.cameras)
+        try:
+            self.output_panel.log_view.clear()
+            self.calibration_panel.clear_failure_summary()
+            self._pending_launch = launch
+            self._runtime_mode = "prepare"
+            self.runtime_service.prepare_runtime(launch.project_root, launch.testrun, cameras=launch.cameras)
+        except Exception as exc:
+            self._pending_launch = None
+            self._runtime_mode = None
+            self.calibration_panel.set_failure_summary(str(exc))
+            QMessageBox.critical(self, "Start Failed", str(exc))
 
     @Slot()
     def _stop_calibration(self) -> None:
@@ -264,6 +275,13 @@ class MainWindow(QMainWindow):
                     self._apply_status(AppStatus.PASSIVE)
                 else:
                     self._sync_control_states()
+            elif self._pending_launch is not None:
+                self._pending_launch = None
+                self.calibration_panel.set_failure_summary(
+                    self._build_failure_summary("Prepare finished but no runtime summary received", self._runtime_recent_lines)
+                )
+                self.calibration_panel.set_phase_label("CM Prepare 状态异常")
+                self._apply_status(AppStatus.PASSIVE)
         else:
             self._sync_control_states()
         self._runtime_mode = None
@@ -288,7 +306,13 @@ class MainWindow(QMainWindow):
                 launch = self._pending_launch
                 self._pending_launch = None
                 self.calibration_panel.set_phase_label("CM Prepare 完成，正在启动标定...")
-                self.calibration_service.start(launch)
+                try:
+                    self.calibration_service.start(launch)
+                except Exception as exc:
+                    self.calibration_panel.set_phase_label("")
+                    self.calibration_panel.set_failure_summary("Calibration start failed: " + str(exc))
+                    self._apply_status(AppStatus.FAILED)
+                    QMessageBox.critical(self, "Calibration Start Failed", str(exc))
                 return
             self._apply_status(AppStatus.READY if status == "ready" else AppStatus.PASSIVE)
         elif mode == "status":

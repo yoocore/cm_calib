@@ -61,6 +61,8 @@ class CalibrationPanel(QGroupBox):
         self.precheck_tree.setColumnCount(3)
         self.precheck_tree.setHeaderLabels(["Camera", "Check", "Message"])
         self.estimate_label = QLabel("~ 0s (excluding CM Prepare)")
+        self.phase_label = QLabel("")
+        self.phase_label.setStyleSheet("color: #888; font-style: italic;")
         self.failure_summary = QTextEdit()
         self.failure_summary.setReadOnly(True)
         self.failure_summary.setPlaceholderText("Failures in prepare/start/stop will be summarized here.")
@@ -89,6 +91,7 @@ class CalibrationPanel(QGroupBox):
         layout.addWidget(self.precheck_button)
         layout.addWidget(self.precheck_tree, 1)
         layout.addLayout(form)
+        layout.addWidget(self.phase_label)
         layout.addWidget(self.explore_then_refine_check)
         layout.addWidget(self.resume_from_result_check)
         layout.addWidget(button_row)
@@ -148,6 +151,9 @@ class CalibrationPanel(QGroupBox):
 
     def clear_failure_summary(self) -> None:
         self.failure_summary.clear()
+
+    def set_phase_label(self, text: str) -> None:
+        self.phase_label.setText(text)
 
     def _update_estimated_time(self) -> None:
         camera_count = len(self.selected_cameras())

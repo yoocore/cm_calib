@@ -202,7 +202,7 @@ class MainWindow(QMainWindow):
         runtime_busy = self.runtime_service.is_running
         calibration_running = self.state.status == AppStatus.RUNNING
         preparing = self.state.status == AppStatus.PREPARING
-        can_start = self.state.status in {AppStatus.READY, AppStatus.FINISHED, AppStatus.FAILED, AppStatus.STOPPED}
+        can_start = self.state.status in {AppStatus.IDLE, AppStatus.READY, AppStatus.FINISHED, AppStatus.FAILED, AppStatus.STOPPED, AppStatus.PASSIVE}
 
         self.calibration_panel.start_button.setEnabled(can_start and not runtime_busy and not calibration_running)
         self.calibration_panel.stop_button.setEnabled(calibration_running or preparing)
@@ -264,7 +264,7 @@ class MainWindow(QMainWindow):
         if self._runtime_mode == "prepare":
             if self._pending_launch is None and exit_code != 0:
                 self.calibration_panel.set_phase_label("")
-                self._sync_control_states()
+                self._apply_status(AppStatus.PASSIVE)
             elif exit_code != 0:
                 self._pending_launch = None
                 if self.state.status == AppStatus.PREPARING:
@@ -282,6 +282,11 @@ class MainWindow(QMainWindow):
                 )
                 self.calibration_panel.set_phase_label("CM Prepare 状态异常")
                 self._apply_status(AppStatus.PASSIVE)
+            else:
+                if self.state.status == AppStatus.PREPARING:
+                    self._apply_status(AppStatus.PASSIVE)
+                else:
+                    self._sync_control_states()
         else:
             self._sync_control_states()
         self._runtime_mode = None

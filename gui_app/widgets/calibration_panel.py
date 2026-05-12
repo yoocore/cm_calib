@@ -26,7 +26,14 @@ from PySide6.QtWidgets import (
 _GREEN = QBrush(QColor("#4caf50"))
 _RED = QBrush(QColor("#e53935"))
 
-_CM_ROOTS = ["D:/IPG/carmaker", "C:/IPG/carmaker"]
+_CM_ROOTS = [
+    "D:/IPG/carmaker",
+    "C:/IPG/carmaker",
+    "D:/Program Files/IPG/carmaker",
+    "C:/Program Files/IPG/carmaker",
+    "C:/IPG",
+    "D:/IPG",
+]
 
 
 def detect_cm_versions() -> dict[str, Path]:
@@ -115,8 +122,11 @@ class CalibrationPanel(QGroupBox):
 
         cm_versions = detect_cm_versions()
         self.cm_version_combo = QComboBox()
-        for ver in cm_versions:
-            self.cm_version_combo.addItem(ver, cm_versions[ver])
+        if not cm_versions:
+            self.cm_version_combo.addItem("未检测到 CM 版本", None)
+        else:
+            for ver in cm_versions:
+                self.cm_version_combo.addItem(ver, cm_versions[ver])
 
         # --- Config hierarchy ---
         rounds_group = _SubGroup("Campaign Rounds")
@@ -202,7 +212,7 @@ class CalibrationPanel(QGroupBox):
     @property
     def cm_install_path(self) -> Path | None:
         data = self.cm_version_combo.currentData()
-        if data is not None:
+        if isinstance(data, Path):
             return data
         return None
 

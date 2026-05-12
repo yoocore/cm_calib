@@ -26,6 +26,9 @@ class TestCalibStartFlow:
     def test_start_calibration_precheck_ok_then_prepare(self, main_window: MainWindow, qtbot, mocker):
         """预检通过后应调用 prepare_runtime"""
         mocker.patch("gui_app.main_window.QMessageBox")
+        from pathlib import Path
+        main_window.calibration_panel.cm_version_combo.clear()
+        main_window.calibration_panel.cm_version_combo.addItem("test", Path("D:/cm/win64-test"))
         main_window.precheck_service.run_for_cameras = MagicMock(return_value=[
             {"camera": "cam1", "ok": True, "message": "ok"}
         ])

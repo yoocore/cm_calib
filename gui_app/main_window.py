@@ -79,6 +79,17 @@ class MainWindow(QMainWindow):
         self.calibration_service.orchestration_summary.connect(self._on_orchestration_summary)
 
     def _refresh_camera_list(self) -> None:
+        project_root = Path(self.runtime_panel.project_root_edit.text().strip() or self.project_root)
+        testrun = self.runtime_panel.testrun_edit.text().strip()
+        if project_root and testrun:
+            try:
+                info = resolve_vehicle_info(project_root, testrun)
+                sensors = [s["name"] for s in info.get("sensors", [])]
+                if sensors:
+                    self.calibration_panel.set_cameras(sensors)
+                    return
+            except Exception:
+                pass
         self.calibration_panel.set_cameras(self.config_service.list_cameras())
 
     def _refresh_static_info(self) -> None:
@@ -160,6 +171,8 @@ class MainWindow(QMainWindow):
             self.output_panel.log_view.clear()
             self.calibration_panel.clear_failure_summary()
             cm_install = self.calibration_panel.cm_install_path
+            if cm_install is None:
+                raise ValueError("CM 版本未选择，请先在中栏选择 CM 版本")
             self._pending_launch = launch
             self._runtime_mode = "prepare"
             self.runtime_service.prepare_runtime(launch.project_root, launch.testrun, cameras=launch.cameras, cm_install=cm_install)
@@ -189,6 +202,8 @@ class MainWindow(QMainWindow):
                 raise ValueError("Please select at least one camera")
             self.state.selected_cameras = selected_cameras
             cm_install = self.calibration_panel.cm_install_path
+            if cm_install is None:
+                raise ValueError("CM 版本未选择，请先在中栏选择 CM 版本")
             self._runtime_mode = "prepare"
             self.calibration_panel.clear_failure_summary()
             self.runtime_service.prepare_runtime(project_root, testrun, cameras=selected_cameras, cm_install=cm_install)
@@ -229,6 +244,10 @@ class MainWindow(QMainWindow):
             generated_results = self.precheck_service.generate_configs_for_cameras(selected_cameras)
             self.calibration_panel.update_precheck_results(generated_results)
             self.calibration_panel.clear_failure_summary()
+        except ModuleNotFoundError as exc:
+            msg = f"缺少 Python 包: {exc.name}。请在终端运行: python -m pip install {exc.name}"
+            self.calibration_panel.set_failure_summary(msg)
+            QMessageBox.critical(self, "缺少依赖包", msg)
         except Exception as exc:
             self.calibration_panel.set_failure_summary(str(exc))
             QMessageBox.critical(self, "Config Generation Failed", str(exc))

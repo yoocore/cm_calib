@@ -52,7 +52,7 @@ class MainWindow(QMainWindow):
         self._refresh_static_timer.timeout.connect(self._refresh_static_info)
         self._refresh_static_timer.start()
         self._health_timer = QTimer(self)
-        self._health_timer.setInterval(5000)
+        self._health_timer.setInterval(1000)
         self._health_timer.timeout.connect(self._check_runtime_health)
         self._wire_signals()
         self._refresh_camera_list()
@@ -249,7 +249,7 @@ class MainWindow(QMainWindow):
         self.runtime_panel.status_label.setText(status.value)
         self.calibration_panel.status_label.setText(status.value)
         self._sync_control_states()
-        if status == AppStatus.READY:
+        if status in (AppStatus.READY, AppStatus.RUNNING):
             self._health_timer.start()
         else:
             self._health_timer.stop()

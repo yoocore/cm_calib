@@ -25,6 +25,7 @@ class MainWindow(QMainWindow):
         self._runtime_mode: str | None = None
         self._pending_launch: CalibrationLaunchConfig | None = None
         self._runtime_recent_lines: deque[str] = deque(maxlen=12)
+        self._health_check_active = False
         self._calibration_recent_lines: deque[str] = deque(maxlen=20)
         self.state = ApplicationState()
         self.config_service = ConfigService(self.project_root)
@@ -46,13 +47,16 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.output_panel, 2)
         self.setCentralWidget(container)
 
-        self._wire_signals()
-        self._refresh_camera_list()
-        self._apply_status(AppStatus.IDLE)
         self._refresh_static_timer = QTimer(self)
         self._refresh_static_timer.setInterval(1000)
         self._refresh_static_timer.timeout.connect(self._refresh_static_info)
         self._refresh_static_timer.start()
+        self._health_timer = QTimer(self)
+        self._health_timer.setInterval(5000)
+        self._health_timer.timeout.connect(self._check_runtime_health)
+        self._wire_signals()
+        self._refresh_camera_list()
+        self._apply_status(AppStatus.IDLE)
 
     def _wire_signals(self) -> None:
         self.calibration_panel.start_button.clicked.connect(self._start_calibration)
@@ -225,11 +229,30 @@ class MainWindow(QMainWindow):
             self.calibration_panel.set_failure_summary(str(exc))
             QMessageBox.critical(self, "Config Generation Failed", str(exc))
 
+    def _check_runtime_health(self) -> None:
+        if self.runtime_service.is_running:
+            return
+        project_root = Path(self.runtime_panel.project_root_edit.text().strip() or self.project_root)
+        testrun = self.runtime_panel.testrun_edit.text().strip()
+        if not testrun:
+            return
+        self._runtime_mode = "status"
+        self._health_check_active = True
+        try:
+            self.runtime_service.probe_status(project_root, testrun, verify_health=True)
+        except Exception:
+            self._runtime_mode = None
+            self._health_check_active = False
+
     def _apply_status(self, status: AppStatus) -> None:
         self.state.status = status
         self.runtime_panel.status_label.setText(status.value)
         self.calibration_panel.status_label.setText(status.value)
         self._sync_control_states()
+        if status == AppStatus.READY:
+            self._health_timer.start()
+        else:
+            self._health_timer.stop()
 
     def _sync_control_states(self) -> None:
         runtime_busy = self.runtime_service.is_running
@@ -276,8 +299,11 @@ class MainWindow(QMainWindow):
             self._apply_status(AppStatus.PASSIVE)
         else:
             self._sync_control_states()
+        was_health_check = self._health_check_active
         self._runtime_mode = None
-        QMessageBox.critical(self, "Runtime Process Error", error_text)
+        self._health_check_active = False
+        if not was_health_check:
+            QMessageBox.critical(self, "Runtime Process Error", error_text)
 
     @Slot()
     def _on_runtime_process_started(self) -> None:
@@ -321,6 +347,7 @@ class MainWindow(QMainWindow):
         else:
             self._sync_control_states()
         self._runtime_mode = None
+        self._health_check_active = False
 
     @Slot(dict)
     def _on_runtime_summary(self, payload: dict) -> None:

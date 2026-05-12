@@ -176,6 +176,23 @@ def _resolve_config_path(config_dir: Path, camera_name: str) -> Path:
     return candidate
 
 
+def _load_movie_view_size(config_path: Path) -> tuple[int, int] | None:
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    raw_width = payload.get("movie_view_width")
+    raw_height = payload.get("movie_view_height")
+    if raw_width is None and raw_height is None:
+        return None
+    if raw_width is None or raw_height is None:
+        raise ValueError(
+            f"Config {config_path} must define both movie_view_width and movie_view_height when either is present"
+        )
+    width = int(raw_width)
+    height = int(raw_height)
+    if width <= 0 or height <= 0:
+        raise ValueError(f"Config {config_path} declares invalid movie view size {width}x{height}")
+    return width, height
+
+
 def _append_optional_arg(command: list[str], name: str, value: Optional[object]) -> None:
     if value is None:
         return
@@ -226,16 +243,18 @@ def _prepare_runtime_for_camera(
     project_root: Path,
     testrun_rel_path: Path,
     camera_name: str,
+    config_path: Path,
+    movie_view_size: tuple[int, int] | None = None,
 ) -> dict[str, Any]:
     vehicle_path, vehicle_key = cmctrl.resolve_vehicle_path(project_root, testrun_rel_path)
     activation = cmctrl.activate_single_vehicle_sensor(vehicle_path, camera_name)
     selected_testrun = cmctrl.sync_gui_testrun_selection(project_root, testrun_rel_path)
-    bootstrap_testrun = cmctrl.bootstrap_testrun_for_movie_via_tcl(
+    carmaker_pid, bootstrap_testrun = cmctrl.bootstrap_testrun_for_movie_via_cmapi_sync(
+        project_root=project_root,
         testrun_rel_path=testrun_rel_path,
         running_timeout_sec=float(args.bootstrap_running_timeout_sec),
         idle_timeout_sec=float(args.bootstrap_idle_timeout_sec),
     )
-    carmaker_pid = cmctrl.wait_for_runtime_carmaker_pid(project_root)
     movie_scene = cmctrl.wait_for_movie_scene_ready(
         cm_install=args.cm_install.resolve(),
         movie_apphost=str(args.movie_apphost),
@@ -244,6 +263,21 @@ def _prepare_runtime_for_camera(
         timeout_sec=float(args.movie_settle_sec),
         poll_interval_sec=float(args.movie_ready_poll_sec),
     )
+    if movie_view_size is not None:
+        view_width, view_height = movie_view_size
+        applied_view = cmctrl.ensure_movie_view_size(view_width, view_height)
+        movie_scene["width"] = str(view_width)
+        movie_scene["height"] = str(view_height)
+        movie_scene["view_widget"] = str(applied_view.get("widget") or "")
+        movie_scene["mode"] = str(applied_view.get("mode") or movie_scene.get("mode") or "")
+    abraxas = cmctrl.ensure_movie_abraxas_enabled(timeout_sec=float(args.health_check_timeout_sec))
+    camera_selection = cmctrl.ensure_movie_camera_selected(
+        activation["ipgmovie_sensor_label"],
+        timeout_sec=float(args.health_check_timeout_sec),
+    )
+    movie_scene["camera_name"] = str(camera_selection.get("current") or movie_scene.get("camera_name") or "")
+    camera_widgets = cmctrl.ensure_movie_camera_widgets(timeout_sec=float(args.health_check_timeout_sec))
+    config_initial_capture = cmctrl.capture_initial_values_to_config(config_path)
     health_classification: Optional[dict[str, Any]] = None
     if args.health_check_after_switch:
         health_summary = cmctrl.run_movie_send_health_check(
@@ -261,6 +295,10 @@ def _prepare_runtime_for_camera(
         "activation": activation,
         "carmaker_pid": carmaker_pid,
         "movie_scene": movie_scene,
+        "abraxas": abraxas,
+        "camera_selection": camera_selection,
+        "camera_widgets": camera_widgets,
+        "config_initial_capture": config_initial_capture,
         "health": health_classification,
     }
 
@@ -364,13 +402,31 @@ def main() -> None:
     )
 
     try:
+        bootstrap_configs = cmctrl.bootstrap_runtime_configs_for_cameras(
+            project_root=project_root,
+            camera_names=cameras,
+            config_dir=config_dir,
+            template_path=(config_dir / "bootstrap.template.json") if (config_dir / "bootstrap.template.json").exists() else (Path(__file__).resolve().parent / "configs" / "bootstrap.template.json"),
+            movie_dir=project_root / "Movie",
+            overwrite_existing=False,
+            capture_current_params=False,
+        )
+        _emit_event(task_id, "config_bootstrap_finished", configs=bootstrap_configs)
         for camera_name in cameras:
             if _STOP_REQUESTED:
                 raise KeyboardInterrupt("Stop requested before next camera run")
 
             config_path = _resolve_config_path(config_dir, camera_name)
+            movie_view_size = _load_movie_view_size(config_path)
             _emit_event(task_id, "camera_prepare_started", camera=camera_name, config_path=str(config_path))
-            runtime_state = _prepare_runtime_for_camera(args, project_root, testrun_rel_path, camera_name)
+            runtime_state = _prepare_runtime_for_camera(
+                args,
+                project_root,
+                testrun_rel_path,
+                camera_name,
+                config_path,
+                movie_view_size=movie_view_size,
+            )
             _emit_event(
                 task_id,
                 "camera_prepare_finished",

@@ -1,5 +1,7 @@
 {
     "real_image": "C:/CM_Projects/CMO141_Calibration/Movie/ngxpro/8_left_tv_origin.jpg",
+    "movie_view_width": 1250,
+    "movie_view_height": 1000,
     "settings_input_mode": "script_control",
     "script_control_script_path": "C:/CM_Projects/CMO141_Calibration/Data/Script/CameraCalibration/script_control_apply.tcl",
     "script_control_result_path": "C:/CM_Projects/CMO141_Calibration/SimOutput/script_control_camera_apply_result.txt",

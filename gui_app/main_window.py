@@ -138,9 +138,11 @@ class MainWindow(QMainWindow):
             testrun = self.runtime_panel.testrun_edit.text().strip()
             if not testrun:
                 raise ValueError("TestRun is required")
+            selected_cameras = self.calibration_panel.selected_cameras()
+            self.state.selected_cameras = selected_cameras
             self._runtime_mode = "prepare"
             self.calibration_panel.clear_failure_summary()
-            self.runtime_service.prepare_runtime(project_root, testrun)
+            self.runtime_service.prepare_runtime(project_root, testrun, cameras=selected_cameras)
         except Exception as exc:
             self._runtime_mode = None
             self.calibration_panel.set_failure_summary(str(exc))

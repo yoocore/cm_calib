@@ -210,9 +210,10 @@ GUI 内部应至少维护以下状态：
 7. 打开ipgmoive，等待画面加载完成
 8. 切换ipgmoive-view-show-ABRAXAS，使其处于被勾选
 9. 切换 ipgmoive-camera-sensor-xxxx，使其处于被勾选
-10. 打开ipgmoive-camera-settings
-11. 打开ipgmoive-camara lens parameters
-12. 执行DDE健康检查
+10. 设置ipgmoive-view-size-custom中的尺寸，使其与真实图片的尺寸一致
+11. 打开ipgmoive-camera-settings
+12. 打开ipgmoive-camara lens parameters
+13. 执行DDE健康检查
 
 注意事项：
 

@@ -70,7 +70,9 @@ def read_vehicle_sensors(vehicle_path: Path) -> list[dict[str, Any]]:
 def resolve_vehicle_info(
     project_root: Path, testrun_rel: str
 ) -> dict[str, Any]:
-    testrun_path = (project_root / "Data" / "TestRun" / testrun_rel).resolve()
+    testrun_path = Path(testrun_rel)
+    if not testrun_path.is_absolute():
+        testrun_path = (project_root / "Data" / "TestRun" / testrun_rel).resolve()
     vehicle_key = parse_testrun_for_vehicle(testrun_path)
     vehicle_path = build_vehicle_path(project_root, vehicle_key)
     sensors = read_vehicle_sensors(vehicle_path)

@@ -51,13 +51,15 @@ def detect_cm_versions() -> dict[str, Path]:
         for entry in root_path.iterdir():
             if not entry.is_dir() or not entry.name.startswith("win64-"):
                 continue
+            found = False
             for sub in ("GUI", "bin"):
                 for exe in ("CM_Office.exe", "CM.exe"):
                     if (entry / sub / exe).is_file():
                         version = entry.name[len("win64-"):]
                         versions[version] = entry
+                        found = True
                         break
-                if version in versions:
+                if found:
                     break
     return dict(sorted(versions.items(), key=lambda x: x[0], reverse=True))
 

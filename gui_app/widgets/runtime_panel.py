@@ -83,6 +83,7 @@ class RuntimePanel(QGroupBox):
             self, "Select TestRun", str(start), "TestRun files (*)")
         if path:
             self.testrun_edit.setText(path)
+            self.testrun_changed.emit(path)
 
     def update_sensor_list(self, sensors: list[dict]) -> None:
         self.sensor_list.clear()

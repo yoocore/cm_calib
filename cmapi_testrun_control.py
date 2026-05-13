@@ -11,6 +11,20 @@ import subprocess
 import time
 from typing import Any, Optional
 
+# HACK: add CarMaker Python API to sys.path before importing cmapi
+_script_dir = Path(__file__).resolve().parent
+_cm_root_default = Path(os.environ.get("IPGHOME", "D:/IPG")) / "carmaker" / "win64-14.1"
+_cmapi_candidates = [
+    _cm_root_default / "Python" / "Lib" / "site-packages",
+    _cm_root_default / "Python" / "Lib",
+    _cm_root_default.parent / "Python" / "Lib" / "site-packages",
+    _cm_root_default / "pylib",
+]
+for _p in _cmapi_candidates:
+    if (_p / "cmapi").is_dir() and str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
+        break
+
 import cmapi
 from dde_health_check import classify_health_summary, default_output_dir, render_dde_execute_script, render_result_script, run_check_attempt, run_read_only_health_suite
 from runtime_config_bootstrap import bootstrap_runtime_configs_for_cameras, capture_initial_values_to_config, load_movie_view_size_from_real_image

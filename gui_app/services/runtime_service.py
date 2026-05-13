@@ -9,9 +9,10 @@ from gui_app.services.process_service import ProcessService
 
 def _resolve_cm_python(cm_install: Path) -> Path | None:
     candidates = [
-        cm_install / "Python" / "python.exe",
-        cm_install / "Python" / "python",
-        cm_install.parent / "Python" / "python.exe",
+    cm_install / "Python" / "python.exe",
+    cm_install / "Python" / "python",
+    cm_install.parent / "Python" / "python.exe",
+    cm_install / "bin" / "python.exe",
     ]
     for p in candidates:
         if p.is_file():

@@ -30,13 +30,19 @@ class ProcessService(QObject):
     def is_running(self) -> bool:
         return self._process.state() != QProcess.NotRunning
 
-    def start_python(self, script_path: Path, arguments: list[str], working_directory: Path) -> None:
+    def start_python(self, script_path: Path, arguments: list[str], working_directory: Path, env: dict | None = None) -> None:
         if self.is_running:
             raise RuntimeError("A process is already running")
         self._stdout_buffer = ""
         self._process.setWorkingDirectory(str(working_directory))
         self._process.setProgram(sys.executable)
         self._process.setArguments([str(script_path), *arguments])
+        if env is not None:
+            self._process.setProcessEnvironment(os.environ.copy())
+            for key, value in env.items():
+                self._process.processEnvironment().setValue(key, value)
+        else:
+            self._process.setProcessEnvironment(os.environ.copy())
         self._process.start()
 
     def stop(self) -> None:

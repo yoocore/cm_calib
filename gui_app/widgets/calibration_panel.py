@@ -265,7 +265,13 @@ class CalibrationPanel(QGroupBox):
                 v = str(result.get(key) or "")
                 if v:
                     tl.append(v)
-            tip = "\n".join(tl)
+            seen: set[str] = set()
+            unique: list[str] = []
+            for line in tl:
+                if line not in seen:
+                    seen.add(line)
+                    unique.append(line)
+            tip = "\n".join(unique)
             item.setToolTip(0, tip)
             item.setToolTip(1, tip)
             item.setToolTip(2, tip)

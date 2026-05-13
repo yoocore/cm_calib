@@ -30,7 +30,9 @@ class PrecheckService:
             if not bootstrap_ok:
                 messages.append(bootstrap_message)
             if not messages:
-                messages.append("ok")
+                raw_names = [Path(p).name for p in raw_matches]
+                ann_names = [Path(p).name for p in annotated_matches]
+                messages.append(f"原始图像: {', '.join(raw_names)}; 标注图像: {', '.join(ann_names)}")
             results.append(
                 {
                     "camera": camera_name,
@@ -58,11 +60,18 @@ class PrecheckService:
             config_path = str(item.get("config_path") or "")
             backup_path = str(item.get("backup_path") or "")
             preview_path = str(item.get("preview_path") or "")
+
+            def _rel(p: str) -> str:
+                try:
+                    return str(Path(p).relative_to(self.project_root))
+                except (ValueError, TypeError):
+                    return p
+
             message_parts = [action]
             if config_path:
-                message_parts.append(f"config={config_path}")
+                message_parts.append(f"config={_rel(config_path)}")
             if backup_path:
-                message_parts.append(f"backup={backup_path}")
+                message_parts.append(f"backup={_rel(backup_path)}")
             results.append(
                 {
                     "camera": str(item.get("camera") or ""),

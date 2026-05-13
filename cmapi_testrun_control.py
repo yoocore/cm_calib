@@ -8,8 +8,23 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import time
 from typing import Any, Optional
+
+# Pre-parse --cm-install to add cmapi to sys.path before importing
+_cm_install_arg: str | None = None
+for _i, _arg in enumerate(sys.argv):
+    if _arg == "--cm-install" and _i + 1 < len(sys.argv):
+        _cm_install_arg = sys.argv[_i + 1]
+        break
+if _cm_install_arg:
+    _cm_root = Path(_cm_install_arg)
+    for _sub in ("Python/Lib/site-packages", "Python/Lib"):
+        _p = _cm_root / _sub
+        if (_p / "cmapi").is_dir() and str(_p) not in sys.path:
+            sys.path.insert(0, str(_p))
+            break
 
 import cmapi
 from dde_health_check import classify_health_summary, default_output_dir, render_dde_execute_script, render_result_script, run_check_attempt, run_read_only_health_suite

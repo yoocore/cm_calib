@@ -33,12 +33,18 @@ class PrecheckService:
                 raw_names = [Path(p).name for p in raw_matches]
                 ann_names = [Path(p).name for p in annotated_matches]
                 messages.append(f"原始图像: {', '.join(raw_names)}; 标注图像: {', '.join(ann_names)}")
+            def _rel(p: Path) -> str:
+                try:
+                    return str(p.relative_to(self.project_root))
+                except (ValueError, TypeError):
+                    return str(p)
+
             results.append(
                 {
                     "camera": camera_name,
                     "ok": ok,
-                    "raw_matches": [str(path) for path in raw_matches],
-                    "annotated_matches": [str(path) for path in annotated_matches],
+                    "raw_matches": [_rel(p) for p in raw_matches],
+                    "annotated_matches": [_rel(p) for p in annotated_matches],
                     "message": "; ".join(messages),
                 }
             )

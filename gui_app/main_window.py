@@ -3,8 +3,8 @@ from __future__ import annotations
 from collections import deque
 from pathlib import Path
 
-from PySide6.QtCore import QCoreApplication, QTimer, Slot
-from PySide6.QtWidgets import QHBoxLayout, QMainWindow, QMessageBox, QWidget
+from PySide6.QtCore import Qt, QCoreApplication, QTimer, Slot
+from PySide6.QtWidgets import QMainWindow, QMessageBox, QSplitter, QWidget
 
 from gui_app.models.state import AppStatus, ApplicationState, CalibrationLaunchConfig, CameraResult
 from gui_app.services.calibration_service import CalibrationService
@@ -40,12 +40,12 @@ class MainWindow(QMainWindow):
         self.calibration_panel = CalibrationPanel(self)
         self.output_panel = OutputPanel(self)
 
-        container = QWidget(self)
-        layout = QHBoxLayout(container)
-        layout.addWidget(self.runtime_panel, 1)
-        layout.addWidget(self.calibration_panel, 1)
-        layout.addWidget(self.output_panel, 2)
-        self.setCentralWidget(container)
+        splitter = QSplitter(Qt.Horizontal, self)
+        splitter.addWidget(self.runtime_panel)
+        splitter.addWidget(self.calibration_panel)
+        splitter.addWidget(self.output_panel)
+        splitter.setSizes([400, 400, 700])
+        self.setCentralWidget(splitter)
 
         self._refresh_static_timer = QTimer(self)
         self._refresh_static_timer.setInterval(1000)

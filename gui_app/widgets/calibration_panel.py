@@ -114,8 +114,8 @@ class CalibrationPanel(QGroupBox):
         self._generate_configs_ready = False
         self.generate_config_button.setEnabled(False)
         self.precheck_tree = QTreeWidget()
-        self.precheck_tree.setColumnCount(3)
-        self.precheck_tree.setHeaderLabels(["Camera", "Check", "Message"])
+        self.precheck_tree.setColumnCount(4)
+        self.precheck_tree.setHeaderLabels(["Camera", "Check", "Message", "Config"])
         self.status_label = QLabel("idle")
         self.estimate_label = QLabel("~ 0s")
         self.phase_label = QLabel("")
@@ -258,19 +258,18 @@ class CalibrationPanel(QGroupBox):
             item.setForeground(1, _GREEN if ok else _RED)
             msg = str(result.get("message") or "")
             item.setText(2, msg)
+            config_parts: list[str] = []
+            for key in ("config_path", "backup_path", "preview_path"):
+                v = str(result.get(key) or "")
+                if v:
+                    config_parts.append(v)
+            item.setText(3, "; ".join(config_parts) if config_parts else "")
             tl = [msg] if msg else []
-            for p in result.get("raw_matches", []):
-                s = str(p).strip()
-                if s:
-                    tl.append(s)
-            for p in result.get("annotated_matches", []):
-                s = str(p).strip()
-                if s:
-                    tl.append(s)
+            tl.extend(str(p).strip() for p in result.get("raw_matches", []) if str(p).strip())
+            tl.extend(str(p).strip() for p in result.get("annotated_matches", []) if str(p).strip())
             tip = "\n".join(tl)
-            item.setToolTip(0, tip)
-            item.setToolTip(1, tip)
-            item.setToolTip(2, tip)
+            for col in range(4):
+                item.setToolTip(col, tip)
         self._generate_configs_ready = bool(results) and all(bool(r.get("ok")) for r in results)
         self.generate_config_button.setEnabled(self._generate_configs_ready)
 

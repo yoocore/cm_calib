@@ -9,15 +9,17 @@ from gui_app.services.process_service import ProcessService
 
 
 def resolve_cmapi_path(cm_install: Path) -> Path | None:
-    candidates = [
-        cm_install / "Python" / "Lib" / "site-packages",
-        cm_install / "Python" / "Lib",
-        cm_install.parent / "Python" / "Lib" / "site-packages",
-        cm_install / "pylib",
-    ]
-    for p in candidates:
+    for sub in ("Python/Lib/site-packages", "Python/Lib", "pylib"):
+        p = cm_install / sub
         if (p / "cmapi").is_dir():
             return p
+    for entry in sorted(cm_install.parent.iterdir(), reverse=True):
+        if not entry.name.startswith("win64-"):
+            continue
+        for sub in ("Python/Lib/site-packages", "Python/Lib", "pylib"):
+            p = entry / sub
+            if (p / "cmapi").is_dir():
+                return p
     return None
 
 

@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QProcessEnvironment, Signal
 
 from gui_app.models.state import CalibrationLaunchConfig
 from gui_app.services.process_service import ProcessService
-from gui_app.services.runtime_service import _resolve_cm_python
 
 
 class CalibrationService(QObject):
@@ -72,18 +70,24 @@ class CalibrationService(QObject):
             arguments.extend(["--camera", camera_name])
         cm_install = getattr(self, "_cm_install", None)
         if cm_install is not None:
-            for _sub in ("Python/Lib/site-packages", "Python/Lib", "pylib"):
-                _p = cm_install / _sub
-                if any((_p / c).exists() for c in ("cmapi", "cmapi.py", "cmapi.pyd")):
-                    env = QProcessEnvironment.systemEnvironment()
-                    _old = env.value("PYTHONPATH", "")
-                    _new = f"{_p};{_old}" if _old else str(_p)
-                    env.insert("PYTHONPATH", _new)
-                    self.process_service._process.setProcessEnvironment(env)
-                    break
-        python_exe = _resolve_cm_python(cm_install) if cm_install else None
-        self.process_service.start_python(script_path, arguments, calibration_root,
-                                          python_executable=python_exe)
+            _subs: list[str] = []
+            for _v in sorted(cm_install.parent.iterdir(), reverse=True):
+                if _v.name.startswith("win64-"):
+                    for _s in ("Python/Lib/site-packages", "Python/Lib", "pylib", "Lib/site-packages", "Lib"):
+                        _p = _v / _s
+                        if _p.is_dir() and str(_p) not in _subs:
+                            _subs.append(str(_p))
+            for _s in ("Python/Lib/site-packages", "Python/Lib", "pylib", "Lib/site-packages", "Lib"):
+                _p = cm_install / _s
+                if _p.is_dir() and str(_p) not in _subs:
+                    _subs.append(str(_p))
+            if _subs:
+                env = QProcessEnvironment.systemEnvironment()
+                _old = env.value("PYTHONPATH", "")
+                _new = ";".join(_subs)
+                env.insert("PYTHONPATH", f"{_new};{_old}" if _old else _new)
+                self.process_service._process.setProcessEnvironment(env)
+        self.process_service.start_python(script_path, arguments, calibration_root)
 
     def stop(self) -> None:
         self.process_service.stop()

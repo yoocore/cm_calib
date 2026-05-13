@@ -20,15 +20,20 @@ class PrecheckService:
         results: list[dict[str, Any]] = []
         for camera_name in camera_names:
             raw_matches = self._find_movie_files(self.movie_dir, camera_name, require_origin=True)
+            ann_matches = self._find_movie_files(self.movie_dir, camera_name, require_origin=False)
             ok = bool(raw_matches) and bootstrap_ok
             messages: list[str] = []
             if not raw_matches:
                 messages.append("missing raw image with sensor name and origin marker")
             if not bootstrap_ok:
                 messages.append(bootstrap_message)
-            if not messages:
-                raw_names = [Path(p).name for p in raw_matches]
-                messages.append(f"原始图像: {', '.join(raw_names)}")
+            raw_names = [Path(p).name for p in raw_matches]
+            ann_names = [Path(p).name for p in ann_matches]
+            parts = [f"原始图像: {', '.join(raw_names)}"] if raw_names else []
+            if ann_names:
+                parts.append(f"标注图像: {', '.join(ann_names)}")
+            messages.append("; ".join(parts) if parts else "无检测结果")
+
             def _rel(p: Path) -> str:
                 try:
                     return str(p.relative_to(self.project_root))
@@ -45,7 +50,7 @@ class PrecheckService:
                     "camera": camera_name,
                     "ok": ok,
                     "raw_matches": [_rel(p) for p in raw_matches],
-                    "annotated_matches": [],
+                    "annotated_matches": [_rel(p) for p in ann_matches],
                     "config_path": config_info,
                     "backup_path": backup_info,
                     "preview_path": "",

@@ -20,11 +20,17 @@ for _i, _arg in enumerate(sys.argv):
         break
 if _cm_install_arg:
     _cm_root = Path(_cm_install_arg)
-    for _sub in ("Python/Lib/site-packages", "Python/Lib"):
+    for _sub in ("Python/Lib/site-packages", "Python/Lib", "pylib"):
         _p = _cm_root / _sub
-        if (_p / "cmapi").is_dir() and str(_p) not in sys.path:
-            sys.path.insert(0, str(_p))
+        if any((_p / _candidate).exists() for _candidate in ("cmapi", "cmapi.py", "cmapi.pyd")):
+            if str(_p) not in sys.path:
+                sys.path.insert(0, str(_p))
             break
+    else:
+        for _sub in ("Python/Lib/site-packages", "Python/Lib", "pylib"):
+            _p = _cm_root / _sub
+            if str(_p) not in sys.path:
+                sys.path.insert(0, str(_p))
 
 import cmapi
 from dde_health_check import classify_health_summary, default_output_dir, render_dde_execute_script, render_result_script, run_check_attempt, run_read_only_health_suite

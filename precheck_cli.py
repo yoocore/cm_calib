@@ -86,7 +86,7 @@ def _validate_bootstrap_template(path: Path) -> tuple[bool, str]:
     return True, "ok"
 
 
-def run_precheck(project_root: Path, cameras: list[str]) -> None:
+def run_precheck(project_root: Path, cameras: list[str]) -> list[dict[str, Any]]:
     movie_dir = project_root / "Movie"
     config_dir = project_root / "Data" / "Script" / "CameraCalibration" / "configs"
     bootstrap_path = config_dir / "bootstrap.template.json"
@@ -113,6 +113,7 @@ def run_precheck(project_root: Path, cameras: list[str]) -> None:
                     pass
                 break
 
+    results: list[dict[str, Any]] = []
     for camera_name in cameras:
         raw_matches = _find_movie_files(movie_dir, camera_name, require_origin=True)
         ann_matches = _find_movie_files(movie_dir, camera_name, require_origin=False)
@@ -152,6 +153,8 @@ def run_precheck(project_root: Path, cameras: list[str]) -> None:
             "vehicle_has_sensor": camera_name in vehicle_sensors,
         }
         _emit(result)
+        results.append(result)
+    return results
 
 
 def main() -> None:

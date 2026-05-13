@@ -8,11 +8,11 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import time
 from typing import Any, Optional
 
 # HACK: add CarMaker Python API to sys.path before importing cmapi
-_script_dir = Path(__file__).resolve().parent
 _cm_root_default = Path(os.environ.get("IPGHOME", "D:/IPG")) / "carmaker" / "win64-14.1"
 _cmapi_candidates = [
     _cm_root_default / "Python" / "Lib" / "site-packages",

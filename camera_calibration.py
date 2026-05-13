@@ -23,6 +23,8 @@ import cv2
 import numpy as np
 from PIL import Image
 
+from precheck_cli import run_precheck
+
 from dde_health_check import (
     default_output_dir as _dde_default_output_dir,
     render_dde_execute_script,
@@ -10524,6 +10526,24 @@ def parse_args() -> argparse.Namespace:
         description="IPGMovie camera calibration multi-board matching loop"
     )
     parser.add_argument(
+        "--precheck",
+        action="store_true",
+        help="Run camera precheck (check raw images, configs) and exit",
+    )
+    parser.add_argument(
+        "--project-root",
+        type=Path,
+        default=None,
+        help="CarMaker project root (for precheck mode)",
+    )
+    parser.add_argument(
+        "--camera",
+        action="append",
+        dest="cameras",
+        default=[],
+        help="Camera sensor name to precheck. Repeat for multiple cameras.",
+    )
+    parser.add_argument(
         "--config",
         required=False,
         help="Path to runtime JSON config, for example configs/camera.rear_tv.json; required except in bootstrap mode",
@@ -10714,6 +10734,20 @@ def _emit_cli_progress_json(payload: dict) -> None:
     print("CALIBRATION_PROGRESS_JSON:", json.dumps(payload, ensure_ascii=False, sort_keys=True))
 
 
+def _auto_detect_cameras(project_root: Path) -> list[str]:
+    config_dir = project_root / "Data" / "Script" / "CameraCalibration" / "configs"
+    if not config_dir.is_dir():
+        return []
+    import re as _cam_re
+    pattern = _cam_re.compile(r"^camera\.(.+)\.json$")
+    names: list[str] = []
+    for f in config_dir.iterdir():
+        m = pattern.match(f.name)
+        if m and not f.name.endswith(".bak.json"):
+            names.append(m.group(1))
+    return sorted(names)
+
+
 def main() -> None:
     try:
         sys.stdout.reconfigure(line_buffering=True, write_through=True)
@@ -10733,6 +10767,13 @@ def main() -> None:
         raise ValueError("--refine-iters must be > 0")
     if args.campaign_rounds <= 0:
         raise ValueError("--campaign-rounds must be > 0")
+
+    if args.precheck:
+        root = args.project_root.resolve() if args.project_root else Path.cwd()
+        cameras = args.cameras if args.cameras else _auto_detect_cameras(root)
+        results = run_precheck(root, cameras)
+        print(json.dumps(results, indent=2, ensure_ascii=False))
+        return
 
     if args.bootstrap_config_from_annotation:
         if not args.bootstrap_real_image or not args.bootstrap_annotated_image:

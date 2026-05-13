@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QProcessEnvironment, Signal
 
 from gui_app.models.state import CalibrationLaunchConfig
 from gui_app.services.process_service import ProcessService
+from gui_app.services.runtime_service import resolve_cmapi_path
 
 
 class CalibrationService(QObject):
@@ -31,6 +32,9 @@ class CalibrationService(QObject):
     @property
     def is_running(self) -> bool:
         return self.process_service.is_running
+
+    def set_cm_install(self, cm_install: Path | None) -> None:
+        self._cm_install = cm_install
 
     @staticmethod
     def _resolve_calibration_root(project_root: Path) -> Path:
@@ -65,6 +69,15 @@ class CalibrationService(QObject):
             arguments.extend(["--output-dir", str(launch.output_dir)])
         for camera_name in launch.cameras:
             arguments.extend(["--camera", camera_name])
+        cm_install = getattr(self, "_cm_install", None)
+        if cm_install is not None:
+            cmapi_path = resolve_cmapi_path(cm_install)
+            if cmapi_path is not None:
+                env = QProcessEnvironment.systemEnvironment()
+                old_pypath = env.value("PYTHONPATH", "")
+                new_pypath = f"{cmapi_path};{old_pypath}" if old_pypath else str(cmapi_path)
+                env.insert("PYTHONPATH", new_pypath)
+                self.process_service._process.setProcessEnvironment(env)
         self.process_service.start_python(script_path, arguments, calibration_root)
 
     def stop(self) -> None:

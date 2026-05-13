@@ -3,9 +3,22 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QProcessEnvironment, Signal
 
 from gui_app.services.process_service import ProcessService
+
+
+def resolve_cmapi_path(cm_install: Path) -> Path | None:
+    candidates = [
+        cm_install / "Python" / "Lib" / "site-packages",
+        cm_install / "Python" / "Lib",
+        cm_install.parent / "Python" / "Lib" / "site-packages",
+        cm_install / "pylib",
+    ]
+    for p in candidates:
+        if (p / "cmapi").is_dir():
+            return p
+    return None
 
 
 class RuntimeService(QObject):
@@ -43,27 +56,6 @@ class RuntimeService(QObject):
     def _resolve_calibration_root(project_root: Path) -> Path:
         return project_root / "Data" / "Script" / "CameraCalibration"
 
-    @staticmethod
-    def _get_cmapi_module_path() -> Path | None:
-        """
-        Get the path to the cmapi module by reading ipg_carmaker_14_1_cmapi.pth
-        Returns the path to the Python directory containing cmapi, or None if not found.
-        """
-        site_packages = Path(__file__).resolve().parents[1] / "site-packages"
-        cmapi_pth = site_packages / "ipg_carmaker_14_1_cmapi.pth"
-        if not cmapi_pth.exists():
-            return None
-        
-        try:
-            with cmapi_pth.open("r", encoding="utf-8") as f:
-                content = f.read().strip()
-                if content:
-                    return Path(content).resolve()
-        except Exception:
-            pass
-        
-        return None
-
     def _start_mode(
         self,
         mode: str,
@@ -93,10 +85,12 @@ class RuntimeService(QObject):
                 arguments.extend(["--camera-sensor", camera_name])
             if cm_install is not None:
                 arguments.extend(["--cm-install", str(cm_install)])
-        
-        env = os.environ.copy()
-        cmapi_path = self._get_cmapi_module_path()
-        if cmapi_path:
-            env["PYTHONPATH"] = str(cmapi_path) + os.pathsep + env.get("PYTHONPATH", "")
-        
-        self.process_service.start_python(script_path, arguments[1:], calibration_root, env=env)
+        if cm_install is not None:
+            cmapi_path = resolve_cmapi_path(cm_install)
+            if cmapi_path is not None:
+                env = QProcessEnvironment.systemEnvironment()
+                old_pypath = env.value("PYTHONPATH", "")
+                new_pypath = f"{cmapi_path};{old_pypath}" if old_pypath else str(cmapi_path)
+                env.insert("PYTHONPATH", new_pypath)
+                self.process_service._process.setProcessEnvironment(env)
+        self.process_service.start_python(script_path, arguments[1:], calibration_root)

@@ -20,31 +20,35 @@ class PrecheckService:
         results: list[dict[str, Any]] = []
         for camera_name in camera_names:
             raw_matches = self._find_movie_files(self.movie_dir, camera_name, require_origin=True)
-            annotated_matches = self._find_movie_files(self.movie_dir, camera_name, require_origin=False)
-            ok = bool(raw_matches) and bool(annotated_matches) and bootstrap_ok
+            ok = bool(raw_matches) and bootstrap_ok
             messages: list[str] = []
             if not raw_matches:
                 messages.append("missing raw image with sensor name and origin marker")
-            if not annotated_matches:
-                messages.append("missing annotated image with sensor name")
             if not bootstrap_ok:
                 messages.append(bootstrap_message)
             if not messages:
                 raw_names = [Path(p).name for p in raw_matches]
-                ann_names = [Path(p).name for p in annotated_matches]
-                messages.append(f"原始图像: {', '.join(raw_names)}; 标注图像: {', '.join(ann_names)}")
+                messages.append(f"原始图像: {', '.join(raw_names)}")
             def _rel(p: Path) -> str:
                 try:
                     return str(p.relative_to(self.project_root))
                 except (ValueError, TypeError):
                     return str(p)
 
+            config_path = self.config_dir / f"camera.{camera_name}.json"
+            config_info = str(_rel(config_path)) if config_path.exists() else ""
+            backup_files = sorted(self.config_dir.glob(f"camera.{camera_name}*.bak.json"))
+            backup_info = str(_rel(backup_files[-1])) if backup_files else ""
+
             results.append(
                 {
                     "camera": camera_name,
                     "ok": ok,
                     "raw_matches": [_rel(p) for p in raw_matches],
-                    "annotated_matches": [_rel(p) for p in annotated_matches],
+                    "annotated_matches": [],
+                    "config_path": config_info,
+                    "backup_path": backup_info,
+                    "preview_path": "",
                     "message": "; ".join(messages),
                 }
             )

@@ -182,6 +182,7 @@ class MainWindow(QMainWindow):
             cm_install = self.calibration_panel.cm_install_path
             if cm_install is None:
                 raise ValueError("CM 版本未选择，请先在中栏选择 CM 版本")
+            self.calibration_service.set_cm_install(cm_install)
             self._pending_launch = launch
             self._runtime_mode = "prepare"
             self.runtime_service.prepare_runtime(launch.project_root, launch.testrun, cameras=launch.cameras, cm_install=cm_install)
@@ -213,6 +214,7 @@ class MainWindow(QMainWindow):
             cm_install = self.calibration_panel.cm_install_path
             if cm_install is None:
                 raise ValueError("CM 版本未选择，请先在中栏选择 CM 版本")
+            self.calibration_service.set_cm_install(cm_install)
             self._runtime_mode = "prepare"
             self.calibration_panel.clear_failure_summary()
             self.runtime_service.prepare_runtime(project_root, testrun, cameras=selected_cameras, cm_install=cm_install)

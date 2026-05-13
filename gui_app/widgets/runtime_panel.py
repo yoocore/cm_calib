@@ -27,6 +27,7 @@ _DEFAULT_BROWSE_ROOT = "C:/CM_Projects"
 
 class RuntimePanel(QGroupBox):
     project_root_changed = Signal(str)
+    testrun_changed = Signal(str)
 
     def __init__(self, _project_root: Path, parent: QWidget | None = None):
         super().__init__("Runtime", parent)
@@ -43,7 +44,7 @@ class RuntimePanel(QGroupBox):
         self.browse_button.clicked.connect(self._browse_project_root)
         self.testrun_browse_button.clicked.connect(self._browse_testrun)
         self.project_root_edit.editingFinished.connect(lambda: self.project_root_changed.emit(self.project_root_edit.text()))
-        self.testrun_edit.editingFinished.connect(lambda: self.project_root_changed.emit(self.project_root_edit.text()))
+        self.testrun_edit.editingFinished.connect(lambda: self.testrun_changed.emit(self.testrun_edit.text()))
 
         proj_row = QWidget(self)
         proj_layout = QHBoxLayout(proj_row)

@@ -38,6 +38,10 @@ class RuntimeService(QObject):
     def stop(self) -> None:
         self.process_service.stop()
 
+    @staticmethod
+    def _resolve_calibration_root(project_root: Path) -> Path:
+        return project_root / "Data" / "Script" / "CameraCalibration"
+
     def _start_mode(
         self,
         mode: str,
@@ -48,7 +52,8 @@ class RuntimeService(QObject):
         cameras: list[str] | None = None,
         cm_install: Path | None = None,
     ) -> None:
-        script_path = self.calibration_root / "cmapi_testrun_control.py"
+        calibration_root = self._resolve_calibration_root(project_root)
+        script_path = calibration_root / "cmapi_testrun_control.py"
         arguments = [
             str(script_path),
             "--mode",
@@ -66,4 +71,4 @@ class RuntimeService(QObject):
                 arguments.extend(["--camera-sensor", camera_name])
             if cm_install is not None:
                 arguments.extend(["--cm-install", str(cm_install)])
-        self.process_service.start_python(script_path, arguments[1:], self.calibration_root)
+        self.process_service.start_python(script_path, arguments[1:], calibration_root)

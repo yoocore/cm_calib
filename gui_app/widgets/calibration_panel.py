@@ -52,10 +52,12 @@ def detect_cm_versions() -> dict[str, Path]:
             if not entry.is_dir() or not entry.name.startswith("win64-"):
                 continue
             for sub in ("GUI", "bin"):
-                cm_office = entry / sub / "CM_Office.exe"
-                if cm_office.is_file():
-                    version = entry.name[len("win64-"):]
-                    versions[version] = entry
+                for exe in ("CM_Office.exe", "CM.exe"):
+                    if (entry / sub / exe).is_file():
+                        version = entry.name[len("win64-"):]
+                        versions[version] = entry
+                        break
+                if version in versions:
                     break
     return dict(sorted(versions.items(), key=lambda x: x[0], reverse=True))
 
@@ -313,7 +315,7 @@ class CalibrationPanel(QGroupBox):
 
         base_iter_count = refine_iters + max(0, multi_start_count) * max(10, multi_start_iters // 2)
 
-        per_camera_seconds = max(45, int(round(base_iter_count * 2.5 + float(self.jitter_spin.value()) * 8.0)))
+        per_camera_seconds = max(45, int(round(base_iter_count * 3.5 + float(self.jitter_spin.value()) * 8.0)))
         total_seconds = camera_count * campaign_rounds * per_camera_seconds
         self.estimate_label.setText(f"~ {self._format_duration(total_seconds)}")
 

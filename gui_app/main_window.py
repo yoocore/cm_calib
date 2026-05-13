@@ -65,6 +65,7 @@ class MainWindow(QMainWindow):
         self.calibration_panel.generate_config_button.clicked.connect(self._generate_configs)
         self.calibration_panel.prepare_clicked.connect(self._prepare_runtime)
         self.runtime_panel.project_root_changed.connect(self._on_project_root_changed)
+        self.runtime_panel.testrun_changed.connect(self._on_testrun_changed)
 
         self.runtime_service.line_received.connect(self._on_runtime_line)
         self.runtime_service.runtime_summary.connect(self._on_runtime_summary)
@@ -116,7 +117,10 @@ class MainWindow(QMainWindow):
         if new_root and new_root != self.config_service.project_root:
             self.config_service = ConfigService(new_root)
             self.precheck_service = PrecheckService(new_root)
-            self._refresh_camera_list()
+        self._refresh_camera_list()
+
+    def _on_testrun_changed(self, _text: str) -> None:
+        self._refresh_camera_list()
 
     def _build_launch_config(self) -> CalibrationLaunchConfig:
         selected_cameras = self.calibration_panel.selected_cameras()
@@ -261,9 +265,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Config Generation Failed", str(exc))
         finally:
             self.calibration_panel.generate_config_button.setText("Generate Configs")
-            self.calibration_panel.generate_config_button.setEnabled(
-                not self.calibration_panel._generate_configs_ready
-            )
+            self.calibration_panel.generate_config_button.setEnabled(True)
 
     def _check_runtime_health(self) -> None:
         if self.runtime_service.is_running:

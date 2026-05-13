@@ -32,8 +32,13 @@ class CalibrationService(QObject):
     def is_running(self) -> bool:
         return self.process_service.is_running
 
+    @staticmethod
+    def _resolve_calibration_root(project_root: Path) -> Path:
+        return project_root / "Data" / "Script" / "CameraCalibration"
+
     def start(self, launch: CalibrationLaunchConfig) -> None:
-        script_path = self.calibration_root / "calibration_orchestrator.py"
+        calibration_root = self._resolve_calibration_root(launch.project_root)
+        script_path = calibration_root / "calibration_orchestrator.py"
         arguments = [
             "--project-root",
             str(launch.project_root),
@@ -60,7 +65,7 @@ class CalibrationService(QObject):
             arguments.extend(["--output-dir", str(launch.output_dir)])
         for camera_name in launch.cameras:
             arguments.extend(["--camera", camera_name])
-        self.process_service.start_python(script_path, arguments, self.calibration_root)
+        self.process_service.start_python(script_path, arguments, calibration_root)
 
     def stop(self) -> None:
         self.process_service.stop()

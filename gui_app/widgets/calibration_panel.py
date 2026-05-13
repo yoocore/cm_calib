@@ -115,7 +115,8 @@ class CalibrationPanel(QGroupBox):
         self.generate_config_button.setEnabled(False)
         self.precheck_tree = QTreeWidget()
         self.precheck_tree.setColumnCount(4)
-        self.precheck_tree.setHeaderLabels(["Camera", "Check", "Message", "Config"])
+        self.precheck_tree.setHeaderLabels(["Camera", "Check", "Config", "Message"])
+        self.precheck_tree.header().setStretchLastSection(True)
         self.status_label = QLabel("idle")
         self.estimate_label = QLabel("~ 0s")
         self.phase_label = QLabel("")
@@ -257,19 +258,39 @@ class CalibrationPanel(QGroupBox):
             item.setText(1, status_text)
             item.setForeground(1, _GREEN if ok else _RED)
             msg = str(result.get("message") or "")
-            item.setText(2, msg)
+            item.setText(0, camera_name)
+            item.setToolTip(0, camera_name)
+
+            # Column 1: checkmark with short reason
+            check_text = f"{status_text} {msg}" if not ok and msg else status_text
+            item.setText(1, check_text)
+            item.setToolTip(1, msg)
+
+            # Column 2: config / backup / preview paths
             config_parts: list[str] = []
             for key in ("config_path", "backup_path", "preview_path"):
                 v = str(result.get(key) or "")
                 if v:
                     config_parts.append(v)
-            item.setText(3, "; ".join(config_parts) if config_parts else "")
-            tl = [msg] if msg else []
-            tl.extend(str(p).strip() for p in result.get("raw_matches", []) if str(p).strip())
-            tl.extend(str(p).strip() for p in result.get("annotated_matches", []) if str(p).strip())
-            tip = "\n".join(tl)
-            for col in range(4):
-                item.setToolTip(col, tip)
+            config_text = "; ".join(config_parts) if config_parts else ""
+            item.setText(2, config_text)
+            if config_text:
+                item.setToolTip(2, config_text)
+
+            # Column 3: detailed message with image paths
+            detail_lines: list[str] = []
+            for p in result.get("raw_matches", []):
+                s = str(p).strip()
+                if s:
+                    detail_lines.append(s)
+            for p in result.get("annotated_matches", []):
+                s = str(p).strip()
+                if s:
+                    detail_lines.append(s)
+            detail_text = "\n".join(detail_lines)
+            item.setText(3, detail_text)
+            if detail_text:
+                item.setToolTip(3, detail_text)
         self._generate_configs_ready = bool(results) and all(bool(r.get("ok")) for r in results)
         self.generate_config_button.setEnabled(self._generate_configs_ready)
 

@@ -256,17 +256,19 @@ class CalibrationPanel(QGroupBox):
             status_text = "✓" if ok else "✗"
             item.setText(1, status_text)
             item.setForeground(1, _GREEN if ok else _RED)
-            item.setText(2, str(result.get("message") or ""))
-            tl = [
-                *(str(p) for p in result.get("raw_matches", []) if p),
-                *(str(p) for p in result.get("annotated_matches", []) if p),
-            ]
+            msg = str(result.get("message") or "")
+            item.setText(2, msg)
+            tl = [msg] if msg else []
+            tl.extend(str(p) for p in result.get("raw_matches", []) if p)
+            tl.extend(str(p) for p in result.get("annotated_matches", []) if p)
             for key in ("config_path", "backup_path", "preview_path"):
                 v = str(result.get(key) or "")
                 if v:
                     tl.append(v)
-            item.setToolTip(1, "\n".join(tl))
-            item.setToolTip(2, "\n".join(tl))
+            tip = "\n".join(tl)
+            item.setToolTip(0, tip)
+            item.setToolTip(1, tip)
+            item.setToolTip(2, tip)
         self._generate_configs_ready = bool(results) and all(bool(r.get("ok")) for r in results)
         self.generate_config_button.setEnabled(self._generate_configs_ready)
 

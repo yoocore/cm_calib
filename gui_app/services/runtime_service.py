@@ -1,25 +1,21 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QProcessEnvironment, Signal
+from PySide6.QtCore import QObject, Signal
 
 from gui_app.services.process_service import ProcessService
 
 
-def resolve_cmapi_path(cm_install: Path) -> Path | None:
-    for sub in ("Python/Lib/site-packages", "Python/Lib", "pylib"):
-        p = cm_install / sub
-        if (p / "cmapi").is_dir():
+def _resolve_cm_python(cm_install: Path) -> Path | None:
+    candidates = [
+        cm_install / "Python" / "python.exe",
+        cm_install / "Python" / "python",
+        cm_install.parent / "Python" / "python.exe",
+    ]
+    for p in candidates:
+        if p.is_file():
             return p
-    for entry in sorted(cm_install.parent.iterdir(), reverse=True):
-        if not entry.name.startswith("win64-"):
-            continue
-        for sub in ("Python/Lib/site-packages", "Python/Lib", "pylib"):
-            p = entry / sub
-            if (p / "cmapi").is_dir():
-                return p
     return None
 
 
@@ -87,12 +83,6 @@ class RuntimeService(QObject):
                 arguments.extend(["--camera-sensor", camera_name])
             if cm_install is not None:
                 arguments.extend(["--cm-install", str(cm_install)])
-        if cm_install is not None:
-            cmapi_path = resolve_cmapi_path(cm_install)
-            if cmapi_path is not None:
-                env = QProcessEnvironment.systemEnvironment()
-                old_pypath = env.value("PYTHONPATH", "")
-                new_pypath = f"{cmapi_path};{old_pypath}" if old_pypath else str(cmapi_path)
-                env.insert("PYTHONPATH", new_pypath)
-                self.process_service._process.setProcessEnvironment(env)
-        self.process_service.start_python(script_path, arguments[1:], calibration_root)
+        python_exe = _resolve_cm_python(cm_install) if cm_install else None
+        self.process_service.start_python(script_path, arguments[1:], calibration_root,
+                                          python_executable=python_exe)

@@ -8,25 +8,8 @@ import os
 from pathlib import Path
 import re
 import subprocess
-import sys
 import time
 from typing import Any, Optional
-
-# HACK: add CarMaker Python API to sys.path before importing cmapi
-_cm_home = Path(os.environ.get("IPGHOME", "D:/IPG")) / "carmaker"
-if _cm_home.is_dir():
-    for _entry in sorted(_cm_home.iterdir(), reverse=True):
-        if not _entry.name.startswith("win64-"):
-            continue
-        _found = False
-        for _sub in ("Python/Lib/site-packages", "Python/Lib", "pylib"):
-            _p = _entry / _sub
-            if (_p / "cmapi").is_dir() and str(_p) not in sys.path:
-                sys.path.insert(0, str(_p))
-                _found = True
-                break
-        if _found:
-            break
 
 import cmapi
 from dde_health_check import classify_health_summary, default_output_dir, render_dde_execute_script, render_result_script, run_check_attempt, run_read_only_health_suite

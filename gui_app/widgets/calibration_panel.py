@@ -259,19 +259,15 @@ class CalibrationPanel(QGroupBox):
             msg = str(result.get("message") or "")
             item.setText(2, msg)
             tl = [msg] if msg else []
-            tl.extend(str(p) for p in result.get("raw_matches", []) if p)
-            tl.extend(str(p) for p in result.get("annotated_matches", []) if p)
-            for key in ("config_path", "backup_path", "preview_path"):
-                v = str(result.get(key) or "")
-                if v:
-                    tl.append(v)
-            seen: set[str] = set()
-            unique: list[str] = []
-            for line in tl:
-                if line not in seen:
-                    seen.add(line)
-                    unique.append(line)
-            tip = "\n".join(unique)
+            for p in result.get("raw_matches", []):
+                s = str(p).strip()
+                if s:
+                    tl.append(s)
+            for p in result.get("annotated_matches", []):
+                s = str(p).strip()
+                if s:
+                    tl.append(s)
+            tip = "\n".join(tl)
             item.setToolTip(0, tip)
             item.setToolTip(1, tip)
             item.setToolTip(2, tip)

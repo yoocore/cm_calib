@@ -56,31 +56,37 @@ class PrecheckService:
         )
         results: list[dict[str, Any]] = []
         for item in generated:
-            action = str(item.get("action") or "generated")
-            config_path = str(item.get("config_path") or "")
-            backup_path = str(item.get("backup_path") or "")
-            preview_path = str(item.get("preview_path") or "")
-
             def _rel(p: str) -> str:
                 try:
                     return str(Path(p).relative_to(self.project_root))
                 except (ValueError, TypeError):
                     return p
 
+            action = str(item.get("action") or "generated")
+            config_rel = _rel(str(item.get("config_path") or ""))
+            backup_rel = _rel(str(item.get("backup_path") or ""))
+            preview_rel = _rel(str(item.get("preview_path") or ""))
+            raw_val = item.get("raw_image_path")
+            raw_list: list[str] = raw_val if isinstance(raw_val, list) else ([str(raw_val)] if raw_val else [])
+            ann_val = item.get("annotated_image_path")
+            ann_list: list[str] = ann_val if isinstance(ann_val, list) else ([str(ann_val)] if ann_val else [])
+            raw_rel = [_rel(p) for p in raw_list if p]
+            ann_rel = [_rel(p) for p in ann_list if p]
+
             message_parts = [action]
-            if config_path:
-                message_parts.append(f"config={_rel(config_path)}")
-            if backup_path:
-                message_parts.append(f"backup={_rel(backup_path)}")
+            if config_rel:
+                message_parts.append(f"config={config_rel}")
+            if backup_rel:
+                message_parts.append(f"backup={backup_rel}")
             results.append(
                 {
                     "camera": str(item.get("camera") or ""),
                     "ok": True,
-                    "raw_matches": [str(item.get("raw_image_path") or "")],
-                    "annotated_matches": [str(item.get("annotated_image_path") or "")],
-                    "config_path": config_path,
-                    "backup_path": backup_path,
-                    "preview_path": preview_path,
+                    "raw_matches": raw_rel,
+                    "annotated_matches": ann_rel,
+                    "config_path": config_rel,
+                    "backup_path": backup_rel,
+                    "preview_path": preview_rel,
                     "message": "; ".join(part for part in message_parts if part),
                 }
             )

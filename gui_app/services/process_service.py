@@ -70,6 +70,10 @@ class ProcessService(QObject):
             payload = self._parse_json_suffix(line)
             if payload is not None:
                 self.orchestration_summary.emit(payload)
+        elif line.startswith("PRECHECK_RESULT_JSON:"):
+            payload = self._parse_json_suffix(line)
+            if payload is not None:
+                self.line_received.emit(json.dumps(payload, ensure_ascii=False))
         elif line.startswith("CMAPI_CONTROL_SUMMARY_JSON:"):
             payload = self._parse_json_suffix(line)
             if payload is not None:

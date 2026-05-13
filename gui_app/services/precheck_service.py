@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -16,47 +18,35 @@ class PrecheckService:
         self.movie_dir = self.project_root / "Movie"
 
     def run_for_cameras(self, camera_names: list[str]) -> list[dict[str, Any]]:
-        bootstrap_ok, bootstrap_message = self._validate_bootstrap_template()
+        script = self.calibration_root / "precheck_cli.py"
+        cmd = [sys.executable, str(script), "--project-root", str(self.project_root)]
+        for name in camera_names:
+            cmd.extend(["--camera", name])
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        except subprocess.TimeoutExpired:
+            return [{"camera": n, "ok": False, "message": "precheck timed out",
+                      "raw_matches": [], "annotated_matches": [],
+                      "config_path": "", "backup_path": "", "preview_path": ""}
+                    for n in camera_names]
+
         results: list[dict[str, Any]] = []
-        for camera_name in camera_names:
-            raw_matches = self._find_movie_files(self.movie_dir, camera_name, require_origin=True)
-            ann_matches = self._find_movie_files(self.movie_dir, camera_name, require_origin=False)
-            ok = bool(raw_matches) and bootstrap_ok
-            messages: list[str] = []
-            if not raw_matches:
-                messages.append("missing raw image with sensor name and origin marker")
-            if not bootstrap_ok:
-                messages.append(bootstrap_message)
-            raw_names = [Path(p).name for p in raw_matches]
-            ann_names = [Path(p).name for p in ann_matches]
-            parts = [f"原始图像: {', '.join(raw_names)}"] if raw_names else []
-            if ann_names:
-                parts.append(f"标注图像: {', '.join(ann_names)}")
-            messages.append("; ".join(parts) if parts else "无检测结果")
-
-            def _rel(p: Path) -> str:
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if line.startswith("PRECHECK_RESULT_JSON:"):
+                _, _, suffix = line.partition(":")
                 try:
-                    return str(p.relative_to(self.project_root))
-                except (ValueError, TypeError):
-                    return str(p)
+                    payload = json.loads(suffix.strip())
+                    if isinstance(payload, dict):
+                        results.append(payload)
+                except json.JSONDecodeError:
+                    pass
 
-            config_path = self.config_dir / f"camera.{camera_name}.json"
-            config_info = str(_rel(config_path)) if config_path.exists() else ""
-            backup_files = sorted(self.config_dir.glob(f"camera.{camera_name}*.bak.json"))
-            backup_info = str(_rel(backup_files[-1])) if backup_files else ""
-
-            results.append(
-                {
-                    "camera": camera_name,
-                    "ok": ok,
-                    "raw_matches": [_rel(p) for p in raw_matches],
-                    "annotated_matches": [_rel(p) for p in ann_matches],
-                    "config_path": config_info,
-                    "backup_path": backup_info,
-                    "preview_path": "",
-                    "message": "; ".join(messages),
-                }
-            )
+        if not results:
+            return [{"camera": n, "ok": False, "message": "precheck CLI returned no results",
+                      "raw_matches": [], "annotated_matches": [],
+                      "config_path": "", "backup_path": "", "preview_path": ""}
+                    for n in camera_names]
         return results
 
     def generate_configs_for_cameras(self, camera_names: list[str]) -> list[dict[str, Any]]:

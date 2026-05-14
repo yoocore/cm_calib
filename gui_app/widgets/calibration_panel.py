@@ -367,7 +367,8 @@ class CalibrationPanel(QGroupBox):
         detail: str | None = None,
     ) -> None:
         item = self._ensure_sensor_progress_item(camera_name, estimated_seconds)
-        item.setText(1, status)
+        display_status = "fail" if status == "failed" else status
+        item.setText(1, display_status)
         progress_bar = self._sensor_progress_bars[camera_name]
         progress_bar.setValue(max(0, min(100, int(progress_percent))))
         duration_text = f"{self._format_duration(elapsed_seconds)} / ~{self._format_duration(estimated_seconds)}"
@@ -394,8 +395,11 @@ class CalibrationPanel(QGroupBox):
 
     def set_status(self, text: str | None) -> None:
         status_text = (text or "").strip() or "idle"
-        border_color, background_color = _STATUS_BADGE_STYLES.get(status_text, ("#455a64", "#eceff1"))
-        self.status_label.setText(status_text)
+        # style key is unchanged; display text uses short 'fail' for user-facing label
+        style_key = status_text
+        display_text = "fail" if status_text == "failed" else status_text
+        border_color, background_color = _STATUS_BADGE_STYLES.get(style_key, ("#455a64", "#eceff1"))
+        self.status_label.setText(display_text)
         self.status_label.setStyleSheet(
             "QLabel {"
             f"border: 2px solid {border_color};"

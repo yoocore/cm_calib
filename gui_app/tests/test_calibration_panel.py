@@ -41,7 +41,7 @@ class TestCalibrationPanel:
         ready_stylesheet = panel.status_label.styleSheet()
         assert "#2e7d32" in ready_stylesheet
         panel.set_status("failed")
-        assert panel.status_label.text() == "failed"
+        assert panel.status_label.text() == "fail"
         failed_stylesheet = panel.status_label.styleSheet()
         assert "#c62828" in failed_stylesheet
         assert failed_stylesheet != ready_stylesheet

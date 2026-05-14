@@ -510,6 +510,7 @@ class MainWindow(QMainWindow):
 
     def _apply_status(self, status: AppStatus) -> None:
         self.state.status = status
+        # Display mapping: keep internal enum values, calibration panel renders "fail" for FAILED
         self.calibration_panel.set_status(status.value)
         self._sync_control_states()
         if status == AppStatus.READY:
@@ -518,6 +519,12 @@ class MainWindow(QMainWindow):
             self._health_timer.stop()
             if not self.runtime_service.is_running:
                 self._health_check_active = False
+        # Freeze task elapsed when calibration task ends (finished/failed/stopped)
+        if status in {AppStatus.FINISHED, AppStatus.FAILED, AppStatus.STOPPED}:
+            # Do not continue counting overall task elapsed — use finalized per-camera elapsed values
+            self._calibration_task_started_at = None
+            # Ensure UI reflects finalized times immediately
+            self._refresh_calibration_progress()
 
     def _runtime_status_probe_can_update_status(self) -> bool:
         if self.state.status == AppStatus.PREPARING:

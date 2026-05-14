@@ -202,7 +202,7 @@ class CameraResultCard(QGroupBox):
         self.setStyleSheet(f"QGroupBox {{ border: 2px solid {border_color}; margin-top: 8px; padding-top: 8px; }}")
 
     def update_result(self, result: CameraResult) -> None:
-        self.status_value.setText(result.status)
+        self.status_value.setText("fail" if result.status == "failed" else result.status)
         self.best_score_value.setText(_format_score(result.best_score))
         self.current_iter_value.setText(_format_score(result.current_iter_score))
         self.score_preview.set_artifact(result.best_score_image or result.best_image)

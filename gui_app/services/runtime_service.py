@@ -4,6 +4,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QProcessEnvironment, Signal
 
+from portable_runtime import build_cmapi_pythonpath
 from gui_app.services.process_service import ProcessService
 
 
@@ -29,8 +30,15 @@ class RuntimeService(QObject):
     def is_running(self) -> bool:
         return self.process_service.is_running
 
-    def probe_status(self, project_root: Path, testrun: str, *, verify_health: bool = False) -> None:
-        self._start_mode("status", project_root, testrun, verify_health=verify_health)
+    def probe_status(
+        self,
+        project_root: Path,
+        testrun: str,
+        *,
+        verify_health: bool = False,
+        cm_install: Path | None = None,
+    ) -> None:
+        self._start_mode("status", project_root, testrun, verify_health=verify_health, cm_install=cm_install)
 
     def prepare_runtime(self, project_root: Path, testrun: str, *, cameras: list[str] | None = None, cm_install: Path | None = None) -> None:
         self._start_mode("prepare", project_root, testrun, cameras=cameras, cm_install=cm_install)
@@ -69,23 +77,14 @@ class RuntimeService(QObject):
         if mode == "prepare":
             for camera_name in cameras or []:
                 arguments.extend(["--camera-sensor", camera_name])
+        env = QProcessEnvironment.systemEnvironment()
         if cm_install is not None:
             arguments.extend(["--cm-install", str(cm_install)])
-            _subs: list[str] = []
-            for _v in sorted(cm_install.parent.iterdir(), reverse=True):
-                if _v.name.startswith("win64-"):
-                    for _s in ("Python/Lib/site-packages", "Python/Lib", "pylib", "Lib/site-packages", "Lib"):
-                        _p = _v / _s
-                        if _p.is_dir() and str(_p) not in _subs:
-                            _subs.append(str(_p))
-            for _s in ("Python/Lib/site-packages", "Python/Lib", "pylib", "Lib/site-packages", "Lib"):
-                _p = cm_install / _s
-                if _p.is_dir() and str(_p) not in _subs:
-                    _subs.append(str(_p))
-            if _subs:
-                env = QProcessEnvironment.systemEnvironment()
-                _old = env.value("PYTHONPATH", "")
-                _new = ";".join(_subs)
-                env.insert("PYTHONPATH", f"{_new};{_old}" if _old else _new)
-                self.process_service._process.setProcessEnvironment(env)
+            pythonpath, _paths = build_cmapi_pythonpath(
+                cm_install,
+                existing_pythonpath=env.value("PYTHONPATH", ""),
+            )
+            if pythonpath:
+                env.insert("PYTHONPATH", pythonpath)
+        self.process_service._process.setProcessEnvironment(env)
         self.process_service.start_python(script_path, arguments[1:], calibration_root)

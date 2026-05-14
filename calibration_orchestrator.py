@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import cmapi_testrun_control as cmctrl
+from portable_runtime import build_python_subprocess_command
 from runtime_config_bootstrap import load_movie_view_size_from_real_image
 
 
@@ -146,6 +147,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--multi-start-iters", type=int, default=None)
     parser.add_argument("--multi-start-jitter-steps", type=float, default=2.0)
     parser.add_argument("--multi-start-seed", type=int, default=20260429)
+    parser.add_argument("--skip-prepare-for-first-camera", action="store_true")
     parser.add_argument("--explore-then-refine", action="store_true")
     parser.add_argument("--refine-iters", type=int, default=None)
     parser.add_argument("--resume-from-result", action="store_true")
@@ -189,9 +191,9 @@ def _append_optional_arg(command: list[str], name: str, value: Optional[object])
 
 def _build_camera_command(args: argparse.Namespace, config_path: Path) -> list[str]:
     script_path = Path(__file__).resolve().with_name("camera_calibration.py")
-    command = [
-        sys.executable,
-        str(script_path),
+    command = build_python_subprocess_command(
+        script_path,
+        [
         "--config",
         str(config_path),
         "--campaign-rounds",
@@ -204,7 +206,8 @@ def _build_camera_command(args: argparse.Namespace, config_path: Path) -> list[s
         str(args.multi_start_seed),
         "--print-summary-json",
         "--print-progress-json",
-    ]
+        ],
+    )
     _append_optional_arg(command, "--multi-start-iters", args.multi_start_iters)
     _append_optional_arg(command, "--refine-iters", args.refine_iters)
     if args.explore_then_refine:
@@ -291,6 +294,71 @@ def _prepare_runtime_for_camera(
     }
 
 
+def _reuse_existing_runtime_for_camera(
+    args: argparse.Namespace,
+    project_root: Path,
+    testrun_rel_path: Path,
+    camera_name: str,
+    config_path: Path,
+) -> dict[str, Any]:
+    vehicle_path, vehicle_key = cmctrl.resolve_vehicle_path(project_root, testrun_rel_path)
+    status_summary = cmctrl.build_status_summary(
+        project_root=project_root,
+        cm_install=args.cm_install.resolve(),
+        testrun_rel_path=testrun_rel_path,
+        vehicle_path=vehicle_path,
+        vehicle_key=vehicle_key,
+        camera_sensor=camera_name,
+        health_check_after_start=bool(args.health_check_after_switch),
+        health_check_attempts=int(args.health_check_attempts),
+        health_check_timeout_sec=float(args.health_check_timeout_sec),
+        health_check_settle_sec=float(args.health_check_settle_sec),
+    )
+    if str(status_summary.get("status") or "") != "ready":
+        raise RuntimeError(
+            "Current runtime is not ready for direct calibration start: "
+            f"{status_summary.get('status_reason') or 'unknown reason'}"
+        )
+
+    active_sensors = status_summary.get("active_sensors") if isinstance(status_summary.get("active_sensors"), list) else []
+    if camera_name not in [str(sensor) for sensor in active_sensors]:
+        raise RuntimeError(
+            f"Current runtime active sensor does not match first camera {camera_name!r}: {active_sensors!r}"
+        )
+
+    selected_testrun = cmctrl.sync_gui_testrun_selection(project_root, testrun_rel_path)
+    abraxas = cmctrl.ensure_movie_abraxas_enabled(timeout_sec=float(args.health_check_timeout_sec))
+    camera_selection = cmctrl.ensure_movie_camera_selected(
+        f"CAMERA_RSI-SENSOR Vhcl.{camera_name}",
+        timeout_sec=float(args.health_check_timeout_sec),
+    )
+    camera_widgets = cmctrl.ensure_movie_camera_widgets(timeout_sec=float(args.health_check_timeout_sec))
+    config_initial_capture = cmctrl.capture_initial_values_to_config(config_path)
+
+    return {
+        "vehicle_path": str(vehicle_path),
+        "vehicle_key": vehicle_key,
+        "selected_testrun": selected_testrun,
+        "bootstrap_testrun": None,
+        "activation": {
+            "vehicle_path": str(vehicle_path),
+            "selected_sensor_name": camera_name,
+            "selected_sensor_index": None,
+            "ipgmovie_sensor_label": f"CAMERA_RSI-SENSOR Vhcl.{camera_name}",
+            "changed": False,
+        },
+        "carmaker_pid": None,
+        "movie_scene": {},
+        "abraxas": abraxas,
+        "camera_selection": camera_selection,
+        "camera_widgets": camera_widgets,
+        "config_initial_capture": config_initial_capture,
+        "health": status_summary.get("health"),
+        "reused_existing_runtime": True,
+        "status_summary": status_summary,
+    }
+
+
 def _run_single_camera_process(
     *,
     task_id: str,
@@ -357,8 +425,17 @@ def _run_single_camera_process(
 def _task_output_dir(requested_output_dir: Optional[Path]) -> Path:
     if requested_output_dir is not None:
         return requested_output_dir.resolve()
-    task_name = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S") + f"_{uuid.uuid4().hex[:8]}"
-    return (DEFAULT_OUTPUT_ROOT / task_name).resolve()
+    task_name = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
+    candidate = (DEFAULT_OUTPUT_ROOT / task_name).resolve()
+    if not candidate.exists():
+        return candidate
+
+    suffix = 2
+    while True:
+        candidate = (DEFAULT_OUTPUT_ROOT / f"{task_name}_{suffix}").resolve()
+        if not candidate.exists():
+            return candidate
+        suffix += 1
 
 
 def main() -> None:
@@ -407,14 +484,23 @@ def main() -> None:
             config_path = _resolve_config_path(config_dir, camera_name)
             movie_view_size = _load_movie_view_size(config_path)
             _emit_event(task_id, "camera_prepare_started", camera=camera_name, config_path=str(config_path))
-            runtime_state = _prepare_runtime_for_camera(
-                args,
-                project_root,
-                testrun_rel_path,
-                camera_name,
-                config_path,
-                movie_view_size=movie_view_size,
-            )
+            if camera_name == cameras[0] and args.skip_prepare_for_first_camera:
+                runtime_state = _reuse_existing_runtime_for_camera(
+                    args,
+                    project_root,
+                    testrun_rel_path,
+                    camera_name,
+                    config_path,
+                )
+            else:
+                runtime_state = _prepare_runtime_for_camera(
+                    args,
+                    project_root,
+                    testrun_rel_path,
+                    camera_name,
+                    config_path,
+                    movie_view_size=movie_view_size,
+                )
             _emit_event(
                 task_id,
                 "camera_prepare_finished",
@@ -422,6 +508,7 @@ def main() -> None:
                 selected_sensor=runtime_state["activation"]["selected_sensor_name"],
                 vehicle_path=runtime_state["vehicle_path"],
                 carmaker_pid=runtime_state["carmaker_pid"],
+                reused_existing_runtime=bool(runtime_state.get("reused_existing_runtime")),
             )
 
             calibration_summary = _run_single_camera_process(

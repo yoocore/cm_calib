@@ -40,6 +40,7 @@ def main_window(qtbot, tmp_path):
     camera_config.write_text('{"camera": "cam1"}', encoding="utf-8")
     win = MainWindow(project_root)
     win.runtime_panel.testrun_edit.setText("vctc_ngxpro")
+    win._on_testrun_changed("vctc_ngxpro")
     for i in range(win.calibration_panel.camera_list.count()):
         item = win.calibration_panel.camera_list.item(i)
         item.setCheckState(Qt.Checked)

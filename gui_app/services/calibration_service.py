@@ -4,6 +4,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QProcessEnvironment, Signal
 
+from portable_runtime import build_cmapi_pythonpath
 from gui_app.models.state import CalibrationLaunchConfig
 from gui_app.services.process_service import ProcessService
 
@@ -64,29 +65,22 @@ class CalibrationService(QObject):
             arguments.append("--explore-then-refine")
         if launch.resume_from_result:
             arguments.append("--resume-from-result")
+        if launch.skip_prepare_for_first_camera:
+            arguments.append("--skip-prepare-for-first-camera")
         if launch.output_dir is not None:
             arguments.extend(["--output-dir", str(launch.output_dir)])
         for camera_name in launch.cameras:
             arguments.extend(["--camera", camera_name])
         cm_install = getattr(self, "_cm_install", None)
+        env = QProcessEnvironment.systemEnvironment()
         if cm_install is not None:
-            _subs: list[str] = []
-            for _v in sorted(cm_install.parent.iterdir(), reverse=True):
-                if _v.name.startswith("win64-"):
-                    for _s in ("Python/Lib/site-packages", "Python/Lib", "pylib", "Lib/site-packages", "Lib"):
-                        _p = _v / _s
-                        if _p.is_dir() and str(_p) not in _subs:
-                            _subs.append(str(_p))
-            for _s in ("Python/Lib/site-packages", "Python/Lib", "pylib", "Lib/site-packages", "Lib"):
-                _p = cm_install / _s
-                if _p.is_dir() and str(_p) not in _subs:
-                    _subs.append(str(_p))
-            if _subs:
-                env = QProcessEnvironment.systemEnvironment()
-                _old = env.value("PYTHONPATH", "")
-                _new = ";".join(_subs)
-                env.insert("PYTHONPATH", f"{_new};{_old}" if _old else _new)
-                self.process_service._process.setProcessEnvironment(env)
+            pythonpath, _paths = build_cmapi_pythonpath(
+                cm_install,
+                existing_pythonpath=env.value("PYTHONPATH", ""),
+            )
+            if pythonpath:
+                env.insert("PYTHONPATH", pythonpath)
+        self.process_service._process.setProcessEnvironment(env)
         self.process_service.start_python(script_path, arguments, calibration_root)
 
     def stop(self) -> None:

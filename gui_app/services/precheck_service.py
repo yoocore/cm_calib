@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
+from portable_runtime import build_python_subprocess_command
 from runtime_config_bootstrap import bootstrap_runtime_configs_for_cameras
 
 
@@ -19,7 +19,10 @@ class PrecheckService:
 
     def run_for_cameras(self, camera_names: list[str]) -> list[dict[str, Any]]:
         script = self.calibration_root / "precheck_cli.py"
-        cmd = [sys.executable, str(script), "--project-root", str(self.project_root)]
+        cmd = build_python_subprocess_command(
+            script,
+            ["--project-root", str(self.project_root)],
+        )
         for name in camera_names:
             cmd.extend(["--camera", name])
         try:

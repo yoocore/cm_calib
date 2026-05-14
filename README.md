@@ -25,6 +25,13 @@
 - `project_notes/` 目录用于存放与当前 CameraCalibration 工程强相关的长期记录和正式文档，例如 GUI 设计蓝图、运行健康基线、设计说明、流程记录与依赖清单。
 - 这些文档与 `/memories/repo/` 下的 repo memory 互为补充：memory 方便代理长期记忆，项目目录内文档方便版本管理、共享和人工检索。
 
+portable GUI 交付原则
+- 面向最终用户的 GUI 交付目标是 portable EXE 包，而不是要求用户先安装 Python、PySide6、pytest 或手工准备虚拟环境。
+- 仓库里的 Python 命令和解释器配置主要用于开发、调试和回归；最终用户应直接运行打包后的 EXE。
+- 当前维护的 portable 打包脚本是：
+  - 在 Data/Script/CameraCalibration 目录执行：powershell -ExecutionPolicy Bypass -File .\build_portable_gui.ps1
+- 该打包流程会生成一个包含 GUI EXE 与 `Data\Script\CameraCalibration` 运行时目录的本地分发包，供用户直接解压后运行。
+
 依赖
 - Python 3.9+
 - 使用当前维护的本地依赖文件安装：
@@ -36,6 +43,7 @@
 - 当前工作区推荐使用项目本地虚拟环境 .venv/Scripts/python.exe。
 - 在 VS Code 中，选择一次工作区解释器后，固定到 .venv 即可。
 - 如果 cv2、numpy、PIL 等导入突然再次显示未解析，优先先检查当前解释器是否正确，而不是直接排查脚本本身。
+- `cmapi` 现在需要兼容 CarMaker 的版本化 Python 目录布局，例如 `D:\IPG\carmaker\win64-14.1\Python\python3.10`；不要再只按旧的 `Python\Lib\...` 目录结构假设。
 - 手工运行命令时，优先使用明确的解释器路径：
   - c:/CM_Projects/CMO141_Calibration/.venv/Scripts/python.exe camera_calibration.py --config configs/camera.rear_tv.json
 

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import html
 import os
+import re
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QPixmap, QTextCursor
 from PySide6.QtWidgets import (
     QGridLayout,
     QGroupBox,
@@ -28,10 +31,68 @@ BEST_SCORE_IMAGE_ROLE = Qt.UserRole + 3
 BEST_OVERLAY_IMAGE_ROLE = Qt.UserRole + 4
 LIVE_LOG_ROLE = Qt.UserRole + 5
 SUPPORTED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
+_LOG_SOURCE_RE = re.compile(r"^\[(?P<source>[^\]]+)\]\s*(?P<body>.*)$")
+_LOG_LEVEL_STYLES = {
+    "info": {"label": "INFO", "fg": "#90caf9", "bg": "#0d1b2a"},
+    "success": {"label": "SUCCESS", "fg": "#81c784", "bg": "#102417"},
+    "warning": {"label": "WARNING", "fg": "#ffd54f", "bg": "#2a2111"},
+    "error": {"label": "ERROR", "fg": "#ef9a9a", "bg": "#2b1416"},
+}
+_LOG_SOURCE_COLORS = {
+    "runtime": "#64b5f6",
+    "calibration": "#4dd0e1",
+    "system": "#b0bec5",
+}
 
 
 def _format_score(value: float | None) -> str:
     return "-" if value is None else f"{value:.6f}"
+
+
+def _normalize_log_source(source: str | None, line: str) -> tuple[str, str]:
+    if source:
+        return source.strip().lower() or "system", line.strip()
+
+    text = line.strip()
+    match = _LOG_SOURCE_RE.match(text)
+    if match:
+        parsed_source = match.group("source").strip().lower() or "system"
+        parsed_body = match.group("body").strip()
+        return parsed_source, parsed_body
+    return "system", text
+
+
+def _classify_log_level(message: str) -> str:
+    text = message.casefold()
+    if not text:
+        return "info"
+    if any(token in text for token in ("traceback", " exception", "failed", "fatal", "error", "critical")):
+        return "error"
+    if any(token in text for token in ("warn", "warning", "timeout", "timed out", "passive", "not ready", "mismatch")):
+        return "warning"
+    if any(token in text for token in (" success", " succeeded", "completed", "ready", " all passed", " ok", " status=ok")):
+        return "success"
+    return "info"
+
+
+def _build_log_plain_text(timestamp_text: str, source: str, level: str, message: str) -> str:
+    level_label = _LOG_LEVEL_STYLES[level]["label"]
+    return f"[{timestamp_text}] [{source.upper()}] [{level_label}] {message}"
+
+
+def _build_log_html(timestamp_text: str, source: str, level: str, message: str) -> str:
+    level_style = _LOG_LEVEL_STYLES[level]
+    source_color = _LOG_SOURCE_COLORS.get(source, "#b0bec5")
+    return (
+        '<div style="margin:0 0 4px 0;">'
+        f'<span style="color:#8fa3b0;">[{html.escape(timestamp_text)}]</span> '
+        f'<span style="color:{source_color}; font-weight:700;">[{html.escape(source.upper())}]</span> '
+        f'<span style="color:{level_style["fg"]}; background-color:{level_style["bg"]}; '
+        'font-weight:700; border-radius:4px; padding:1px 6px;">'
+        f'[{html.escape(level_style["label"])}]</span> '
+        f'<span style="color:#e6edf3;">{html.escape(message)}</span>'
+        "</div>"
+    )
 
 
 class ArtifactPreviewLabel(QLabel):
@@ -174,6 +235,14 @@ class OutputPanel(QGroupBox):
         self.open_log_button.setEnabled(False)
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
+        self.log_view.setStyleSheet(
+            "QTextEdit {"
+            "background-color: #0b1220;"
+            "color: #e6edf3;"
+            "border: 1px solid #334155;"
+            "font-family: Consolas, 'Courier New', monospace;"
+            "}"
+        )
 
         self.result_tree = QTreeWidget(self)
         self.result_tree.setColumnCount(4)
@@ -193,24 +262,6 @@ class OutputPanel(QGroupBox):
         self.results_scroll.setWidgetResizable(True)
         self.results_scroll.setWidget(self.results_container)
 
-        self.preview_title_label = QLabel("Preview")
-        self.preview_path_label = QLabel("Select a camera result to preview artifacts.")
-        self.preview_path_label.setWordWrap(True)
-        self.preview_image_label = QLabel("No preview")
-        self.preview_image_label.setAlignment(Qt.AlignCenter)
-        self.preview_image_label.setMinimumHeight(220)
-        self.open_result_button = QPushButton("Open Result JSON")
-        self.open_best_button = QPushButton("Open Best Image")
-        self.open_score_button = QPushButton("Open Score View")
-        self.open_overlay_button = QPushButton("Open Overlap View")
-        for button in (
-            self.open_result_button,
-            self.open_best_button,
-            self.open_score_button,
-            self.open_overlay_button,
-        ):
-            button.setEnabled(False)
-
         top_row = QWidget(self)
         top_layout = QHBoxLayout(top_row)
         top_layout.setContentsMargins(0, 0, 0, 0)
@@ -223,36 +274,15 @@ class OutputPanel(QGroupBox):
         log_layout.addWidget(self.log_path_label, 1)
         log_layout.addWidget(self.open_log_button)
 
-        preview_buttons = QWidget(self)
-        preview_buttons_layout = QHBoxLayout(preview_buttons)
-        preview_buttons_layout.setContentsMargins(0, 0, 0, 0)
-        preview_buttons_layout.addWidget(self.open_result_button)
-        preview_buttons_layout.addWidget(self.open_best_button)
-        preview_buttons_layout.addWidget(self.open_score_button)
-        preview_buttons_layout.addWidget(self.open_overlay_button)
-
-        preview_panel = QWidget(self)
-        preview_layout = QVBoxLayout(preview_panel)
-        preview_layout.setContentsMargins(0, 0, 0, 0)
-        preview_layout.addWidget(self.preview_title_label)
-        preview_layout.addWidget(self.preview_path_label)
-        preview_layout.addWidget(self.preview_image_label, 1)
-        preview_layout.addWidget(preview_buttons)
-
         layout = QVBoxLayout(self)
         layout.addWidget(top_row)
-        layout.addWidget(self.results_scroll, 2)
-        layout.addWidget(preview_panel, 1)
+        layout.addWidget(self.results_scroll, 3)
         layout.addWidget(log_row)
         layout.addWidget(self.log_view, 1)
 
         self.open_output_button.clicked.connect(self._open_output_dir)
         self.open_log_button.clicked.connect(self._open_log_file)
-        self.result_tree.itemSelectionChanged.connect(self._refresh_preview)
-        self.open_result_button.clicked.connect(lambda: self._open_current_artifact(RESULT_JSON_ROLE))
-        self.open_best_button.clicked.connect(lambda: self._open_current_artifact(BEST_IMAGE_ROLE))
-        self.open_score_button.clicked.connect(lambda: self._open_current_artifact(BEST_SCORE_IMAGE_ROLE))
-        self.open_overlay_button.clicked.connect(lambda: self._open_current_artifact(BEST_OVERLAY_IMAGE_ROLE))
+        self.result_tree.itemSelectionChanged.connect(self._refresh_selection)
 
     def set_output_dir(self, output_dir: str | None) -> None:
         self.output_dir_label.setText(output_dir or "-")
@@ -263,8 +293,21 @@ class OutputPanel(QGroupBox):
         if self.result_tree.currentItem() is None:
             self._refresh_log_row()
 
-    def append_log(self, line: str) -> None:
-        self.log_view.append(line)
+    def append_log(self, line: str, *, source: str | None = None) -> None:
+        parsed_source, message = _normalize_log_source(source, line)
+        if not message:
+            return
+        level = _classify_log_level(message)
+        timestamp_text = datetime.now().strftime("%H:%M:%S")
+        plain_text = _build_log_plain_text(timestamp_text, parsed_source, level, message)
+        entry_html = _build_log_html(timestamp_text, parsed_source, level, message)
+
+        cursor = self.log_view.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        cursor.insertHtml(entry_html)
+        cursor.insertBlock()
+        self.log_view.setTextCursor(cursor)
+        self.log_view.ensureCursorVisible()
 
     def update_camera_result(self, result: CameraResult) -> None:
         item = self._find_or_create_item(result.camera)
@@ -302,16 +345,10 @@ class OutputPanel(QGroupBox):
                 return candidate
         return None
 
-    def resolve_item_preview_artifact(self, item: QTreeWidgetItem) -> str | None:
-        return self._first_existing_artifact(
-            self._item_data(item, BEST_SCORE_IMAGE_ROLE),
-            self._item_data(item, BEST_OVERLAY_IMAGE_ROLE),
-            self._item_data(item, BEST_IMAGE_ROLE),
-        )
-
     def current_log_path(self) -> str | None:
         item = self.result_tree.currentItem()
-        return self._item_data(item, LIVE_LOG_ROLE) if item is not None else self._task_log_path
+        live_log = self._item_data(item, LIVE_LOG_ROLE) if item is not None else None
+        return live_log or self._task_log_path
 
     def _ensure_result_card(self, camera_name: str) -> CameraResultCard:
         card = self._result_cards.get(camera_name)
@@ -352,7 +389,7 @@ class OutputPanel(QGroupBox):
         if item is None:
             return
         self.result_tree.setCurrentItem(item)
-        self._refresh_preview()
+        self._refresh_selection()
 
     def _open_camera_artifact(self, camera_name: str, role: int) -> None:
         self._select_camera(camera_name)
@@ -375,32 +412,14 @@ class OutputPanel(QGroupBox):
         if artifact:
             os.startfile(artifact)
 
-    def _open_current_artifact(self, role: int) -> None:
+    def _refresh_selection(self) -> None:
         item = self.result_tree.currentItem()
         if item is None:
-            return
-        artifact = self._item_data(item, role)
-        if artifact:
-            os.startfile(artifact)
-
-    def _refresh_preview(self) -> None:
-        item = self.result_tree.currentItem()
-        if item is None:
-            self.preview_title_label.setText("Preview")
-            self.preview_path_label.setText("Select a camera result to preview artifacts.")
-            self.preview_image_label.setText("No preview")
-            self.preview_image_label.setPixmap(QPixmap())
-            self._set_artifact_buttons_enabled()
             self._refresh_log_row()
             self._sync_card_selection(None)
             return
 
         camera_name = item.text(0) or "<unknown>"
-        preview_path = self.resolve_item_preview_artifact(item)
-        self.preview_title_label.setText(f"Preview: {camera_name}")
-        self.preview_path_label.setText(preview_path or (self._item_data(item, RESULT_JSON_ROLE) or "No artifact path"))
-        self._update_preview_pixmap(preview_path)
-        self._set_artifact_buttons_enabled(item)
         self._refresh_log_row(item)
         self._sync_card_selection(camera_name)
 
@@ -408,44 +427,10 @@ class OutputPanel(QGroupBox):
         for camera_name, card in self._result_cards.items():
             card.set_selected(camera_name == selected_camera)
 
-    def _update_preview_pixmap(self, path_text: str | None) -> None:
-        if not path_text:
-            self.preview_image_label.setText("No preview")
-            self.preview_image_label.setPixmap(QPixmap())
-            return
-
-        path = Path(path_text)
-        if path.suffix.casefold() not in SUPPORTED_IMAGE_SUFFIXES:
-            self.preview_image_label.setText("Preview unavailable for non-image artifact")
-            self.preview_image_label.setPixmap(QPixmap())
-            return
-
-        if not path.exists():
-            self.preview_image_label.setText(f"Preview image not found\n{path_text}")
-            self.preview_image_label.setPixmap(QPixmap())
-            return
-
-        pixmap = QPixmap(str(path))
-        if pixmap.isNull():
-            self.preview_image_label.setText(f"Failed to load preview\n{path_text}")
-            self.preview_image_label.setPixmap(QPixmap())
-            return
-
-        scaled = pixmap.scaled(self.preview_image_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        self.preview_image_label.setPixmap(scaled)
-        self.preview_image_label.setText("")
-
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         if self.result_tree.currentItem() is not None:
-            self._refresh_preview()
-
-    def _set_artifact_buttons_enabled(self, item: QTreeWidgetItem | None = None) -> None:
-        current_item = item or self.result_tree.currentItem()
-        self.open_result_button.setEnabled(bool(current_item and self._item_data(current_item, RESULT_JSON_ROLE)))
-        self.open_best_button.setEnabled(bool(current_item and self._item_data(current_item, BEST_IMAGE_ROLE)))
-        self.open_score_button.setEnabled(bool(current_item and self._item_data(current_item, BEST_SCORE_IMAGE_ROLE)))
-        self.open_overlay_button.setEnabled(bool(current_item and self._item_data(current_item, BEST_OVERLAY_IMAGE_ROLE)))
+            self._refresh_selection()
 
     def _refresh_log_row(self, item: QTreeWidgetItem | None = None) -> None:
         current_item = item or self.result_tree.currentItem()

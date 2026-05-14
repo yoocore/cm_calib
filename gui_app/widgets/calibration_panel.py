@@ -6,13 +6,13 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QBrush
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QCheckBox,
     QComboBox,
     QHBoxLayout,
     QGroupBox,
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QProgressBar,
     QPushButton,
     QSpinBox,
     QDoubleSpinBox,
@@ -25,6 +25,17 @@ from PySide6.QtWidgets import (
 
 _GREEN = QBrush(QColor("#4caf50"))
 _RED = QBrush(QColor("#e53935"))
+
+_STATUS_BADGE_STYLES = {
+    "idle": ("#546e7a", "#f4f7f9"),
+    "preparing": ("#ef6c00", "#fff3e0"),
+    "passive": ("#8d6e63", "#f6efe9"),
+    "ready": ("#2e7d32", "#e8f5e9"),
+    "running": ("#1565c0", "#e3f2fd"),
+    "finished": ("#00897b", "#e0f2f1"),
+    "failed": ("#c62828", "#ffebee"),
+    "stopped": ("#6d4c41", "#efebe9"),
+}
 
 _CM_ROOTS = [
     "D:/IPG/carmaker",
@@ -118,13 +129,28 @@ class CalibrationPanel(QGroupBox):
         self.precheck_tree.setHeaderLabels(["Camera", "Check", "Config", "Message"])
         self.precheck_tree.header().setStretchLastSection(True)
         self.status_label = QLabel("idle")
+        self.status_label.setAlignment(Qt.AlignCenter)
+        self.status_label.setMinimumHeight(34)
+        self.status_label.setMinimumWidth(120)
         self.estimate_label = QLabel("~ 0s")
         self.phase_label = QLabel("")
-        self.phase_label.setStyleSheet("color: #888; font-style: italic;")
+        self.phase_label.hide()
         self.failure_summary = QTextEdit()
         self.failure_summary.setReadOnly(True)
         self.failure_summary.setPlaceholderText("Failures in prepare/start/stop will be summarized here.")
         self.failure_summary.setMinimumHeight(96)
+        self.failure_summary.hide()
+        self.current_sensor_label = QLabel("Current Sensor: -")
+        self.overall_progress_bar = QProgressBar()
+        self.overall_progress_bar.setRange(0, 100)
+        self.overall_progress_bar.setValue(0)
+        self.overall_progress_detail_label = QLabel("0 / 0 | 0s / ~0s")
+        self.sensor_progress_tree = QTreeWidget()
+        self.sensor_progress_tree.setColumnCount(4)
+        self.sensor_progress_tree.setHeaderLabels(["Sensor", "Status", "Progress", "Elapsed / Est."])
+        self.sensor_progress_tree.header().setStretchLastSection(True)
+        self._sensor_progress_items: dict[str, QTreeWidgetItem] = {}
+        self._sensor_progress_bars: dict[str, QProgressBar] = {}
 
         self.start_button = QPushButton("Calib Start")
         self.stop_button = QPushButton("Calib Stop")
@@ -135,11 +161,13 @@ class CalibrationPanel(QGroupBox):
 
         cm_versions = detect_cm_versions()
         self.cm_version_combo = QComboBox()
+        self.cm_version_combo.addItem("请选择 CM 版本", None)
         if not cm_versions:
-            self.cm_version_combo.addItem("未检测到 CM 版本", None)
+            self.cm_version_combo.setItemText(0, "未检测到 CM 版本")
         else:
             for ver in cm_versions:
                 self.cm_version_combo.addItem(ver, cm_versions[ver])
+        self.cm_version_combo.setCurrentIndex(0)
 
         # --- Config hierarchy ---
         rounds_group = _SubGroup("Campaign Rounds")
@@ -178,6 +206,14 @@ class CalibrationPanel(QGroupBox):
         estimate_row.addWidget(self.estimate_label, 1)
         rounds_inner.addLayout(estimate_row)
 
+        progress_group = _SubGroup("Sensor Progress")
+        progress_inner = QVBoxLayout(progress_group)
+        progress_inner.setContentsMargins(8, 4, 8, 4)
+        progress_inner.addWidget(self.current_sensor_label)
+        progress_inner.addWidget(self.overall_progress_bar)
+        progress_inner.addWidget(self.overall_progress_detail_label)
+        progress_inner.addWidget(self.sensor_progress_tree)
+
         # --- Buttons ---
         button_row = QWidget(self)
         button_layout = QHBoxLayout(button_row)
@@ -203,14 +239,13 @@ class CalibrationPanel(QGroupBox):
         layout.addWidget(precheck_row)
         layout.addWidget(self.precheck_tree, 1)
         layout.addWidget(rounds_group)
+        layout.addWidget(progress_group, 1)
         status_row = QHBoxLayout()
         status_row.addWidget(QLabel("Status"))
         status_row.addWidget(self.status_label, 1)
         layout.addLayout(status_row)
-        layout.addWidget(self.phase_label)
         layout.addWidget(cm_row)
         layout.addWidget(button_row)
-        layout.addWidget(self.failure_summary)
 
         self.camera_list.itemChanged.connect(self._on_camera_selection_changed)
         self.camera_list.model().rowsMoved.connect(self._on_camera_rows_moved)
@@ -220,6 +255,7 @@ class CalibrationPanel(QGroupBox):
         self.refine_iters_spin.valueChanged.connect(lambda _v: self._update_estimated_time())
         self.jitter_spin.valueChanged.connect(lambda _v: self._update_estimated_time())
 
+        self.set_status("idle")
         self._update_estimated_time()
 
     @property
@@ -317,6 +353,60 @@ class CalibrationPanel(QGroupBox):
     def clear_failure_summary(self) -> None:
         self.failure_summary.clear()
 
+    def reset_sensor_progress(self) -> None:
+        self._rebuild_sensor_progress_plan()
+
+    def set_sensor_progress(
+        self,
+        camera_name: str,
+        *,
+        status: str,
+        progress_percent: int,
+        elapsed_seconds: int,
+        estimated_seconds: int,
+        detail: str | None = None,
+    ) -> None:
+        item = self._ensure_sensor_progress_item(camera_name, estimated_seconds)
+        item.setText(1, status)
+        progress_bar = self._sensor_progress_bars[camera_name]
+        progress_bar.setValue(max(0, min(100, int(progress_percent))))
+        duration_text = f"{self._format_duration(elapsed_seconds)} / ~{self._format_duration(estimated_seconds)}"
+        if detail:
+            duration_text += f" | {detail}"
+        item.setText(3, duration_text)
+        item.setToolTip(3, duration_text)
+
+    def set_overall_progress(
+        self,
+        *,
+        current_camera: str | None,
+        completed_count: int,
+        total_count: int,
+        progress_percent: int,
+        elapsed_seconds: int,
+        estimated_total_seconds: int,
+    ) -> None:
+        self.current_sensor_label.setText(f"Current Sensor: {current_camera or '-'}")
+        self.overall_progress_bar.setValue(max(0, min(100, int(progress_percent))))
+        self.overall_progress_detail_label.setText(
+            f"{completed_count} / {total_count} | {self._format_duration(elapsed_seconds)} / ~{self._format_duration(estimated_total_seconds)}"
+        )
+
+    def set_status(self, text: str | None) -> None:
+        status_text = (text or "").strip() or "idle"
+        border_color, background_color = _STATUS_BADGE_STYLES.get(status_text, ("#455a64", "#eceff1"))
+        self.status_label.setText(status_text)
+        self.status_label.setStyleSheet(
+            "QLabel {"
+            f"border: 2px solid {border_color};"
+            "border-radius: 8px;"
+            f"background-color: {background_color};"
+            f"color: {border_color};"
+            "font-weight: 700;"
+            "padding: 6px 12px;"
+            "}"
+        )
+
     def set_phase_label(self, text: str | None) -> None:
         self.phase_label.setText(text or "")
 
@@ -329,21 +419,60 @@ class CalibrationPanel(QGroupBox):
         self._update_estimated_time()
 
     def _update_estimated_time(self) -> None:
+        total_seconds = self.estimated_total_seconds()
+        if total_seconds <= 0:
+            self.estimate_label.setText("~ 0s")
+        else:
+            self.estimate_label.setText(f"~ {self._format_duration(total_seconds)}")
+        self._rebuild_sensor_progress_plan()
+
+    def estimated_total_seconds(self) -> int:
         camera_count = len(self.selected_cameras())
+        if camera_count <= 0:
+            return 0
+        return camera_count * self.estimated_per_camera_seconds()
+
+    def estimated_per_camera_seconds(self) -> int:
         campaign_rounds = int(self.campaign_rounds_spin.value())
         multi_start_count = int(self.multi_start_count_spin.value())
         multi_start_iters = int(self.multi_start_iters_spin.value()) or 30
         refine_iters = int(self.refine_iters_spin.value()) or 80
-
-        if camera_count <= 0:
-            self.estimate_label.setText("~ 0s")
-            return
-
         base_iter_count = refine_iters + max(0, multi_start_count) * max(10, multi_start_iters // 2)
+        per_round_seconds = max(45, int(round(base_iter_count * 3.5 + float(self.jitter_spin.value()) * 8.0)))
+        return max(1, campaign_rounds * per_round_seconds)
 
-        per_camera_seconds = max(45, int(round(base_iter_count * 3.5 + float(self.jitter_spin.value()) * 8.0)))
-        total_seconds = camera_count * campaign_rounds * per_camera_seconds
-        self.estimate_label.setText(f"~ {self._format_duration(total_seconds)}")
+    def _rebuild_sensor_progress_plan(self) -> None:
+        cameras = self.selected_cameras()
+        estimated_per_camera = self.estimated_per_camera_seconds() if cameras else 0
+        self.sensor_progress_tree.clear()
+        self._sensor_progress_items.clear()
+        self._sensor_progress_bars.clear()
+        for camera_name in cameras:
+            self._ensure_sensor_progress_item(camera_name, estimated_per_camera)
+        self.set_overall_progress(
+            current_camera=None,
+            completed_count=0,
+            total_count=len(cameras),
+            progress_percent=0,
+            elapsed_seconds=0,
+            estimated_total_seconds=self.estimated_total_seconds(),
+        )
+
+    def _ensure_sensor_progress_item(self, camera_name: str, estimated_seconds: int) -> QTreeWidgetItem:
+        item = self._sensor_progress_items.get(camera_name)
+        if item is not None:
+            return item
+        item = QTreeWidgetItem(self.sensor_progress_tree)
+        item.setText(0, camera_name)
+        item.setText(1, "pending")
+        item.setText(3, f"0s / ~{self._format_duration(estimated_seconds)}")
+        progress_bar = QProgressBar(self.sensor_progress_tree)
+        progress_bar.setRange(0, 100)
+        progress_bar.setValue(0)
+        self.sensor_progress_tree.setItemWidget(item, 2, progress_bar)
+        self._sensor_progress_items[camera_name] = item
+        self._sensor_progress_bars[camera_name] = progress_bar
+        return item
 
     @staticmethod
     def _format_duration(total_seconds: int) -> str:

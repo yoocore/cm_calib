@@ -5117,6 +5117,20 @@ class TotalScoreDetail:
     failed_reason: Optional[str] = None
 
 
+def _build_annotation_legend_lines(total_detail: TotalScoreDetail) -> List[str]:
+    isolated_outlier_board_set = set(total_detail.isolated_outlier_boards)
+    lines: List[str] = []
+    for score in total_detail.board_scores:
+        if score.compared:
+            line = f"{score.board_id}: {score.total_score:.3f}"
+            if score.board_id in isolated_outlier_board_set:
+                line += " (excluded)"
+        else:
+            line = f"{score.board_id}: skipped"
+        lines.append(line)
+    return lines
+
+
 @dataclass
 class AcceptanceDecision:
     passed: bool
@@ -7941,22 +7955,23 @@ class CameraCalibrator:
             f"compared={total_detail.compared_board_count} "
             f"degrade={total_detail.degrade_penalty:.3f}"
         )
+        isolated_outlier_text = None
+        if total_detail.isolated_outlier_boards:
+            isolated_outlier_text = "excluded=" + ", ".join(total_detail.isolated_outlier_boards)
 
         param_values = values or self._snapshot_values()
         info_lines: List[Tuple[str, Tuple[int, int, int]]] = [
             (header, (245, 245, 245)),
             (summary, (230, 235, 245)),
         ]
+        if isolated_outlier_text:
+            info_lines.append((isolated_outlier_text, (180, 180, 240)))
         info_lines.extend(
             (line, (220, 245, 220)) for line in self._format_value_lines(param_values)
         )
-        for index, score in enumerate(board_scores):
+        legend_lines = _build_annotation_legend_lines(total_detail)
+        for index, legend_text in enumerate(legend_lines):
             color = palette[index % len(palette)]
-            legend_text = (
-                f"{score.board_id}: {score.total_score:.3f}"
-                if score.compared
-                else f"{score.board_id}: skipped"
-            )
             info_lines.append((legend_text, color))
 
         font = cv2.FONT_HERSHEY_SIMPLEX
@@ -8005,7 +8020,7 @@ class CameraCalibrator:
         final_output = output_path or image_path.with_name(f"{image_path.stem}_annotated.png")
         final_output.parent.mkdir(parents=True, exist_ok=True)
         cv2.imwrite(str(final_output), annotated_canvas)
-        return final_output, board_scores
+        return final_output, total_detail.board_scores
 
     @staticmethod
     def _best_score_image_output_path(image_path: Path) -> Path:

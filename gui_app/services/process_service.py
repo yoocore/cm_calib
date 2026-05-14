@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QProcess, Signal
+
+from portable_runtime import build_python_command
 
 
 class ProcessService(QObject):
@@ -35,9 +36,14 @@ class ProcessService(QObject):
         if self.is_running:
             raise RuntimeError("A process is already running")
         self._stdout_buffer = ""
+        program, argv = build_python_command(
+            script_path,
+            arguments,
+            python_executable=python_executable,
+        )
         self._process.setWorkingDirectory(str(working_directory))
-        self._process.setProgram(str(python_executable or sys.executable))
-        self._process.setArguments([str(script_path), *arguments])
+        self._process.setProgram(program)
+        self._process.setArguments(argv)
         self._process.start()
 
     def stop(self) -> None:

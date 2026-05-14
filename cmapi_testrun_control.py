@@ -12,6 +12,8 @@ import sys
 import time
 from typing import Any, Optional
 
+from portable_runtime import apply_cmapi_to_current_process
+
 # Pre-parse --cm-install to add cmapi to sys.path before importing
 _cm_install_arg: str | None = None
 for _i, _arg in enumerate(sys.argv):
@@ -19,18 +21,9 @@ for _i, _arg in enumerate(sys.argv):
         _cm_install_arg = sys.argv[_i + 1]
         break
 if _cm_install_arg:
-    _cm_root = Path(_cm_install_arg)
-    for _sub in ("Python/Lib/site-packages", "Python/Lib", "pylib"):
-        _p = _cm_root / _sub
-        if any((_p / _candidate).exists() for _candidate in ("cmapi", "cmapi.py", "cmapi.pyd")):
-            if str(_p) not in sys.path:
-                sys.path.insert(0, str(_p))
-            break
-    else:
-        for _sub in ("Python/Lib/site-packages", "Python/Lib", "pylib"):
-            _p = _cm_root / _sub
-            if str(_p) not in sys.path:
-                sys.path.insert(0, str(_p))
+    apply_cmapi_to_current_process(Path(_cm_install_arg))
+else:
+    apply_cmapi_to_current_process()
 
 import cmapi
 from dde_health_check import classify_health_summary, default_output_dir, render_dde_execute_script, render_result_script, run_check_attempt, run_read_only_health_suite
@@ -87,6 +80,32 @@ class VehicleSensorActivationError(RuntimeError):
 
 def emit_summary_json(payload: dict[str, Any]) -> None:
     print(CMAPI_CONTROL_SUMMARY_PREFIX, json.dumps(payload, ensure_ascii=False, sort_keys=True))
+
+
+def _movie_background_tcl_commands(*, include_root: bool = True) -> list[str]:
+    commands: list[str] = []
+    if include_root:
+        commands.extend(
+            [
+                'catch {wm attributes . -topmost 0}',
+                'catch {wm lower .}',
+            ]
+        )
+    commands.extend(
+        [
+            'if {[winfo exists .camera]} {',
+            '    catch {wm attributes .camera -topmost 0}',
+            '    catch {wm lower .camera}',
+            '}',
+            'if {[winfo exists .camera.cammoddlg]} {',
+            '    catch {wm attributes .camera.cammoddlg -topmost 0}',
+            '    catch {wm lower .camera.cammoddlg}',
+            '}',
+            'update',
+            'update idletasks',
+        ]
+    )
+    return commands
 
 
 def _run_powershell_json(command: str) -> list[dict[str, Any]]:
@@ -627,6 +646,8 @@ def build_status_summary(
 ) -> dict[str, Any]:
     processes = list_cm_processes()
     carmakers = list_carmaker_processes()
+    runtime_carmakers = list_runtime_carmaker_processes(carmakers)
+    gui_carmakers = [proc for proc in carmakers if proc.get("Name") == "HIL.exe"]
     gui_movies = list_gui_movie_processes()
     gpusensor_movies = list_gpusensor_movie_processes()
     running_projectdir = probe_running_carmaker_projectdir()
@@ -655,8 +676,10 @@ def build_status_summary(
         status_issues.append(
             f"CarMaker projectdir mismatch: expected {project_root.as_posix()}, got {running_projectdir.as_posix()}"
         )
-    if len(carmakers) != 1:
-        status_issues.append(f"expected exactly 1 CarMaker runtime, found {len(carmakers)}")
+    if len(runtime_carmakers) != 1:
+        status_issues.append(f"expected exactly 1 CarMaker backend runtime, found {len(runtime_carmakers)}")
+    if len(gui_carmakers) < 1:
+        status_issues.append("CarMaker GUI (HIL.exe) is not running")
     if len(gui_movies) < 1:
         status_issues.append("GUI Movie is not running")
     if not active_sensors:
@@ -680,6 +703,8 @@ def build_status_summary(
         "processes": processes,
         "process_counts": {
             "carmaker": len(carmakers),
+            "carmaker_runtime": len(runtime_carmakers),
+            "carmaker_gui": len(gui_carmakers),
             "gui_movie": len(gui_movies),
             "gpusensor_movie": len(gpusensor_movies),
         },
@@ -1548,6 +1573,7 @@ def wait_for_movie_scene_ready(
                     'set abraxas_menu_ready [expr {[winfo exists $abraxas_menu] ? 1 : 0}]',
                     'set camera_widget [expr {[winfo exists .camera] ? 1 : 0}]',
                     'if {[info exists Camera::v(Name)]} {set camera_name $Camera::v(Name)} else {set camera_name ""}',
+                    *_movie_background_tcl_commands(include_root=True),
                     'format "width=%s;height=%s;camera_widget=%s;camera_name=%s;abraxas_menu_ready=%s" $wi $he $camera_widget $camera_name $abraxas_menu_ready',
                 ],
             ),
@@ -1637,6 +1663,7 @@ def wait_for_movie_runtime_online_relaxed(
                     'set abraxas_menu ".view${vno}.mbar.view.m.show"',
                     'set abraxas_menu_ready [expr {[winfo exists $abraxas_menu] ? 1 : 0}]',
                     'if {[info exists Camera::v(Name)]} {set camera_name $Camera::v(Name)} else {set camera_name ""}',
+                    *_movie_background_tcl_commands(include_root=True),
                     'format "width=%s;height=%s;camera_name=%s;abraxas_menu_ready=%s" $wi $he $camera_name $abraxas_menu_ready',
                 ],
             ),
@@ -1793,6 +1820,7 @@ def ensure_movie_camera_selected(
         '.camera.btn.set invoke',
         'update',
         'update idletasks',
+        *_movie_background_tcl_commands(include_root=True),
     ]
     result = run_check_attempt(
         name=probe_name,
@@ -1907,6 +1935,7 @@ def ensure_movie_camera_widgets(
                 '}',
                 'update',
                 'update idletasks',
+                *_movie_background_tcl_commands(include_root=True),
                 'set after_camera [expr {[winfo exists .camera] ? 1 : 0}]',
                 'set after_lens [expr {[winfo exists .camera.cammoddlg] ? 1 : 0}]',
                 'set lens_state [expr {[winfo exists .camera.cammoddlg] ? [wm state .camera.cammoddlg] : "missing"}]',
@@ -1962,6 +1991,7 @@ def ensure_movie_camera_dialogs_normal(
                 '}',
                 "update",
                 "update idletasks",
+                *_movie_background_tcl_commands(include_root=True),
                 'set camera_exists [expr {[winfo exists .camera] ? 1 : 0}]',
                 'set camera_title [expr {[winfo exists .camera] ? [wm title .camera] : ""}]',
                 'set camera_state [expr {[winfo exists .camera] ? [wm state .camera] : "missing"}]',

@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QBrush
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
@@ -11,16 +10,10 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QListWidget,
-    QListWidgetItem,
     QPushButton,
     QVBoxLayout,
     QWidget,
 )
-
-
-_GREEN = QBrush(QColor("#4caf50"))
-_GRAY = QBrush(QColor("#888888"))
 
 _DEFAULT_BROWSE_ROOT = "C:/CM_Projects"
 
@@ -28,6 +21,7 @@ _DEFAULT_BROWSE_ROOT = "C:/CM_Projects"
 class RuntimePanel(QGroupBox):
     project_root_changed = Signal(str)
     testrun_changed = Signal(str)
+    status_query_clicked = Signal()
 
     def __init__(self, _project_root: Path, parent: QWidget | None = None):
         super().__init__("Runtime", parent)
@@ -36,13 +30,13 @@ class RuntimePanel(QGroupBox):
         self.testrun_edit = QLineEdit()
         self.testrun_edit.setPlaceholderText("e.g. vctc_ngxpro")
         self.vehicle_label = QLabel("-")
-        self.sensor_list = QListWidget()
-        self.sensor_list.setSpacing(2)
         self.browse_button = QPushButton("Browse")
         self.testrun_browse_button = QPushButton("Browse")
+        self.status_query_button = QPushButton("Query Status")
 
         self.browse_button.clicked.connect(self._browse_project_root)
         self.testrun_browse_button.clicked.connect(self._browse_testrun)
+        self.status_query_button.clicked.connect(self.status_query_clicked.emit)
         self.project_root_edit.editingFinished.connect(lambda: self.project_root_changed.emit(self.project_root_edit.text()))
         self.testrun_edit.editingFinished.connect(lambda: self.testrun_changed.emit(self.testrun_edit.text()))
 
@@ -62,10 +56,10 @@ class RuntimePanel(QGroupBox):
         form.addRow("ProjectDir", proj_row)
         form.addRow("TestRun", testrun_row)
         form.addRow("Vehicle", self.vehicle_label)
-        form.addRow("Sensors", self.sensor_list)
 
         wrapper = QVBoxLayout(self)
         wrapper.addLayout(form)
+        wrapper.addWidget(self.status_query_button)
         wrapper.addStretch(1)
 
     def _browse_project_root(self) -> None:
@@ -86,25 +80,13 @@ class RuntimePanel(QGroupBox):
             self.testrun_changed.emit(path)
 
     def update_sensor_list(self, sensors: list[dict]) -> None:
-        self.sensor_list.clear()
-        for s in sensors:
-            name = str(s.get("name", ""))
-            active = bool(s.get("active", False))
-            item = QListWidgetItem(name)
-            if active:
-                item.setForeground(_GREEN)
-                item.setText(f"● {name}")
-            else:
-                item.setForeground(_GRAY)
-                item.setText(f"○ {name}")
-            item.setToolTip(f"active={active}")
-            self.sensor_list.addItem(item)
+        _ = sensors
 
     def set_runtime_summary(self, payload: dict) -> None:
         pass  # runtime summary displayed in calibration panel
 
     def clear_sensor_list(self) -> None:
-        self.sensor_list.clear()
+        return
 
     def set_inputs_locked(self, locked: bool) -> None:
         tip = "Stop calibration first to modify" if locked else ""
@@ -116,3 +98,5 @@ class RuntimePanel(QGroupBox):
         self.browse_button.setToolTip(tip)
         self.testrun_browse_button.setEnabled(not locked)
         self.testrun_browse_button.setToolTip(tip)
+        self.status_query_button.setEnabled(not locked)
+        self.status_query_button.setToolTip(tip)

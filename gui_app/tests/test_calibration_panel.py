@@ -1,31 +1,88 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+from PySide6.QtCore import Qt
+
 from gui_app.widgets.calibration_panel import CalibrationPanel
 
 
 class TestCalibrationPanel:
-    def test_phase_label_default_empty(self, qtbot):
+    def test_cm_version_defaults_to_empty_selection(self, qtbot, mocker):
+        mocker.patch(
+            "gui_app.widgets.calibration_panel.detect_cm_versions",
+            return_value={"14.1": Path("D:/IPG/carmaker/win64-14.1")},
+        )
         panel = CalibrationPanel()
         qtbot.addWidget(panel)
-        assert panel.phase_label.text() == ""
 
-    def test_set_phase_label_shows_text(self, qtbot):
-        panel = CalibrationPanel()
-        qtbot.addWidget(panel)
-        panel.set_phase_label("test phase")
-        assert panel.phase_label.text() == "test phase"
+        assert panel.cm_version_combo.currentText() == "请选择 CM 版本"
+        assert panel.cm_install_path is None
 
-    def test_set_phase_label_clears_with_none(self, qtbot):
+    def test_phase_label_hidden(self, qtbot):
         panel = CalibrationPanel()
         qtbot.addWidget(panel)
-        panel.set_phase_label("something")
-        panel.set_phase_label(None)
-        assert panel.phase_label.text() == ""
+        assert panel.phase_label.isHidden() is True
+        assert panel.failure_summary.isHidden() is True
+
+    def test_status_badge_default_idle(self, qtbot):
+        panel = CalibrationPanel()
+        qtbot.addWidget(panel)
+        assert panel.status_label.text() == "idle"
+        stylesheet = panel.status_label.styleSheet()
+        assert "border: 2px solid" in stylesheet
+        assert "font-weight: 700" in stylesheet
+
+    def test_set_status_updates_badge_style(self, qtbot):
+        panel = CalibrationPanel()
+        qtbot.addWidget(panel)
+        panel.set_status("ready")
+        assert panel.status_label.text() == "ready"
+        ready_stylesheet = panel.status_label.styleSheet()
+        assert "#2e7d32" in ready_stylesheet
+        panel.set_status("failed")
+        assert panel.status_label.text() == "failed"
+        failed_stylesheet = panel.status_label.styleSheet()
+        assert "#c62828" in failed_stylesheet
+        assert failed_stylesheet != ready_stylesheet
 
     def test_estimated_time_zero_cameras(self, qtbot):
         panel = CalibrationPanel()
         qtbot.addWidget(panel)
         assert "0s" in panel.estimate_label.text()
+
+    def test_sensor_progress_plan_and_runtime_update(self, qtbot):
+        panel = CalibrationPanel()
+        qtbot.addWidget(panel)
+        panel.set_cameras(["cam1", "cam2"])
+        panel.camera_list.item(0).setCheckState(Qt.Checked)
+        panel.camera_list.item(1).setCheckState(Qt.Checked)
+
+        assert panel.sensor_progress_tree.topLevelItemCount() == 2
+
+        panel.set_sensor_progress(
+            "cam1",
+            status="running",
+            progress_percent=42,
+            elapsed_seconds=84,
+            estimated_seconds=200,
+            detail="iter=12",
+        )
+        panel.set_overall_progress(
+            current_camera="cam1",
+            completed_count=0,
+            total_count=2,
+            progress_percent=21,
+            elapsed_seconds=84,
+            estimated_total_seconds=400,
+        )
+
+        item = panel.sensor_progress_tree.topLevelItem(0)
+        progress_bar = panel.sensor_progress_tree.itemWidget(item, 2)
+        assert item.text(1) == "running"
+        assert progress_bar.value() == 42
+        assert "iter=12" in item.text(3)
+        assert panel.current_sensor_label.text() == "Current Sensor: cam1"
 
     def test_update_precheck_results_shows_checkmarks(self, qtbot):
         panel = CalibrationPanel()
@@ -38,7 +95,7 @@ class TestCalibrationPanel:
         item_ok = panel.precheck_tree.topLevelItem(0)
         item_fail = panel.precheck_tree.topLevelItem(1)
         assert item_ok.text(1) == "✓"
-        assert item_fail.text(1) == "✗"
+        assert item_fail.text(1) == "✗ missing file"
 
     def test_generate_configs_ready_after_all_ok(self, qtbot):
         panel = CalibrationPanel()

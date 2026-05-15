@@ -812,11 +812,10 @@ class MainWindow(QMainWindow):
             elif best_score is not None:
                 progress_detail = f"best={best_score:.4f}"
             self._set_camera_progress_state(camera_name, "running", detail=progress_detail)
-            progress_line = f"{camera_name}: 标定进行中"
-            if iter_index is not None:
-                progress_line += f" iter={iter_index}"
+            progress_line = f"{camera_name}: iter={iter_index or '?'}"
             if best_score is not None:
                 progress_line += f" best={best_score:.6f}"
+            self.output_panel.append_log(progress_line, source="calibration")
             self._append_status_summary_line(progress_line)
             self.output_panel.update_camera_result(
                 CameraResult(

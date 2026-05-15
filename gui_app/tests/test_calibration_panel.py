@@ -5,6 +5,8 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 
 from gui_app.widgets.calibration_panel import CalibrationPanel
+from gui_app.widgets.cm_settings_panel import CmSettingsPanel
+from gui_app.widgets.sensor_progress_panel import SensorProgressPanel
 
 
 class TestCalibrationPanel:
@@ -46,17 +48,55 @@ class TestCalibrationPanel:
         assert "#c62828" in failed_stylesheet
         assert failed_stylesheet != ready_stylesheet
 
-    def test_estimated_time_zero_cameras(self, qtbot):
+    def test_estimated_time_shows_per_camera(self, qtbot):
         panel = CalibrationPanel()
         qtbot.addWidget(panel)
-        assert "0s" in panel.estimate_label.text()
+        assert "/ camera" in panel.estimate_label.text()
 
-    def test_sensor_progress_plan_and_runtime_update(self, qtbot):
-        panel = CalibrationPanel()
+
+class TestCmSettingsPanel:
+    def test_update_precheck_results_shows_checkmarks(self, qtbot):
+        panel = CmSettingsPanel()
         qtbot.addWidget(panel)
-        panel.set_cameras(["cam1", "cam2"])
-        panel.camera_list.item(0).setCheckState(Qt.Checked)
-        panel.camera_list.item(1).setCheckState(Qt.Checked)
+        panel.update_precheck_results([
+            {"camera": "cam1", "ok": True, "message": "ok"},
+            {"camera": "cam2", "ok": False, "message": "missing file"},
+        ])
+        assert panel.precheck_tree.topLevelItemCount() == 2
+        item_ok = panel.precheck_tree.topLevelItem(0)
+        item_fail = panel.precheck_tree.topLevelItem(1)
+        assert item_ok.text(1) == "✓"
+        assert item_fail.text(1) == "✗ missing file"
+
+    def test_generate_configs_ready_after_all_ok(self, qtbot):
+        panel = CmSettingsPanel()
+        qtbot.addWidget(panel)
+        panel.update_precheck_results([
+            {"camera": "cam1", "ok": True, "message": "ok"},
+        ])
+        assert panel._generate_configs_ready is True
+        assert panel.generate_config_button.isEnabled() is True
+
+    def test_generate_configs_not_ready_after_any_fail(self, qtbot):
+        panel = CmSettingsPanel()
+        qtbot.addWidget(panel)
+        panel.update_precheck_results([
+            {"camera": "cam1", "ok": False, "message": "fail"},
+        ])
+        assert panel._generate_configs_ready is False
+        assert panel.generate_config_button.isEnabled() is False
+
+
+class TestSensorProgressPanel:
+    def test_sensor_progress_plan_and_runtime_update(self, qtbot):
+        panel = SensorProgressPanel()
+        qtbot.addWidget(panel)
+
+        panel.reset_sensor_progress(
+            cameras=["cam1", "cam2"],
+            estimated_per_camera=200,
+            estimated_total=400,
+        )
 
         assert panel.sensor_progress_tree.topLevelItemCount() == 2
 
@@ -83,34 +123,3 @@ class TestCalibrationPanel:
         assert progress_bar.value() == 42
         assert "iter=12" in item.text(3)
         assert panel.current_sensor_label.text() == "Current Sensor: cam1"
-
-    def test_update_precheck_results_shows_checkmarks(self, qtbot):
-        panel = CalibrationPanel()
-        qtbot.addWidget(panel)
-        panel.update_precheck_results([
-            {"camera": "cam1", "ok": True, "message": "ok"},
-            {"camera": "cam2", "ok": False, "message": "missing file"},
-        ])
-        assert panel.precheck_tree.topLevelItemCount() == 2
-        item_ok = panel.precheck_tree.topLevelItem(0)
-        item_fail = panel.precheck_tree.topLevelItem(1)
-        assert item_ok.text(1) == "✓"
-        assert item_fail.text(1) == "✗ missing file"
-
-    def test_generate_configs_ready_after_all_ok(self, qtbot):
-        panel = CalibrationPanel()
-        qtbot.addWidget(panel)
-        panel.update_precheck_results([
-            {"camera": "cam1", "ok": True, "message": "ok"},
-        ])
-        assert panel._generate_configs_ready is True
-        assert panel.generate_config_button.isEnabled() is True
-
-    def test_generate_configs_not_ready_after_any_fail(self, qtbot):
-        panel = CalibrationPanel()
-        qtbot.addWidget(panel)
-        panel.update_precheck_results([
-            {"camera": "cam1", "ok": False, "message": "fail"},
-        ])
-        assert panel._generate_configs_ready is False
-        assert panel.generate_config_button.isEnabled() is False

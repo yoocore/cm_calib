@@ -36,11 +36,14 @@ class TestMainWindowCameraList:
         window = MainWindow(project_root)
         qtbot.addWidget(window)
 
-        splitter = window.centralWidget()
-        assert splitter.count() == 2
-        assert window.runtime_panel.parentWidget() is window.left_panel
-        assert window.calibration_panel.parentWidget() is window.left_panel
-        assert not hasattr(window.runtime_panel, "sensor_list")
+        outer_splitter = window.centralWidget()
+        assert outer_splitter.count() == 2
+        left_mid_container = outer_splitter.widget(0)
+        inner_splitter = left_mid_container.findChild(type(outer_splitter))
+        assert inner_splitter.count() == 2
+        assert window.cm_settings_panel.parentWidget() is inner_splitter
+        assert window.calibration_panel.parentWidget() is inner_splitter
+        assert not hasattr(window.cm_settings_panel, "sensor_list")
 
     def test_camera_list_stays_empty_without_testrun(self, qtbot, tmp_path):
         project_root = tmp_path / "project"
@@ -49,8 +52,8 @@ class TestMainWindowCameraList:
         window = MainWindow(project_root)
         qtbot.addWidget(window)
 
-        assert window.runtime_panel.testrun_edit.text() == ""
-        assert window.calibration_panel.camera_list.count() == 0
+        assert window.cm_settings_panel.testrun_edit.text() == ""
+        assert window.cm_settings_panel.camera_list.count() == 0
 
     def test_camera_list_populates_after_testrun_selected(self, qtbot, tmp_path):
         project_root = tmp_path / "project"
@@ -59,8 +62,8 @@ class TestMainWindowCameraList:
         window = MainWindow(project_root)
         qtbot.addWidget(window)
 
-        window.runtime_panel.testrun_edit.setText("vctc_ngxpro")
+        window.cm_settings_panel.testrun_edit.setText("vctc_ngxpro")
         window._on_testrun_changed("vctc_ngxpro")
 
-        assert window.calibration_panel.camera_list.count() == 1
-        assert window.calibration_panel.camera_list.item(0).text() == "cam1"
+        assert window.cm_settings_panel.camera_list.count() == 1
+        assert window.cm_settings_panel.camera_list.item(0).text() == "cam1"

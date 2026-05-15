@@ -248,10 +248,10 @@ class TestCalibStartFlow:
         main_window._on_orchestration_event({"event": "camera_prepare_started", "camera": "cam1"})
         main_window._on_orchestration_event({"event": "camera_run_started", "camera": "cam1"})
 
-        assert main_window.calibration_panel.current_sensor_label.text() == "Current Sensor: cam1"
-        assert main_window.calibration_panel.sensor_progress_tree.topLevelItemCount() == 1
-        item = main_window.calibration_panel.sensor_progress_tree.topLevelItem(0)
-        progress_bar = main_window.calibration_panel.sensor_progress_tree.itemWidget(item, 2)
+        assert main_window.sensor_progress_panel.current_sensor_label.text() == "Current Sensor: cam1"
+        assert main_window.sensor_progress_panel.sensor_progress_tree.topLevelItemCount() == 1
+        item = main_window.sensor_progress_panel.sensor_progress_tree.topLevelItem(0)
+        progress_bar = main_window.sensor_progress_panel.sensor_progress_tree.itemWidget(item, 2)
         assert item.text(1) == "running"
         assert progress_bar.value() >= 0
 
@@ -308,16 +308,16 @@ class TestCalibStartFlow:
     def test_status_query_button_only_enabled_for_manual_query_states(self, main_window: MainWindow):
         """手动状态查询按钮只应在 passive/finished/failed/stopped 时可用"""
         main_window._apply_status(AppStatus.PASSIVE)
-        assert main_window.runtime_panel.status_query_button.isEnabled() is True
+        assert main_window.calibration_panel.status_query_button.isEnabled() is True
 
         main_window._apply_status(AppStatus.FAILED)
-        assert main_window.runtime_panel.status_query_button.isEnabled() is True
+        assert main_window.calibration_panel.status_query_button.isEnabled() is True
 
         main_window._apply_status(AppStatus.READY)
-        assert main_window.runtime_panel.status_query_button.isEnabled() is False
+        assert main_window.calibration_panel.status_query_button.isEnabled() is False
 
         main_window._apply_status(AppStatus.RUNNING)
-        assert main_window.runtime_panel.status_query_button.isEnabled() is False
+        assert main_window.calibration_panel.status_query_button.isEnabled() is False
 
     def test_manual_status_query_uses_current_cm_install(self, main_window: MainWindow):
         """手动状态查询应使用当前选中的 CM 版本"""

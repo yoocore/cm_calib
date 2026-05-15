@@ -16,8 +16,9 @@ from gui_app.services.runtime_service import RuntimeService
 from gui_app.services.static_vehicle_reader import resolve_vehicle_info
 
 from gui_app.widgets.calibration_panel import CalibrationPanel
+from gui_app.widgets.cm_settings_panel import CmSettingsPanel
 from gui_app.widgets.output_panel import OutputPanel
-from gui_app.widgets.runtime_panel import RuntimePanel
+from gui_app.widgets.sensor_progress_panel import SensorProgressPanel
 
 
 class MainWindow(QMainWindow):
@@ -45,22 +46,28 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Camera Calibration Console")
         self.resize(1500, 900)
 
-        self.runtime_panel = RuntimePanel(self.project_root, self)
+        self.cm_settings_panel = CmSettingsPanel(self)
         self.calibration_panel = CalibrationPanel(self)
+        self.sensor_progress_panel = SensorProgressPanel(self)
         self.output_panel = OutputPanel(self)
 
-        self.left_panel = QWidget(self)
-        left_layout = QVBoxLayout(self.left_panel)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(10)
-        left_layout.addWidget(self.runtime_panel)
-        left_layout.addWidget(self.calibration_panel, 1)
+        left_mid_splitter = QSplitter(Qt.Horizontal, self)
+        left_mid_splitter.addWidget(self.cm_settings_panel)
+        left_mid_splitter.addWidget(self.calibration_panel)
+        left_mid_splitter.setSizes([400, 400])
 
-        splitter = QSplitter(Qt.Horizontal, self)
-        splitter.addWidget(self.left_panel)
-        splitter.addWidget(self.output_panel)
-        splitter.setSizes([700, 800])
-        self.setCentralWidget(splitter)
+        left_mid_container = QWidget(self)
+        left_mid_layout = QVBoxLayout(left_mid_container)
+        left_mid_layout.setContentsMargins(0, 0, 0, 0)
+        left_mid_layout.setSpacing(6)
+        left_mid_layout.addWidget(left_mid_splitter, 1)
+        left_mid_layout.addWidget(self.sensor_progress_panel)
+
+        outer_splitter = QSplitter(Qt.Horizontal, self)
+        outer_splitter.addWidget(left_mid_container)
+        outer_splitter.addWidget(self.output_panel)
+        outer_splitter.setSizes([800, 700])
+        self.setCentralWidget(outer_splitter)
 
         self._refresh_static_timer = QTimer(self)
         self._refresh_static_timer.setInterval(1000)
@@ -77,12 +84,14 @@ class MainWindow(QMainWindow):
     def _wire_signals(self) -> None:
         self.calibration_panel.start_button.clicked.connect(self._start_calibration)
         self.calibration_panel.stop_button.clicked.connect(self._stop_calibration)
-        self.calibration_panel.precheck_button.clicked.connect(self._run_precheck)
-        self.calibration_panel.generate_config_button.clicked.connect(self._generate_configs)
+        self.cm_settings_panel.precheck_clicked.connect(self._run_precheck)
+        self.cm_settings_panel.generate_config_clicked.connect(self._generate_configs)
         self.calibration_panel.prepare_clicked.connect(self._prepare_runtime)
-        self.runtime_panel.project_root_changed.connect(self._on_project_root_changed)
-        self.runtime_panel.testrun_changed.connect(self._on_testrun_changed)
-        self.runtime_panel.status_query_clicked.connect(self._query_runtime_status)
+        self.calibration_panel.status_query_clicked.connect(self._query_runtime_status)
+        self.cm_settings_panel.project_root_changed.connect(self._on_project_root_changed)
+        self.cm_settings_panel.testrun_changed.connect(self._on_testrun_changed)
+        self.cm_settings_panel.camera_selection_changed.connect(self._rebuild_sensor_progress_plan)
+        self.calibration_panel.estimated_time_changed.connect(self._rebuild_sensor_progress_plan)
 
         self.runtime_service.line_received.connect(self._on_runtime_line)
         self.runtime_service.runtime_summary.connect(self._on_runtime_summary)
@@ -97,33 +106,33 @@ class MainWindow(QMainWindow):
         self.calibration_service.orchestration_summary.connect(self._on_orchestration_summary)
 
     def _refresh_camera_list(self) -> None:
-        project_root = Path(self.runtime_panel.project_root_edit.text().strip() or self.project_root)
-        testrun = self.runtime_panel.testrun_edit.text().strip()
+        project_root = Path(self.cm_settings_panel.project_root_edit.text().strip() or self.project_root)
+        testrun = self.cm_settings_panel.testrun_edit.text().strip()
         if not testrun:
-            self.calibration_panel.set_cameras([])
+            self.cm_settings_panel.set_cameras([])
             return
         try:
             info = resolve_vehicle_info(project_root, testrun)
             sensors = [s["name"] for s in info.get("sensors", [])]
         except Exception:
             sensors = []
-        self.calibration_panel.set_cameras(sensors)
+        self.cm_settings_panel.set_cameras(sensors)
 
     def _refresh_static_info(self) -> None:
-        project_root = Path(self.runtime_panel.project_root_edit.text().strip() or self.project_root)
-        testrun = self.runtime_panel.testrun_edit.text().strip()
+        project_root = Path(self.cm_settings_panel.project_root_edit.text().strip() or self.project_root)
+        testrun = self.cm_settings_panel.testrun_edit.text().strip()
         if not testrun:
-            self.runtime_panel.vehicle_label.setText("-")
-            self.runtime_panel.clear_sensor_list()
+            self.cm_settings_panel.vehicle_label.setText("-")
+            self.cm_settings_panel.clear_sensor_list()
             self._refresh_calibration_progress()
             return
         try:
             info = resolve_vehicle_info(project_root, testrun)
-            self.runtime_panel.vehicle_label.setText(info["vehicle_key"])
-            self.runtime_panel.update_sensor_list(info["sensors"])
+            self.cm_settings_panel.vehicle_label.setText(info["vehicle_key"])
+            self.cm_settings_panel.update_sensor_list(info["sensors"])
         except Exception:
-            self.runtime_panel.vehicle_label.setText("-")
-            self.runtime_panel.clear_sensor_list()
+            self.cm_settings_panel.vehicle_label.setText("-")
+            self.cm_settings_panel.clear_sensor_list()
         self._refresh_calibration_progress()
 
     def _set_red_failure(self, text: str) -> None:
@@ -172,7 +181,7 @@ class MainWindow(QMainWindow):
         self.calibration_panel.set_failure_summary("\n".join(self._status_summary_lines))
 
     def _progress_cameras(self) -> list[str]:
-        return list(self.state.selected_cameras or self.calibration_panel.selected_cameras())
+        return list(self.state.selected_cameras or self.cm_settings_panel.selected_cameras())
 
     def _reset_calibration_progress_tracking(self) -> None:
         cameras = self._progress_cameras()
@@ -181,13 +190,19 @@ class MainWindow(QMainWindow):
         self._camera_elapsed_final = {}
         self._camera_progress_status = {camera_name: "pending" for camera_name in cameras}
         self._camera_progress_detail = {}
-        self.calibration_panel.reset_sensor_progress()
+        self._rebuild_sensor_progress_plan()
         self._refresh_calibration_progress()
 
     def _begin_calibration_progress_tracking(self) -> None:
         self._reset_calibration_progress_tracking()
         self._calibration_task_started_at = time.monotonic()
         self._refresh_calibration_progress()
+
+    def _rebuild_sensor_progress_plan(self) -> None:
+        cameras = self.cm_settings_panel.selected_cameras()
+        estimated_per_camera = self.calibration_panel.estimated_per_camera_seconds() if cameras else 0
+        estimated_total = estimated_per_camera * len(cameras) if cameras else 0
+        self.sensor_progress_panel.reset_sensor_progress(cameras, estimated_per_camera, estimated_total)
 
     def _set_camera_progress_state(
         self,
@@ -222,11 +237,11 @@ class MainWindow(QMainWindow):
     def _refresh_calibration_progress(self) -> None:
         cameras = self._progress_cameras()
         if not cameras:
-            self.calibration_panel.reset_sensor_progress()
+            self._rebuild_sensor_progress_plan()
             return
 
         estimated_per_camera = self.calibration_panel.estimated_per_camera_seconds()
-        estimated_total = self.calibration_panel.estimated_total_seconds()
+        estimated_total = estimated_per_camera * len(cameras)
         now = time.monotonic()
         overall_credit = 0.0
         completed_count = 0
@@ -272,7 +287,7 @@ class MainWindow(QMainWindow):
             else:
                 progress_percent = 0
 
-            self.calibration_panel.set_sensor_progress(
+            self.sensor_progress_panel.set_sensor_progress(
                 camera_name,
                 status=status,
                 progress_percent=progress_percent,
@@ -286,7 +301,7 @@ class MainWindow(QMainWindow):
         else:
             elapsed_total_seconds = int(round(sum(self._camera_elapsed_final.values())))
         progress_percent = int(round((overall_credit / float(estimated_total)) * 100)) if estimated_total > 0 else 0
-        self.calibration_panel.set_overall_progress(
+        self.sensor_progress_panel.set_overall_progress(
             current_camera=running_camera or preparing_camera or ready_camera,
             completed_count=completed_count,
             total_count=len(cameras),
@@ -306,15 +321,15 @@ class MainWindow(QMainWindow):
         self._refresh_camera_list()
 
     def _build_launch_config(self) -> CalibrationLaunchConfig:
-        selected_cameras = self.calibration_panel.selected_cameras()
+        selected_cameras = self.cm_settings_panel.selected_cameras()
         if not selected_cameras:
             raise ValueError("Please select at least one camera")
-        testrun = self.runtime_panel.testrun_edit.text().strip()
+        testrun = self.cm_settings_panel.testrun_edit.text().strip()
         if not testrun:
             raise ValueError("TestRun is required")
 
         self.state.selected_cameras = selected_cameras
-        project_root = Path(self.runtime_panel.project_root_edit.text().strip() or self.project_root)
+        project_root = Path(self.cm_settings_panel.project_root_edit.text().strip() or self.project_root)
         return CalibrationLaunchConfig(
             project_root=project_root,
             testrun=testrun,
@@ -340,13 +355,12 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Start Failed", str(exc))
             return
 
-        # --- Precheck ---
         try:
-            project_root = Path(self.runtime_panel.project_root_edit.text().strip() or self.project_root)
+            project_root = Path(self.cm_settings_panel.project_root_edit.text().strip() or self.project_root)
             if project_root.resolve() != self.precheck_service.project_root:
                 self.precheck_service = PrecheckService(project_root)
             precheck_results = self.precheck_service.run_for_cameras(launch.cameras)
-            self.calibration_panel.update_precheck_results(precheck_results)
+            self.cm_settings_panel.update_precheck_results(precheck_results)
             failed = [r for r in precheck_results if not r.get("ok")]
             if failed:
                 messages = [str(r.get("message", "")) for r in failed]
@@ -389,11 +403,11 @@ class MainWindow(QMainWindow):
     @Slot()
     def _prepare_runtime(self) -> None:
         try:
-            project_root = Path(self.runtime_panel.project_root_edit.text().strip() or self.project_root)
-            testrun = self.runtime_panel.testrun_edit.text().strip()
+            project_root = Path(self.cm_settings_panel.project_root_edit.text().strip() or self.project_root)
+            testrun = self.cm_settings_panel.testrun_edit.text().strip()
             if not testrun:
                 raise ValueError("TestRun is required")
-            selected_cameras = self.calibration_panel.selected_cameras()
+            selected_cameras = self.cm_settings_panel.selected_cameras()
             if not selected_cameras:
                 raise ValueError("Please select at least one camera")
             self.state.selected_cameras = selected_cameras
@@ -412,14 +426,14 @@ class MainWindow(QMainWindow):
     @Slot()
     def _run_precheck(self) -> None:
         try:
-            selected_cameras = self.calibration_panel.selected_cameras()
+            selected_cameras = self.cm_settings_panel.selected_cameras()
             if not selected_cameras:
                 raise ValueError("Please select at least one camera")
-            project_root = Path(self.runtime_panel.project_root_edit.text().strip() or self.project_root)
+            project_root = Path(self.cm_settings_panel.project_root_edit.text().strip() or self.project_root)
             if project_root.resolve() != self.precheck_service.project_root:
                 self.precheck_service = PrecheckService(project_root)
             results = self.precheck_service.run_for_cameras(selected_cameras)
-            self.calibration_panel.update_precheck_results(results)
+            self.cm_settings_panel.update_precheck_results(results)
             ok_count = sum(1 for result in results if bool(result.get("ok")))
             self._set_status_summary(f"输入检查完成：{ok_count}/{len(results)} 个 camera 通过。")
         except Exception as exc:
@@ -428,23 +442,23 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _generate_configs(self) -> None:
-        self.calibration_panel.generate_config_button.setEnabled(False)
-        self.calibration_panel.generate_config_button.setText("Generating...")
+        self.cm_settings_panel.generate_config_button.setEnabled(False)
+        self.cm_settings_panel.generate_config_button.setText("Generating...")
         QCoreApplication.processEvents()
         try:
-            selected_cameras = self.calibration_panel.selected_cameras()
+            selected_cameras = self.cm_settings_panel.selected_cameras()
             if not selected_cameras:
                 raise ValueError("Please select at least one camera")
-            project_root = Path(self.runtime_panel.project_root_edit.text().strip() or self.project_root)
+            project_root = Path(self.cm_settings_panel.project_root_edit.text().strip() or self.project_root)
             if project_root.resolve() != self.precheck_service.project_root:
                 self.precheck_service = PrecheckService(project_root)
             precheck_results = self.precheck_service.run_for_cameras(selected_cameras)
-            self.calibration_panel.update_precheck_results(precheck_results)
+            self.cm_settings_panel.update_precheck_results(precheck_results)
             failed = [result for result in precheck_results if not result.get("ok")]
             if failed:
                 raise ValueError("Input check failed; fix the reported camera inputs before generating configs")
             generated_results = self.precheck_service.generate_configs_for_cameras(selected_cameras)
-            self.calibration_panel.update_precheck_results(generated_results)
+            self.cm_settings_panel.update_precheck_results(generated_results)
             self._set_status_summary(f"配置生成完成：{len(generated_results)} 个 camera 已更新。")
         except ModuleNotFoundError as exc:
             msg = f"缺少 Python 包: {exc.name}。请在终端运行: python -m pip install {exc.name}"
@@ -454,8 +468,8 @@ class MainWindow(QMainWindow):
             self._set_red_failure(str(exc))
             QMessageBox.critical(self, "Config Generation Failed", str(exc))
         finally:
-            self.calibration_panel.generate_config_button.setText("Generate Configs")
-            self.calibration_panel.generate_config_button.setEnabled(True)
+            self.cm_settings_panel.generate_config_button.setText("Generate Configs")
+            self.cm_settings_panel.generate_config_button.setEnabled(True)
 
     def _query_runtime_status(self) -> None:
         try:
@@ -463,8 +477,8 @@ class MainWindow(QMainWindow):
                 return
             if self.state.status not in {AppStatus.FINISHED, AppStatus.FAILED, AppStatus.STOPPED, AppStatus.PASSIVE}:
                 return
-            project_root = Path(self.runtime_panel.project_root_edit.text().strip() or self.project_root)
-            testrun = self.runtime_panel.testrun_edit.text().strip()
+            project_root = Path(self.cm_settings_panel.project_root_edit.text().strip() or self.project_root)
+            testrun = self.cm_settings_panel.testrun_edit.text().strip()
             if not testrun:
                 raise ValueError("TestRun is required")
             cm_install = self.calibration_panel.cm_install_path
@@ -491,8 +505,8 @@ class MainWindow(QMainWindow):
             return
         if self.calibration_service.is_running:
             return
-        project_root = Path(self.runtime_panel.project_root_edit.text().strip() or self.project_root)
-        testrun = self.runtime_panel.testrun_edit.text().strip()
+        project_root = Path(self.cm_settings_panel.project_root_edit.text().strip() or self.project_root)
+        testrun = self.cm_settings_panel.testrun_edit.text().strip()
         if not testrun:
             return
         self._runtime_mode = "status"
@@ -510,7 +524,6 @@ class MainWindow(QMainWindow):
 
     def _apply_status(self, status: AppStatus) -> None:
         self.state.status = status
-        # Display mapping: keep internal enum values, calibration panel renders "fail" for FAILED
         self.calibration_panel.set_status(status.value)
         self._sync_control_states()
         if status == AppStatus.READY:
@@ -519,11 +532,8 @@ class MainWindow(QMainWindow):
             self._health_timer.stop()
             if not self.runtime_service.is_running:
                 self._health_check_active = False
-        # Freeze task elapsed when calibration task ends (finished/failed/stopped)
         if status in {AppStatus.FINISHED, AppStatus.FAILED, AppStatus.STOPPED}:
-            # Do not continue counting overall task elapsed — use finalized per-camera elapsed values
             self._calibration_task_started_at = None
-            # Ensure UI reflects finalized times immediately
             self._refresh_calibration_progress()
 
     def _runtime_status_probe_can_update_status(self) -> bool:
@@ -550,18 +560,18 @@ class MainWindow(QMainWindow):
         self.calibration_panel.start_button.setEnabled(can_start and not runtime_busy and not calibration_running)
         self.calibration_panel.stop_button.setEnabled(calibration_running or preparing)
         controls_enabled = not runtime_busy and not calibration_running and not preparing
-        self.calibration_panel.precheck_button.setEnabled(controls_enabled)
+        self.cm_settings_panel.precheck_button.setEnabled(controls_enabled)
+        self.cm_settings_panel.set_inputs_locked(not controls_enabled)
         self.calibration_panel.set_inputs_locked(not controls_enabled)
-        self.runtime_panel.set_inputs_locked(not controls_enabled)
-        self.runtime_panel.status_query_button.setEnabled(can_query_status)
+        self.calibration_panel.status_query_button.setEnabled(can_query_status)
         if preparing or calibration_running:
-            self.runtime_panel.status_query_button.setToolTip("运行态准备或标定期间不可手动查询。")
+            self.calibration_panel.status_query_button.setToolTip("运行态准备或标定期间不可手动查询。")
         elif self.state.status == AppStatus.READY:
-            self.runtime_panel.status_query_button.setToolTip("Status=ready 时会自动进行运行态轮询。")
+            self.calibration_panel.status_query_button.setToolTip("Status=ready 时会自动进行运行态轮询。")
         elif self.state.status in {AppStatus.FINISHED, AppStatus.FAILED, AppStatus.STOPPED, AppStatus.PASSIVE}:
-            self.runtime_panel.status_query_button.setToolTip("" if can_query_status else "当前有运行中的后台命令，暂不可查询。")
+            self.calibration_panel.status_query_button.setToolTip("" if can_query_status else "当前有运行中的后台命令，暂不可查询。")
         else:
-            self.runtime_panel.status_query_button.setToolTip("当前状态无需手动查询。")
+            self.calibration_panel.status_query_button.setToolTip("当前状态无需手动查询。")
 
     @Slot()
     def _on_process_started(self) -> None:
@@ -674,7 +684,6 @@ class MainWindow(QMainWindow):
     @Slot(dict)
     def _on_runtime_summary(self, payload: dict) -> None:
         self._last_runtime_summary = payload
-        self.runtime_panel.set_runtime_summary(payload)
         summary_parts = [
             f"mode={payload.get('mode')}",
             f"status={payload.get('status', payload.get('mode'))}",
@@ -1053,9 +1062,9 @@ class MainWindow(QMainWindow):
         ])
 
     def _build_prepare_start_log(self) -> str:
-        project_root = Path(self.runtime_panel.project_root_edit.text().strip() or self.project_root)
-        testrun = self.runtime_panel.testrun_edit.text().strip() or "<unset>"
-        selected_cameras = self.calibration_panel.selected_cameras()
+        project_root = Path(self.cm_settings_panel.project_root_edit.text().strip() or self.project_root)
+        testrun = self.cm_settings_panel.testrun_edit.text().strip() or "<unset>"
+        selected_cameras = self.cm_settings_panel.selected_cameras()
         camera_text = ", ".join(selected_cameras) if selected_cameras else "<none>"
         return (
             "CM Prepare started: "

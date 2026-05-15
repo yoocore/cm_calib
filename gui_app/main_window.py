@@ -782,11 +782,15 @@ class MainWindow(QMainWindow):
                 self.output_panel.update_camera_result(CameraResult(camera=camera_name))
         elif event_name == "camera_prepare_started":
             camera_name = str(payload.get("camera") or "")
+            self.output_panel.append_log(f"{camera_name}: runtime prepare starting...", source="calibration")
             self._set_camera_progress_state(camera_name, "preparing")
             self._append_status_summary_line(f"{camera_name}: 运行态准备开始。")
             self.output_panel.update_camera_result(CameraResult(camera=camera_name, status="preparing"))
         elif event_name == "camera_prepare_finished":
             camera_name = str(payload.get("camera") or "")
+            reused = bool(payload.get("reused_existing_runtime"))
+            label = "reused existing runtime" if reused else "full prepare done"
+            self.output_panel.append_log(f"{camera_name}: runtime ready ({label})", source="calibration")
             self._set_camera_progress_state(camera_name, "ready")
             self._append_status_summary_line(f"{camera_name}: 运行态已就绪。")
             self.output_panel.update_camera_result(CameraResult(camera=camera_name, status="ready"))

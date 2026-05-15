@@ -60,6 +60,7 @@ class CmSettingsPanel(QGroupBox):
         self.precheck_tree = QTreeWidget()
         self.precheck_tree.setColumnCount(4)
         self.precheck_tree.setHeaderLabels(["Camera", "Check", "Config", "Message"])
+        self.precheck_tree.setRootIsDecorated(False)
         self.precheck_tree.header().setStretchLastSection(True)
         self.precheck_tree.header().setDefaultAlignment(Qt.AlignLeft)
 
@@ -161,7 +162,7 @@ class CmSettingsPanel(QGroupBox):
             ok = bool(result.get("ok"))
             item = QTreeWidgetItem(self.precheck_tree)
             item.setText(0, camera_name)
-            item.setTextAlignment(0, Qt.AlignLeft)
+            item.setData(0, Qt.TextAlignmentRole, Qt.AlignLeft | Qt.AlignVCenter)
             status_text = "✓" if ok else "✗"
             item.setText(1, status_text)
             item.setForeground(1, _GREEN if ok else _RED)

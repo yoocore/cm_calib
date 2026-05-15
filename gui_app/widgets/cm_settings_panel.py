@@ -161,6 +161,7 @@ class CmSettingsPanel(QGroupBox):
             ok = bool(result.get("ok"))
             item = QTreeWidgetItem(self.precheck_tree)
             item.setText(0, camera_name)
+            item.setTextAlignment(0, Qt.AlignLeft)
             status_text = "✓" if ok else "✗"
             item.setText(1, status_text)
             item.setForeground(1, _GREEN if ok else _RED)

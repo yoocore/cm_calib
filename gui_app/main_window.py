@@ -67,7 +67,12 @@ class MainWindow(QMainWindow):
         outer_splitter.addWidget(left_mid_container)
         outer_splitter.addWidget(self.output_panel)
         outer_splitter.setSizes([800, 700])
-        self.setCentralWidget(outer_splitter)
+
+        central_container = QWidget(self)
+        central_layout = QVBoxLayout(central_container)
+        central_layout.setContentsMargins(8, 8, 8, 8)
+        central_layout.addWidget(outer_splitter)
+        self.setCentralWidget(central_container)
 
         self._refresh_static_timer = QTimer(self)
         self._refresh_static_timer.setInterval(1000)

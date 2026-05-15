@@ -36,10 +36,14 @@ class TestMainWindowCameraList:
         window = MainWindow(project_root)
         qtbot.addWidget(window)
 
-        outer_splitter = window.centralWidget()
+        from PySide6.QtWidgets import QSplitter
+        central_container = window.centralWidget()
+        outer_splitter = central_container.findChild(QSplitter)
+        assert outer_splitter is not None
         assert outer_splitter.count() == 2
         left_mid_container = outer_splitter.widget(0)
-        inner_splitter = left_mid_container.findChild(type(outer_splitter))
+        inner_splitter = left_mid_container.findChild(QSplitter)
+        assert inner_splitter is not None
         assert inner_splitter.count() == 2
         assert window.cm_settings_panel.parentWidget() is inner_splitter
         assert window.calibration_panel.parentWidget() is inner_splitter

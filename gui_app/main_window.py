@@ -654,7 +654,6 @@ class MainWindow(QMainWindow):
             )
             self.calibration_panel.set_phase_label("CM Prepare 进行中...")
             self._apply_status(AppStatus.PREPARING)
-            QTimer.singleShot(0, self._restore_gui_to_foreground)
         else:
             self._sync_control_states()
 
@@ -1214,7 +1213,6 @@ class MainWindow(QMainWindow):
         for line in lines:
             self.output_panel.append_log(line, source="runtime")
             self._append_status_summary_line(line)
-        QTimer.singleShot(0, self._restore_gui_to_foreground)
 
     @staticmethod
     def _should_surface_status_line(text: str, *, source: str) -> bool:

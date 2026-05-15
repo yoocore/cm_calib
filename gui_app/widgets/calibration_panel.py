@@ -187,9 +187,9 @@ class CalibrationPanel(QGroupBox):
         cm_row = QWidget(self)
         cm_layout = QHBoxLayout(cm_row)
         cm_layout.setContentsMargins(0, 0, 0, 0)
-        cm_layout.addWidget(self.prepare_button)
         cm_layout.addWidget(QLabel("CM Version:"))
-        cm_layout.addWidget(self.cm_version_combo, 1)
+        cm_layout.addWidget(self.cm_version_combo)
+        cm_layout.addWidget(self.prepare_button)
 
         button_row = QWidget(self)
         button_layout = QHBoxLayout(button_row)

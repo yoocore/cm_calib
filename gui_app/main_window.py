@@ -114,6 +114,8 @@ class MainWindow(QMainWindow):
         try:
             info = resolve_vehicle_info(project_root, testrun)
             sensors = [s["name"] for s in info.get("sensors", [])]
+            if sensors:
+                self.output_panel.append_log(f"Camera sensors: {', '.join(sensors)}", source="system")
         except Exception:
             sensors = []
         self.cm_settings_panel.set_cameras(sensors)
@@ -313,11 +315,13 @@ class MainWindow(QMainWindow):
     def _on_project_root_changed(self, path_text: str) -> None:
         new_root = Path(path_text.strip()).resolve() if path_text.strip() else None
         if new_root and new_root != self.config_service.project_root:
+            self.output_panel.append_log(f"Project root: {new_root}", source="system")
             self.config_service = ConfigService(new_root)
             self.precheck_service = PrecheckService(new_root)
         self._refresh_camera_list()
 
     def _on_testrun_changed(self, _text: str) -> None:
+        self.output_panel.append_log(f"TestRun selected", source="system")
         self._refresh_camera_list()
 
     def _build_launch_config(self) -> CalibrationLaunchConfig:
@@ -429,14 +433,17 @@ class MainWindow(QMainWindow):
             selected_cameras = self.cm_settings_panel.selected_cameras()
             if not selected_cameras:
                 raise ValueError("Please select at least one camera")
+            self.output_panel.append_log(f"Check inputs: {', '.join(selected_cameras)}", source="system")
             project_root = Path(self.cm_settings_panel.project_root_edit.text().strip() or self.project_root)
             if project_root.resolve() != self.precheck_service.project_root:
                 self.precheck_service = PrecheckService(project_root)
             results = self.precheck_service.run_for_cameras(selected_cameras)
             self.cm_settings_panel.update_precheck_results(results)
             ok_count = sum(1 for result in results if bool(result.get("ok")))
+            self.output_panel.append_log(f"Check inputs: {ok_count}/{len(results)} passed", source="system")
             self._set_status_summary(f"输入检查完成：{ok_count}/{len(results)} 个 camera 通过。")
         except Exception as exc:
+            self.output_panel.append_log(f"Check inputs failed: {exc}", source="system")
             self._set_status_summary(str(exc))
             QMessageBox.critical(self, "Precheck Failed", str(exc))
 
@@ -449,6 +456,7 @@ class MainWindow(QMainWindow):
             selected_cameras = self.cm_settings_panel.selected_cameras()
             if not selected_cameras:
                 raise ValueError("Please select at least one camera")
+            self.output_panel.append_log(f"Generate configs: {', '.join(selected_cameras)}", source="system")
             project_root = Path(self.cm_settings_panel.project_root_edit.text().strip() or self.project_root)
             if project_root.resolve() != self.precheck_service.project_root:
                 self.precheck_service = PrecheckService(project_root)
@@ -459,6 +467,7 @@ class MainWindow(QMainWindow):
                 raise ValueError("Input check failed; fix the reported camera inputs before generating configs")
             generated_results = self.precheck_service.generate_configs_for_cameras(selected_cameras)
             self.cm_settings_panel.update_precheck_results(generated_results)
+            self.output_panel.append_log(f"Generate configs: {len(generated_results)} configs updated", source="system")
             self._set_status_summary(f"配置生成完成：{len(generated_results)} 个 camera 已更新。")
         except ModuleNotFoundError as exc:
             msg = f"缺少 Python 包: {exc.name}。请在终端运行: python -m pip install {exc.name}"
@@ -466,6 +475,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "缺少依赖包", msg)
         except Exception as exc:
             self._set_red_failure(str(exc))
+            self.output_panel.append_log(f"Generate configs failed: {exc}", source="system")
             QMessageBox.critical(self, "Config Generation Failed", str(exc))
         finally:
             self.cm_settings_panel.generate_config_button.setText("Generate Configs")
@@ -484,6 +494,7 @@ class MainWindow(QMainWindow):
             cm_install = self.calibration_panel.cm_install_path
             if cm_install is None:
                 raise ValueError("CM 版本未选择，请先在中栏选择 CM 版本")
+            self.output_panel.append_log("Query Status triggered", source="system")
             self._runtime_mode = "status"
             self._health_check_active = False
             self._set_status_summary("正在查询运行态状态...")

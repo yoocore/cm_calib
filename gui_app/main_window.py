@@ -55,6 +55,8 @@ class MainWindow(QMainWindow):
         left_mid_splitter.addWidget(self.cm_settings_panel)
         left_mid_splitter.addWidget(self.calibration_panel)
         left_mid_splitter.setSizes([400, 400])
+        left_mid_splitter.setCollapsible(0, False)
+        left_mid_splitter.setCollapsible(1, False)
 
         left_mid_container = QWidget(self)
         left_mid_layout = QVBoxLayout(left_mid_container)
@@ -67,6 +69,8 @@ class MainWindow(QMainWindow):
         outer_splitter.addWidget(left_mid_container)
         outer_splitter.addWidget(self.output_panel)
         outer_splitter.setSizes([800, 700])
+        outer_splitter.setCollapsible(0, False)
+        outer_splitter.setCollapsible(1, False)
 
         central_container = QWidget(self)
         central_layout = QVBoxLayout(central_container)

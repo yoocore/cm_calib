@@ -61,6 +61,7 @@ class CmSettingsPanel(QGroupBox):
         self.precheck_tree.setColumnCount(4)
         self.precheck_tree.setHeaderLabels(["Camera", "Check", "Config", "Message"])
         self.precheck_tree.header().setStretchLastSection(True)
+        self.precheck_tree.header().setDefaultAlignment(Qt.AlignLeft)
 
         self.browse_button.clicked.connect(self._browse_project_root)
         self.testrun_browse_button.clicked.connect(self._browse_testrun)

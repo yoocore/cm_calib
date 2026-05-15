@@ -111,10 +111,10 @@ class ArtifactPreviewLabel(QLabel):
         self._artifact_path = artifact_path.strip() if artifact_path else None
         self._render()
 
-    def mousePressEvent(self, event) -> None:
+    def mouseDoubleClickEvent(self, event) -> None:
         if event.button() == Qt.LeftButton and self._artifact_path:
             self.clicked.emit()
-        super().mousePressEvent(event)
+        super().mouseDoubleClickEvent(event)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)

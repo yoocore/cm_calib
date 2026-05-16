@@ -160,7 +160,7 @@ class CalibrationPanel(QGroupBox):
         rounds_group = _SubGroup("Campaign Rounds")
         rounds_inner = QVBoxLayout(rounds_group)
         rounds_inner.setContentsMargins(8, 4, 8, 4)
-        rounds_inner.setSpacing(2)
+        rounds_inner.setSpacing(1)
 
         rounds_top = QHBoxLayout()
         rounds_top.addWidget(QLabel("Rounds"))
@@ -168,6 +168,7 @@ class CalibrationPanel(QGroupBox):
         rounds_inner.addLayout(rounds_top)
 
         self.strategy_stack = QStackedWidget()
+        self.strategy_stack.setFrameStyle(0)
 
         # Page 0: Multi-Start
         ms_page = QWidget()

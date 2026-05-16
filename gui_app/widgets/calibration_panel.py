@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSpinBox,
     QDoubleSpinBox,
+    QStyleFactory,
     QTabWidget,
     QTextEdit,
     QVBoxLayout,
@@ -169,6 +170,7 @@ class CalibrationPanel(QGroupBox):
 
         self.strategy_tabs = QTabWidget()
         self.strategy_tabs.setDocumentMode(True)
+        self.strategy_tabs.setStyle(QStyleFactory.create("Fusion"))
         self.strategy_tabs.setStyleSheet(
             "QTabBar::tab { padding: 2px 6px; }"
         )

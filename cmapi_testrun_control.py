@@ -268,7 +268,8 @@ def stop_movie_stack_via_movie_quit(
             }
         time.sleep(0.2)
 
-    killed = kill_all_movie_processes()
+    killed_movie = kill_all_movie_processes()
+    killed_gpu = kill_gpusensor_movie_processes()
     fallback_after = snapshot_movie_stack()
     return {
         "mode": "movie_quit_fallback_taskkill",
@@ -276,7 +277,10 @@ def stop_movie_stack_via_movie_quit(
         "after": fallback_after,
         "fallback": True,
         "command_result": command_result,
-        "fallback_killed_pids": [int(proc["ProcessId"]) for proc in killed],
+        "fallback_killed_pids": (
+            [int(proc["ProcessId"]) for proc in killed_movie]
+            + [int(proc["ProcessId"]) for proc in killed_gpu]
+        ),
     }
 
 

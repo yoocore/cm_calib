@@ -160,6 +160,7 @@ class CalibrationPanel(QGroupBox):
         rounds_group = _SubGroup("Campaign Rounds")
         rounds_inner = QVBoxLayout(rounds_group)
         rounds_inner.setContentsMargins(8, 4, 8, 4)
+        rounds_inner.setSpacing(2)
 
         rounds_top = QHBoxLayout()
         rounds_top.addWidget(QLabel("Rounds"))
@@ -167,17 +168,23 @@ class CalibrationPanel(QGroupBox):
         rounds_inner.addLayout(rounds_top)
 
         self.strategy_tabs = QTabWidget()
+        self.strategy_tabs.setStyleSheet(
+            "QTabWidget::pane { margin: 0; padding: 0; border: none; }"
+            "QTabBar::tab { padding: 2px 6px; }"
+        )
 
         # Tab 1: Multi-Start
         ms_page = QWidget()
         ms_layout = QVBoxLayout(ms_page)
-        ms_layout.setContentsMargins(4, 4, 4, 4)
+        ms_layout.setContentsMargins(0, 2, 0, 2)
         ms_layout.setSpacing(0)
         ms_dir = QHBoxLayout()
+        ms_dir.setSpacing(4)
         ms_dir.addWidget(QLabel("Directions"))
         ms_dir.addWidget(self.multi_start_count_spin, 1)
         ms_layout.addLayout(ms_dir)
         ms_iters = QHBoxLayout()
+        ms_iters.setSpacing(4)
         ms_iters.addWidget(QLabel("Iters"))
         ms_iters.addWidget(self.multi_start_iters_spin, 1)
         ms_layout.addLayout(ms_iters)
@@ -186,17 +193,19 @@ class CalibrationPanel(QGroupBox):
         # Tab 2: Explore + Refine
         er_page = QWidget()
         er_layout = QVBoxLayout(er_page)
-        er_layout.setContentsMargins(4, 4, 4, 4)
+        er_layout.setContentsMargins(0, 2, 0, 2)
         er_layout.setSpacing(0)
 
         er_explore_group = _SubGroup("Explore")
         er_explore_inner = QVBoxLayout(er_explore_group)
         er_explore_inner.setContentsMargins(4, 2, 4, 2)
         er_dir = QHBoxLayout()
+        er_dir.setSpacing(4)
         er_dir.addWidget(QLabel("Directions"))
         er_dir.addWidget(self._er_count_spin, 1)
         er_explore_inner.addLayout(er_dir)
         er_iters = QHBoxLayout()
+        er_iters.setSpacing(4)
         er_iters.addWidget(QLabel("Iters"))
         er_iters.addWidget(self._er_iters_spin, 1)
         er_explore_inner.addLayout(er_iters)
@@ -206,6 +215,7 @@ class CalibrationPanel(QGroupBox):
         er_refine_inner = QVBoxLayout(er_refine_group)
         er_refine_inner.setContentsMargins(4, 2, 4, 2)
         er_ref_iters = QHBoxLayout()
+        er_ref_iters.setSpacing(4)
         er_ref_iters.addWidget(QLabel("Iters"))
         er_ref_iters.addWidget(self._er_refine_iters_spin, 1)
         er_refine_inner.addLayout(er_ref_iters)
@@ -215,11 +225,13 @@ class CalibrationPanel(QGroupBox):
         rounds_inner.addWidget(self.strategy_tabs)
 
         jitter_row = QHBoxLayout()
+        jitter_row.setSpacing(4)
         jitter_row.addWidget(QLabel("Jitter"))
         jitter_row.addWidget(self.jitter_spin, 1)
         rounds_inner.addLayout(jitter_row)
 
         estimate_row = QHBoxLayout()
+        estimate_row.setSpacing(4)
         estimate_row.addWidget(QLabel("Estimated Time"))
         estimate_row.addWidget(self.estimate_label, 1)
         rounds_inner.addLayout(estimate_row)

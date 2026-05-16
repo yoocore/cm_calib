@@ -238,11 +238,11 @@ class CameraResultCard(QGroupBox):
             self.iter_preview.set_artifact(result.current_iter_image)
         if result.best_score_image is not None:
             self.score_preview.set_artifact(result.best_score_image)
-        else:
+        elif result.best_image is not None:
             self.score_preview.set_artifact(result.best_image)
         if result.best_overlay_image is not None:
             self.overlay_preview.set_artifact(result.best_overlay_image)
-        else:
+        elif result.best_image is not None:
             self.overlay_preview.set_artifact(result.best_image)
         self.open_log_button.setEnabled(bool(result.live_log))
         self.open_result_button.setEnabled(bool(result.result_json))

@@ -7151,9 +7151,10 @@ class CameraCalibrator:
                 result_path,
                 "IPG-MOVIE",
                 [
-                    "set vno $View(ev.view)",
-                    "set wi [dict get $View($vno) Width]",
-                    "set he [dict get $View($vno) Height]",
+                    "scan $View(ev.view) %d vno",
+                    "set wpath .view$vno",
+                    "set wi [$wpath.gl0 cget -width]",
+                    "set he [$wpath.gl0 cget -height]",
                     "list $wi $he",
                 ],
             )

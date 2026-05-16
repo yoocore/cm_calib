@@ -246,6 +246,13 @@ def _prepare_runtime_for_camera(
         running_timeout_sec=float(args.bootstrap_running_timeout_sec),
         idle_timeout_sec=float(args.bootstrap_idle_timeout_sec),
     )
+    if not cmctrl.list_gpusensor_movie_processes():
+        cmctrl.restart_gui_movie_for_send_recovery(
+            cm_install=args.cm_install.resolve(),
+            movie_apphost=str(args.movie_apphost),
+            project_root=project_root,
+            carmaker_pid=carmaker_pid,
+        )
     movie_scene = cmctrl.wait_for_movie_scene_ready(
         cm_install=args.cm_install.resolve(),
         movie_apphost=str(args.movie_apphost),

@@ -1166,7 +1166,13 @@ async def bootstrap_testrun_for_movie_via_cmapi(
         resolved_carmaker = attach_to_existing_carmaker(resolved_pid, host, project_root)
 
     wait_for_carmaker_tcleval_ready()
-    kill_movie_stack_if_gpusensor_present()
+
+    gpusensor_movies = list_gpusensor_movie_processes()
+    if not gpusensor_movies:
+        stop_movie_stack_via_movie_quit(
+            timeout_sec=DEFAULT_MOVIE_QUIT_TIMEOUT_SEC,
+            probe_name="cmapi_testrun_control_movie_quit_no_gpusensor",
+        )
 
     output_dir = default_output_dir()
     output_dir.mkdir(parents=True, exist_ok=True)

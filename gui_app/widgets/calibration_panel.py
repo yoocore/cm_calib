@@ -158,9 +158,14 @@ class CalibrationPanel(QGroupBox):
 
         # --- Build UI ---
         rounds_group = _SubGroup("Campaign Rounds")
+        rounds_group.setStyleSheet(
+            "QGroupBox { border: 1px solid #555; border-radius: 4px;"
+            " margin-top: 4px; padding-top: 0px; font-weight: normal; }"
+            "QGroupBox::title { subcontrol-origin: content; left: 8px; padding: 0 4px; }"
+        )
         rounds_inner = QVBoxLayout(rounds_group)
-        rounds_inner.setContentsMargins(8, 4, 8, 4)
-        rounds_inner.setSpacing(1)
+        rounds_inner.setContentsMargins(8, 0, 8, 0)
+        rounds_inner.setSpacing(0)
 
         rounds_top = QHBoxLayout()
         rounds_top.addWidget(QLabel("Rounds"))

@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSpinBox,
     QDoubleSpinBox,
+    QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -87,6 +88,7 @@ class CalibrationPanel(QGroupBox):
         self.campaign_rounds_spin.setRange(1, 999)
         self.campaign_rounds_spin.setValue(1)
 
+        # --- Multi-Start spinboxes (Tab 1) ---
         self.multi_start_count_spin = QSpinBox()
         self.multi_start_count_spin.setRange(0, 999)
         self.multi_start_count_spin.setValue(5)
@@ -96,11 +98,22 @@ class CalibrationPanel(QGroupBox):
         self.multi_start_iters_spin.setSpecialValueText("default")
         self.multi_start_iters_spin.setValue(30)
 
-        self.refine_iters_spin = QSpinBox()
-        self.refine_iters_spin.setRange(0, 100000)
-        self.refine_iters_spin.setSpecialValueText("default")
-        self.refine_iters_spin.setValue(80)
+        # --- Explore+Refine spinboxes (Tab 2, independent) ---
+        self._er_count_spin = QSpinBox()
+        self._er_count_spin.setRange(0, 999)
+        self._er_count_spin.setValue(5)
 
+        self._er_iters_spin = QSpinBox()
+        self._er_iters_spin.setRange(0, 100000)
+        self._er_iters_spin.setSpecialValueText("default")
+        self._er_iters_spin.setValue(30)
+
+        self._er_refine_iters_spin = QSpinBox()
+        self._er_refine_iters_spin.setRange(0, 100000)
+        self._er_refine_iters_spin.setSpecialValueText("default")
+        self._er_refine_iters_spin.setValue(80)
+
+        # --- Shared spinners ---
         self.jitter_spin = QDoubleSpinBox()
         self.jitter_spin.setRange(0.0, 999.0)
         self.jitter_spin.setValue(2.0)
@@ -143,6 +156,7 @@ class CalibrationPanel(QGroupBox):
         self.stop_button = QPushButton("Calib Stop")
         self.stop_button.setEnabled(False)
 
+        # --- Build UI ---
         rounds_group = _SubGroup("Campaign Rounds")
         rounds_inner = QVBoxLayout(rounds_group)
         rounds_inner.setContentsMargins(8, 4, 8, 4)
@@ -152,27 +166,56 @@ class CalibrationPanel(QGroupBox):
         rounds_top.addWidget(self.campaign_rounds_spin, 1)
         rounds_inner.addLayout(rounds_top)
 
-        explore_group = _SubGroup("Explore")
-        explore_inner = QVBoxLayout(explore_group)
-        explore_inner.setContentsMargins(8, 4, 8, 4)
-        explore_dir = QHBoxLayout()
-        explore_dir.addWidget(QLabel("Directions"))
-        explore_dir.addWidget(self.multi_start_count_spin, 1)
-        explore_iters = QHBoxLayout()
-        explore_iters.addWidget(QLabel("Iters"))
-        explore_iters.addWidget(self.multi_start_iters_spin, 1)
-        explore_inner.addLayout(explore_dir)
-        explore_inner.addLayout(explore_iters)
-        rounds_inner.addWidget(explore_group)
+        self.strategy_tabs = QTabWidget()
 
-        refine_group = _SubGroup("Refine")
-        refine_inner = QVBoxLayout(refine_group)
-        refine_inner.setContentsMargins(8, 4, 8, 4)
-        refine_iters = QHBoxLayout()
-        refine_iters.addWidget(QLabel("Iters"))
-        refine_iters.addWidget(self.refine_iters_spin, 1)
-        refine_inner.addLayout(refine_iters)
-        rounds_inner.addWidget(refine_group)
+        # Tab 1: Multi-Start
+        ms_page = QWidget()
+        ms_layout = QVBoxLayout(ms_page)
+        ms_layout.setContentsMargins(4, 4, 4, 4)
+        ms_dir = QHBoxLayout()
+        ms_dir.addWidget(QLabel("Directions"))
+        ms_dir.addWidget(self.multi_start_count_spin, 1)
+        ms_layout.addLayout(ms_dir)
+        ms_iters = QHBoxLayout()
+        ms_iters.addWidget(QLabel("Iters"))
+        ms_iters.addWidget(self.multi_start_iters_spin, 1)
+        ms_layout.addLayout(ms_iters)
+        self.strategy_tabs.addTab(ms_page, "Multi-Start")
+
+        # Tab 2: Explore + Refine
+        er_page = QWidget()
+        er_layout = QVBoxLayout(er_page)
+        er_layout.setContentsMargins(4, 4, 4, 4)
+
+        er_explore_group = _SubGroup("Explore")
+        er_explore_inner = QVBoxLayout(er_explore_group)
+        er_explore_inner.setContentsMargins(8, 4, 8, 4)
+        er_dir = QHBoxLayout()
+        er_dir.addWidget(QLabel("Directions"))
+        er_dir.addWidget(self._er_count_spin, 1)
+        er_explore_inner.addLayout(er_dir)
+        er_iters = QHBoxLayout()
+        er_iters.addWidget(QLabel("Iters"))
+        er_iters.addWidget(self._er_iters_spin, 1)
+        er_explore_inner.addLayout(er_iters)
+        er_layout.addWidget(er_explore_group)
+
+        er_refine_group = _SubGroup("Refine")
+        er_refine_inner = QVBoxLayout(er_refine_group)
+        er_refine_inner.setContentsMargins(8, 4, 8, 4)
+        er_ref_iters = QHBoxLayout()
+        er_ref_iters.addWidget(QLabel("Iters"))
+        er_ref_iters.addWidget(self._er_refine_iters_spin, 1)
+        er_refine_inner.addLayout(er_ref_iters)
+        er_layout.addWidget(er_refine_group)
+
+        self.strategy_tabs.addTab(er_page, "Explore + Refine")
+        rounds_inner.addWidget(self.strategy_tabs)
+
+        jitter_row = QHBoxLayout()
+        jitter_row.addWidget(QLabel("Jitter"))
+        jitter_row.addWidget(self.jitter_spin, 1)
+        rounds_inner.addLayout(jitter_row)
 
         estimate_row = QHBoxLayout()
         estimate_row.addWidget(QLabel("Estimated Time"))
@@ -204,8 +247,10 @@ class CalibrationPanel(QGroupBox):
         layout.addWidget(cm_row)
         layout.addWidget(self.status_query_button)
         layout.addWidget(button_row)
-        layout.addStretch(1)
 
+        self.strategy_tabs.currentChanged.connect(
+            lambda _i: self._on_estimated_time_changed()
+        )
         self.campaign_rounds_spin.valueChanged.connect(
             lambda _v: self._on_estimated_time_changed()
         )
@@ -215,7 +260,13 @@ class CalibrationPanel(QGroupBox):
         self.multi_start_iters_spin.valueChanged.connect(
             lambda _v: self._on_estimated_time_changed()
         )
-        self.refine_iters_spin.valueChanged.connect(
+        self._er_count_spin.valueChanged.connect(
+            lambda _v: self._on_estimated_time_changed()
+        )
+        self._er_iters_spin.valueChanged.connect(
+            lambda _v: self._on_estimated_time_changed()
+        )
+        self._er_refine_iters_spin.valueChanged.connect(
             lambda _v: self._on_estimated_time_changed()
         )
         self.jitter_spin.valueChanged.connect(
@@ -224,6 +275,10 @@ class CalibrationPanel(QGroupBox):
 
         self.set_status("idle")
         self._update_estimated_time()
+
+    @property
+    def explore_then_refine(self) -> bool:
+        return self.strategy_tabs.currentIndex() == 1
 
     @property
     def cm_install_path(self) -> Path | None:
@@ -241,25 +296,24 @@ class CalibrationPanel(QGroupBox):
         if per_camera <= 0:
             self.estimate_label.setText("~ 0s")
         else:
-            self.estimate_label.setText(f"~ {self._format_duration(per_camera)} / camera")
+            self.estimate_label.setText(
+                f"~ {self._format_duration(per_camera)} / camera"
+            )
 
     def estimated_per_camera_seconds(self) -> int:
         campaign_rounds = int(self.campaign_rounds_spin.value())
-        multi_start_count = int(self.multi_start_count_spin.value())
-        multi_start_iters = int(self.multi_start_iters_spin.value()) or 30
-        refine_iters = int(self.refine_iters_spin.value()) or 80
-        base_iter_count = (
-            refine_iters + max(0, multi_start_count) * max(10, multi_start_iters // 2)
-        )
-        per_round_seconds = max(
-            45,
-            int(
-                round(
-                    base_iter_count * 3.5 + float(self.jitter_spin.value()) * 8.0
-                )
-            ),
-        )
-        return max(1, campaign_rounds * per_round_seconds)
+        jitter_val = float(self.jitter_spin.value())
+        if self.explore_then_refine:
+            start_count = max(0, int(self._er_count_spin.value()))
+            explore_iters = int(self._er_iters_spin.value()) or 30
+            refine_iters = int(self._er_refine_iters_spin.value()) or 80
+            base = refine_iters + max(0, start_count) * max(10, explore_iters // 2)
+        else:
+            start_count = max(0, int(self.multi_start_count_spin.value()))
+            multi_iters = int(self.multi_start_iters_spin.value()) or 30
+            base = max(0, start_count) * max(10, multi_iters // 2)
+        per_round = max(45, int(round(base * 3.5 + jitter_val * 8.0)))
+        return max(1, campaign_rounds * per_round)
 
     def set_status(self, text: str | None) -> None:
         status_text = (text or "").strip() or "idle"
@@ -293,8 +347,11 @@ class CalibrationPanel(QGroupBox):
         self.campaign_rounds_spin.setEnabled(not locked)
         self.multi_start_count_spin.setEnabled(not locked)
         self.multi_start_iters_spin.setEnabled(not locked)
-        self.refine_iters_spin.setEnabled(not locked)
+        self._er_count_spin.setEnabled(not locked)
+        self._er_iters_spin.setEnabled(not locked)
+        self._er_refine_iters_spin.setEnabled(not locked)
         self.jitter_spin.setEnabled(not locked)
+        self.strategy_tabs.setEnabled(not locked)
         self.prepare_button.setEnabled(not locked)
         self.cm_version_combo.setEnabled(not locked)
 

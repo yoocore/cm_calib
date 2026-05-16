@@ -343,15 +343,25 @@ class MainWindow(QMainWindow):
 
         self.state.selected_cameras = selected_cameras
         project_root = Path(self.cm_settings_panel.project_root_edit.text().strip() or self.project_root)
+        exp_ref = self.calibration_panel.explore_then_refine
+        if exp_ref:
+            ms_count = self.calibration_panel._er_count_spin.value()
+            ms_iters = self._spin_value_or_none(self.calibration_panel._er_iters_spin)
+            ref_iters = self._spin_value_or_none(self.calibration_panel._er_refine_iters_spin)
+        else:
+            ms_count = self.calibration_panel.multi_start_count_spin.value()
+            ms_iters = self._spin_value_or_none(self.calibration_panel.multi_start_iters_spin)
+            ref_iters = None
         return CalibrationLaunchConfig(
             project_root=project_root,
             testrun=testrun,
             cameras=selected_cameras,
             campaign_rounds=self.calibration_panel.campaign_rounds_spin.value(),
-            multi_start_count=self.calibration_panel.multi_start_count_spin.value(),
-            multi_start_iters=self._spin_value_or_none(self.calibration_panel.multi_start_iters_spin),
+            multi_start_count=ms_count,
+            multi_start_iters=ms_iters,
             multi_start_jitter_steps=self.calibration_panel.jitter_spin.value(),
-            refine_iters=self._spin_value_or_none(self.calibration_panel.refine_iters_spin),
+            refine_iters=ref_iters,
+            explore_then_refine=exp_ref,
         )
 
     @staticmethod

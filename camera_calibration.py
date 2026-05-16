@@ -9800,6 +9800,7 @@ class CameraCalibrator:
             self.real_detections = self._detect_reference_boards()
 
         sim_path = self.capture_movie(tag)
+        self._last_eval_image = str(sim_path)
         sim_img = cv2.imread(str(sim_path), cv2.IMREAD_GRAYSCALE)
         if sim_img is None:
             raise RuntimeError(f"Failed reading screenshot: {sim_path}")
@@ -9946,7 +9947,7 @@ class CameraCalibrator:
                     "best_overlay_image": result.get("best_overlay_image"),
                     "current_iter_index": summary.get("current_iter_index"),
                     "current_iter_score": summary.get("current_iter_score"),
-                    "current_iter_image": str(best_img),
+                    "current_iter_image": getattr(self, "_last_eval_image", None) or str(best_img),
                     "final_score": summary.get("final_score"),
                     "stop_reason": result.get("stop_reason") or summary.get("stop_reason"),
                 }

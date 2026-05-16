@@ -932,8 +932,10 @@ class MainWindow(QMainWindow):
 
     @Slot(str)
     def _on_calibration_line(self, line: str) -> None:
-        self.output_panel.append_log(line, source="calibration")
         text = line.strip()
+        if text.startswith(("ORCHESTRATION_SUMMARY_JSON:", "ORCHESTRATION_EVENT_JSON:")):
+            return
+        self.output_panel.append_log(line, source="calibration")
         if text:
             self._calibration_recent_lines.append(text)
             if self._should_surface_status_line(text, source="calibration"):

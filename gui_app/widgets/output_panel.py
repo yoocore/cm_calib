@@ -67,9 +67,9 @@ def _classify_log_level(message: str) -> str:
     text = message.casefold()
     if not text:
         return "info"
-    if any(token in text for token in ("traceback", " exception", "error", "fatal", "critical")):
+    if any(token in text for token in ("traceback", " exception", "fatal", "critical")):
         return "error"
-    if any(token in text for token in ("warn", "warning", "timeout", "timed out", "passive", "not ready", "mismatch", " fail")):
+    if any(token in text for token in ("error", "warn", "warning", "timeout", "timed out", "passive", "not ready", "mismatch", " fail")):
         return "warning"
     if any(token in text for token in (" success", " succeeded", "completed", "ready", " all passed", " ok", " status=ok")):
         return "success"
@@ -232,9 +232,16 @@ class CameraResultCard(QGroupBox):
         self.status_value.setText("fail" if result.status == "failed" else result.status)
         self.best_score_value.setText(_format_score(result.best_score))
         self.current_iter_value.setText(_format_score(result.current_iter_score))
-        self.iter_preview.set_artifact(result.current_iter_image or result.best_image)
-        self.score_preview.set_artifact(result.best_score_image or result.best_image)
-        self.overlay_preview.set_artifact(result.best_overlay_image or result.best_image)
+        if result.current_iter_image is not None:
+            self.iter_preview.set_artifact(result.current_iter_image)
+        if result.best_score_image is not None:
+            self.score_preview.set_artifact(result.best_score_image)
+        else:
+            self.score_preview.set_artifact(result.best_image)
+        if result.best_overlay_image is not None:
+            self.overlay_preview.set_artifact(result.best_overlay_image)
+        else:
+            self.overlay_preview.set_artifact(result.best_image)
         self.open_log_button.setEnabled(bool(result.live_log))
         self.open_result_button.setEnabled(bool(result.result_json))
         self.open_current_button.setEnabled(bool(result.current_iter_image or result.best_image))

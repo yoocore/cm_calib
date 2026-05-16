@@ -49,9 +49,8 @@ class TestOutputPanel:
         html = panel.log_view.toHtml()
 
         assert "[WARNING]" in html
-        assert "[ERROR]" in html
+        assert "[ERROR]" not in html
         assert "#ffd54f" in html
-        assert "#ef9a9a" in html
 
     def test_current_log_path_falls_back_to_task_log(self, qtbot):
         panel = OutputPanel()

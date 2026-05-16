@@ -9946,6 +9946,7 @@ class CameraCalibrator:
                     "best_overlay_image": result.get("best_overlay_image"),
                     "current_iter_index": summary.get("current_iter_index"),
                     "current_iter_score": summary.get("current_iter_score"),
+                    "current_iter_image": str(best_img),
                     "final_score": summary.get("final_score"),
                     "stop_reason": result.get("stop_reason") or summary.get("stop_reason"),
                 }

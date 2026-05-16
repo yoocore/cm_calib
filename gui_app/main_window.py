@@ -835,6 +835,7 @@ class MainWindow(QMainWindow):
                     best_score=self._as_float(progress.get("best_score")),
                     current_iter_score=self._as_float(progress.get("current_iter_score")),
                     current_iter_index=self._as_int(progress.get("current_iter_index")),
+                    current_iter_image=self._as_text(progress.get("current_iter_image")),
                     result_json=self._as_text(progress.get("result_json")),
                     best_image=self._as_text(progress.get("best_image")),
                     best_score_image=self._as_text(progress.get("best_score_image")),

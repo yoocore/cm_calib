@@ -23,6 +23,7 @@ class CameraResult:
     best_score: Optional[float] = None
     current_iter_score: Optional[float] = None
     current_iter_index: Optional[int] = None
+    current_iter_image: Optional[str] = None
     live_log: Optional[str] = None
     result_json: Optional[str] = None
     best_image: Optional[str] = None

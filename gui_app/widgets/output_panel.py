@@ -30,6 +30,7 @@ BEST_IMAGE_ROLE = Qt.UserRole + 2
 BEST_SCORE_IMAGE_ROLE = Qt.UserRole + 3
 BEST_OVERLAY_IMAGE_ROLE = Qt.UserRole + 4
 LIVE_LOG_ROLE = Qt.UserRole + 5
+CURRENT_ITER_IMAGE_ROLE = Qt.UserRole + 6
 SUPPORTED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
 _LOG_SOURCE_RE = re.compile(r"^\[(?P<source>[^\]]+)\]\s*(?P<body>.*)$")
 _LOG_LEVEL_STYLES = {
@@ -150,6 +151,13 @@ class ArtifactPreviewLabel(QLabel):
         self.setText("")
 
 
+_PREVIEW_GROUP_STYLE = (
+    "QGroupBox { border: 1px solid #666; border-radius: 4px;"
+    " margin-top: 6px; padding-top: 14px; font-weight: normal; }"
+    "QGroupBox::title { subcontrol-origin: margin; left: 6px; padding: 0 3px; }"
+)
+
+
 class CameraResultCard(QGroupBox):
     selected = Signal(str)
     activated = Signal(str)
@@ -161,16 +169,12 @@ class CameraResultCard(QGroupBox):
         self.status_value = QLabel("pending")
         self.best_score_value = QLabel("-")
         self.current_iter_value = QLabel("-")
-        self.score_preview = ArtifactPreviewLabel("Score view", self)
-        self.overlay_preview = ArtifactPreviewLabel("Overlap view", self)
-        self.score_label = QLabel("Score")
-        self.score_label.setAlignment(Qt.AlignCenter)
-        self.score_label.setStyleSheet("font-weight: bold; color: #e6edf3;")
-        self.overlay_label = QLabel("Overlay")
-        self.overlay_label.setAlignment(Qt.AlignCenter)
-        self.overlay_label.setStyleSheet("font-weight: bold; color: #e6edf3;")
+        self.iter_preview = ArtifactPreviewLabel("")
+        self.score_preview = ArtifactPreviewLabel("")
+        self.overlay_preview = ArtifactPreviewLabel("")
         self.open_log_button = QPushButton("Log")
         self.open_result_button = QPushButton("Result JSON")
+        self.open_current_button = QPushButton("Current")
         self.open_best_button = QPushButton("Best")
         self.open_score_button = QPushButton("Score")
         self.open_overlay_button = QPushButton("Overlap")
@@ -183,31 +187,23 @@ class CameraResultCard(QGroupBox):
         info_layout.addWidget(QLabel("Current Iter"), 2, 0)
         info_layout.addWidget(self.current_iter_value, 2, 1)
 
-        score_col = QWidget(self)
-        score_col_layout = QVBoxLayout(score_col)
-        score_col_layout.setContentsMargins(0, 0, 0, 0)
-        score_col_layout.setSpacing(2)
-        score_col_layout.addWidget(self.score_label)
-        score_col_layout.addWidget(self.score_preview, 1)
-
-        overlay_col = QWidget(self)
-        overlay_col_layout = QVBoxLayout(overlay_col)
-        overlay_col_layout.setContentsMargins(0, 0, 0, 0)
-        overlay_col_layout.setSpacing(2)
-        overlay_col_layout.addWidget(self.overlay_label)
-        overlay_col_layout.addWidget(self.overlay_preview, 1)
+        self._iter_group = self._make_preview_group("Current Iter", self.iter_preview)
+        self._score_group = self._make_preview_group("Best Score", self.score_preview)
+        self._overlay_group = self._make_preview_group("Best Overlay", self.overlay_preview)
 
         previews = QWidget(self)
         previews_layout = QHBoxLayout(previews)
         previews_layout.setContentsMargins(0, 0, 0, 0)
-        previews_layout.addWidget(score_col, 1)
-        previews_layout.addWidget(overlay_col, 1)
+        previews_layout.addWidget(self._iter_group, 1)
+        previews_layout.addWidget(self._score_group, 1)
+        previews_layout.addWidget(self._overlay_group, 1)
 
         actions = QWidget(self)
         actions_layout = QHBoxLayout(actions)
         actions_layout.setContentsMargins(0, 0, 0, 0)
         actions_layout.addWidget(self.open_log_button)
         actions_layout.addWidget(self.open_result_button)
+        actions_layout.addWidget(self.open_current_button)
         actions_layout.addWidget(self.open_best_button)
         actions_layout.addWidget(self.open_score_button)
         actions_layout.addWidget(self.open_overlay_button)
@@ -219,6 +215,15 @@ class CameraResultCard(QGroupBox):
 
         self.set_selected(False)
 
+    def _make_preview_group(self, title: str, label: ArtifactPreviewLabel) -> QGroupBox:
+        group = QGroupBox(title, self)
+        group.setStyleSheet(_PREVIEW_GROUP_STYLE)
+        inner = QVBoxLayout(group)
+        inner.setContentsMargins(4, 4, 4, 4)
+        label.setParent(group)
+        inner.addWidget(label)
+        return group
+
     def set_selected(self, selected: bool) -> None:
         border_color = "#1f6feb" if selected else "#666"
         self.setStyleSheet(f"QGroupBox {{ border: 2px solid {border_color}; margin-top: 8px; padding-top: 8px; }}")
@@ -227,10 +232,12 @@ class CameraResultCard(QGroupBox):
         self.status_value.setText("fail" if result.status == "failed" else result.status)
         self.best_score_value.setText(_format_score(result.best_score))
         self.current_iter_value.setText(_format_score(result.current_iter_score))
+        self.iter_preview.set_artifact(result.current_iter_image or result.best_image)
         self.score_preview.set_artifact(result.best_score_image or result.best_image)
         self.overlay_preview.set_artifact(result.best_overlay_image or result.best_image)
         self.open_log_button.setEnabled(bool(result.live_log))
         self.open_result_button.setEnabled(bool(result.result_json))
+        self.open_current_button.setEnabled(bool(result.current_iter_image or result.best_image))
         self.open_best_button.setEnabled(bool(result.best_image))
         self.open_score_button.setEnabled(bool(result.best_score_image or result.best_image))
         self.open_overlay_button.setEnabled(bool(result.best_overlay_image or result.best_image))
@@ -340,6 +347,7 @@ class OutputPanel(QGroupBox):
         item.setData(0, LIVE_LOG_ROLE, result.live_log or "")
         item.setData(0, RESULT_JSON_ROLE, result.result_json or "")
         item.setData(0, BEST_IMAGE_ROLE, result.best_image or "")
+        item.setData(0, CURRENT_ITER_IMAGE_ROLE, result.current_iter_image or result.best_image or "")
         item.setData(0, BEST_SCORE_IMAGE_ROLE, result.best_score_image or "")
         item.setData(0, BEST_OVERLAY_IMAGE_ROLE, result.best_overlay_image or "")
 
@@ -354,6 +362,7 @@ class OutputPanel(QGroupBox):
     def resolve_item_artifact(self, item: QTreeWidgetItem, column: int) -> str | None:
         result_json = self._item_data(item, RESULT_JSON_ROLE)
         best_image = self._item_data(item, BEST_IMAGE_ROLE)
+        current_iter_image = self._item_data(item, CURRENT_ITER_IMAGE_ROLE)
         best_score_image = self._item_data(item, BEST_SCORE_IMAGE_ROLE)
         best_overlay_image = self._item_data(item, BEST_OVERLAY_IMAGE_ROLE)
         candidates_by_column = {
@@ -382,9 +391,11 @@ class OutputPanel(QGroupBox):
         card.activated.connect(self._open_camera_default_artifact)
         card.open_log_button.clicked.connect(lambda _checked=False, name=camera_name: self._open_camera_artifact(name, LIVE_LOG_ROLE))
         card.open_result_button.clicked.connect(lambda _checked=False, name=camera_name: self._open_camera_artifact(name, RESULT_JSON_ROLE))
+        card.open_current_button.clicked.connect(lambda _checked=False, name=camera_name: self._open_camera_artifact(name, CURRENT_ITER_IMAGE_ROLE))
         card.open_best_button.clicked.connect(lambda _checked=False, name=camera_name: self._open_camera_artifact(name, BEST_IMAGE_ROLE))
         card.open_score_button.clicked.connect(lambda _checked=False, name=camera_name: self._open_camera_artifact(name, BEST_SCORE_IMAGE_ROLE))
         card.open_overlay_button.clicked.connect(lambda _checked=False, name=camera_name: self._open_camera_artifact(name, BEST_OVERLAY_IMAGE_ROLE))
+        card.iter_preview.clicked.connect(lambda name=camera_name: self._open_camera_artifact(name, CURRENT_ITER_IMAGE_ROLE))
         card.score_preview.clicked.connect(lambda name=camera_name: self._open_camera_artifact(name, BEST_SCORE_IMAGE_ROLE))
         card.overlay_preview.clicked.connect(lambda name=camera_name: self._open_camera_artifact(name, BEST_OVERLAY_IMAGE_ROLE))
         self.results_layout.insertWidget(self.results_layout.count() - 1, card)
@@ -426,6 +437,7 @@ class OutputPanel(QGroupBox):
         if item is None:
             return
         artifact = self._first_existing_artifact(
+            self._item_data(item, CURRENT_ITER_IMAGE_ROLE),
             self._item_data(item, RESULT_JSON_ROLE),
             self._item_data(item, BEST_IMAGE_ROLE),
             self._item_data(item, BEST_SCORE_IMAGE_ROLE),

@@ -4005,6 +4005,7 @@ def _run_multi_start_campaign(
 
         calib = CameraCalibrator(run_cfg)
         calib.live_log_path = live_log_path
+        calib.print_progress_json = True
         try:
             result = calib.optimize()
             run_summaries.append(
@@ -4342,6 +4343,7 @@ def _run_explore_then_refine_campaign(
 
     calib = CameraCalibrator(refine_cfg)
     calib.live_log_path = live_log_path
+    calib.print_progress_json = True
     result = calib.optimize()
 
     summary = {
@@ -4551,6 +4553,7 @@ def _run_single_optimize(
 
     calib = CameraCalibrator(run_cfg, config_path=config_path)
     calib.live_log_path = live_log_path
+    calib.print_progress_json = True
     try:
         if resume_from_result:
             calib.load_best_values_from_result(

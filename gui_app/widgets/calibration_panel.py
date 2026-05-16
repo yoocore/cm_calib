@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSpinBox,
     QDoubleSpinBox,
-    QStackedWidget,
+    QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -158,56 +158,43 @@ class CalibrationPanel(QGroupBox):
 
         # --- Build UI ---
         rounds_group = _SubGroup("Campaign Rounds")
-        rounds_group.setStyleSheet(
-            "QGroupBox { border: 1px solid #555; border-radius: 4px;"
-            " margin-top: 4px; padding-top: 0px; font-weight: normal; }"
-            "QGroupBox::title { subcontrol-origin: content; left: 8px; padding: 0 4px; }"
-        )
         rounds_inner = QVBoxLayout(rounds_group)
-        rounds_inner.setContentsMargins(8, 0, 8, 0)
-        rounds_inner.setSpacing(0)
+        rounds_inner.setContentsMargins(8, 4, 8, 4)
 
         rounds_top = QHBoxLayout()
         rounds_top.addWidget(QLabel("Rounds"))
         rounds_top.addWidget(self.campaign_rounds_spin, 1)
         rounds_inner.addLayout(rounds_top)
 
-        self.strategy_stack = QStackedWidget()
-        self.strategy_stack.setFrameStyle(0)
+        self.strategy_tabs = QTabWidget()
 
-        # Page 0: Multi-Start
+        # Tab 1: Multi-Start
         ms_page = QWidget()
         ms_layout = QVBoxLayout(ms_page)
-        ms_layout.setContentsMargins(0, 0, 0, 0)
-        ms_layout.setSpacing(0)
+        ms_layout.setContentsMargins(4, 4, 4, 4)
         ms_dir = QHBoxLayout()
-        ms_dir.setSpacing(4)
         ms_dir.addWidget(QLabel("Directions"))
         ms_dir.addWidget(self.multi_start_count_spin, 1)
         ms_layout.addLayout(ms_dir)
         ms_iters = QHBoxLayout()
-        ms_iters.setSpacing(4)
         ms_iters.addWidget(QLabel("Iters"))
         ms_iters.addWidget(self.multi_start_iters_spin, 1)
         ms_layout.addLayout(ms_iters)
-        self.strategy_stack.addWidget(ms_page)
+        self.strategy_tabs.addTab(ms_page, "Multi-Start")
 
-        # Page 1: Explore + Refine
+        # Tab 2: Explore + Refine
         er_page = QWidget()
         er_layout = QVBoxLayout(er_page)
-        er_layout.setContentsMargins(0, 0, 0, 0)
-        er_layout.setSpacing(0)
+        er_layout.setContentsMargins(4, 4, 4, 4)
 
         er_explore_group = _SubGroup("Explore")
         er_explore_inner = QVBoxLayout(er_explore_group)
-        er_explore_inner.setContentsMargins(4, 2, 4, 2)
+        er_explore_inner.setContentsMargins(8, 4, 8, 4)
         er_dir = QHBoxLayout()
-        er_dir.setSpacing(4)
         er_dir.addWidget(QLabel("Directions"))
         er_dir.addWidget(self._er_count_spin, 1)
         er_explore_inner.addLayout(er_dir)
         er_iters = QHBoxLayout()
-        er_iters.setSpacing(4)
         er_iters.addWidget(QLabel("Iters"))
         er_iters.addWidget(self._er_iters_spin, 1)
         er_explore_inner.addLayout(er_iters)
@@ -215,50 +202,22 @@ class CalibrationPanel(QGroupBox):
 
         er_refine_group = _SubGroup("Refine")
         er_refine_inner = QVBoxLayout(er_refine_group)
-        er_refine_inner.setContentsMargins(4, 2, 4, 2)
+        er_refine_inner.setContentsMargins(8, 4, 8, 4)
         er_ref_iters = QHBoxLayout()
-        er_ref_iters.setSpacing(4)
         er_ref_iters.addWidget(QLabel("Iters"))
         er_ref_iters.addWidget(self._er_refine_iters_spin, 1)
         er_refine_inner.addLayout(er_ref_iters)
         er_layout.addWidget(er_refine_group)
-        self.strategy_stack.addWidget(er_page)
 
-        # Toggle buttons
-        btn_style = (
-            "QPushButton { border: 1px solid #888; border-bottom: none;"
-            " padding: 1px 8px; background: #e0e0e0; font-size: 11px; }"
-            "QPushButton:checked { background: #f0f0f0; font-weight: bold; }"
-        )
-        self._ms_btn = QPushButton("Multi-Start")
-        self._ms_btn.setCheckable(True)
-        self._ms_btn.setChecked(True)
-        self._ms_btn.setFixedHeight(20)
-        self._ms_btn.setStyleSheet(btn_style)
-        self._er_btn = QPushButton("Explore + Refine")
-        self._er_btn.setCheckable(True)
-        self._er_btn.setFixedHeight(20)
-        self._er_btn.setStyleSheet(btn_style)
-
-        tab_bar = QHBoxLayout()
-        tab_bar.setSpacing(0)
-        tab_bar.addWidget(self._ms_btn)
-        tab_bar.addWidget(self._er_btn)
-
-        self._ms_btn.clicked.connect(lambda: self._switch_strategy(0))
-        self._er_btn.clicked.connect(lambda: self._switch_strategy(1))
-
-        rounds_inner.addLayout(tab_bar)
-        rounds_inner.addWidget(self.strategy_stack)
+        self.strategy_tabs.addTab(er_page, "Explore + Refine")
+        rounds_inner.addWidget(self.strategy_tabs)
 
         jitter_row = QHBoxLayout()
-        jitter_row.setSpacing(4)
         jitter_row.addWidget(QLabel("Jitter"))
         jitter_row.addWidget(self.jitter_spin, 1)
         rounds_inner.addLayout(jitter_row)
 
         estimate_row = QHBoxLayout()
-        estimate_row.setSpacing(4)
         estimate_row.addWidget(QLabel("Estimated Time"))
         estimate_row.addWidget(self.estimate_label, 1)
         rounds_inner.addLayout(estimate_row)
@@ -289,15 +248,9 @@ class CalibrationPanel(QGroupBox):
         layout.addWidget(self.status_query_button)
         layout.addWidget(button_row)
 
-        self._connect_signals()
-
-    def _switch_strategy(self, index: int) -> None:
-        self.strategy_stack.setCurrentIndex(index)
-        self._ms_btn.setChecked(index == 0)
-        self._er_btn.setChecked(index == 1)
-        self._on_estimated_time_changed()
-
-    def _connect_signals(self) -> None:
+        self.strategy_tabs.currentChanged.connect(
+            lambda _i: self._on_estimated_time_changed()
+        )
         self.campaign_rounds_spin.valueChanged.connect(
             lambda _v: self._on_estimated_time_changed()
         )
@@ -325,7 +278,7 @@ class CalibrationPanel(QGroupBox):
 
     @property
     def explore_then_refine(self) -> bool:
-        return self.strategy_stack.currentIndex() == 1
+        return self.strategy_tabs.currentIndex() == 1
 
     @property
     def cm_install_path(self) -> Path | None:
@@ -398,8 +351,7 @@ class CalibrationPanel(QGroupBox):
         self._er_iters_spin.setEnabled(not locked)
         self._er_refine_iters_spin.setEnabled(not locked)
         self.jitter_spin.setEnabled(not locked)
-        self._ms_btn.setEnabled(not locked)
-        self._er_btn.setEnabled(not locked)
+        self.strategy_tabs.setEnabled(not locked)
         self.prepare_button.setEnabled(not locked)
         self.cm_version_combo.setEnabled(not locked)
 

@@ -168,8 +168,8 @@ class CalibrationPanel(QGroupBox):
         rounds_inner.addLayout(rounds_top)
 
         self.strategy_tabs = QTabWidget()
+        self.strategy_tabs.setDocumentMode(True)
         self.strategy_tabs.setStyleSheet(
-            "QTabWidget::pane { margin: 0; padding: 0; border: none; }"
             "QTabBar::tab { padding: 2px 6px; }"
         )
 

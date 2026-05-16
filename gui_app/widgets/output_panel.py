@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QPixmap, QTextCursor
+from PySide6.QtGui import QImage, QPixmap, QPixmapCache, QTextCursor
 from PySide6.QtWidgets import (
     QGridLayout,
     QGroupBox,
@@ -66,9 +66,9 @@ def _classify_log_level(message: str) -> str:
     text = message.casefold()
     if not text:
         return "info"
-    if any(token in text for token in ("traceback", " exception", "failed", "fatal", "error", "critical")):
+    if any(token in text for token in ("traceback", " exception", "error", "fatal", "critical")):
         return "error"
-    if any(token in text for token in ("warn", "warning", "timeout", "timed out", "passive", "not ready", "mismatch")):
+    if any(token in text for token in ("warn", "warning", "timeout", "timed out", "passive", "not ready", "mismatch", " fail")):
         return "warning"
     if any(token in text for token in (" success", " succeeded", "completed", "ready", " all passed", " ok", " status=ok")):
         return "success"
@@ -137,12 +137,14 @@ class ArtifactPreviewLabel(QLabel):
             self.setText(f"Missing\n{path.name}")
             return
 
-        pixmap = QPixmap(str(path))
-        if pixmap.isNull():
+        QPixmapCache.clear()
+        img = QImage(str(path))
+        if img.isNull():
             self.setPixmap(QPixmap())
             self.setText(f"Preview failed\n{path.name}")
             return
 
+        pixmap = QPixmap.fromImage(img)
         scaled = pixmap.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
         self.setPixmap(scaled)
         self.setText("")
@@ -161,6 +163,12 @@ class CameraResultCard(QGroupBox):
         self.current_iter_value = QLabel("-")
         self.score_preview = ArtifactPreviewLabel("Score view", self)
         self.overlay_preview = ArtifactPreviewLabel("Overlap view", self)
+        self.score_label = QLabel("Score")
+        self.score_label.setAlignment(Qt.AlignCenter)
+        self.score_label.setStyleSheet("font-weight: bold; color: #e6edf3;")
+        self.overlay_label = QLabel("Overlay")
+        self.overlay_label.setAlignment(Qt.AlignCenter)
+        self.overlay_label.setStyleSheet("font-weight: bold; color: #e6edf3;")
         self.open_log_button = QPushButton("Log")
         self.open_result_button = QPushButton("Result JSON")
         self.open_best_button = QPushButton("Best")
@@ -175,11 +183,25 @@ class CameraResultCard(QGroupBox):
         info_layout.addWidget(QLabel("Current Iter"), 2, 0)
         info_layout.addWidget(self.current_iter_value, 2, 1)
 
+        score_col = QWidget(self)
+        score_col_layout = QVBoxLayout(score_col)
+        score_col_layout.setContentsMargins(0, 0, 0, 0)
+        score_col_layout.setSpacing(2)
+        score_col_layout.addWidget(self.score_label)
+        score_col_layout.addWidget(self.score_preview, 1)
+
+        overlay_col = QWidget(self)
+        overlay_col_layout = QVBoxLayout(overlay_col)
+        overlay_col_layout.setContentsMargins(0, 0, 0, 0)
+        overlay_col_layout.setSpacing(2)
+        overlay_col_layout.addWidget(self.overlay_label)
+        overlay_col_layout.addWidget(self.overlay_preview, 1)
+
         previews = QWidget(self)
         previews_layout = QHBoxLayout(previews)
         previews_layout.setContentsMargins(0, 0, 0, 0)
-        previews_layout.addWidget(self.score_preview, 1)
-        previews_layout.addWidget(self.overlay_preview, 1)
+        previews_layout.addWidget(score_col, 1)
+        previews_layout.addWidget(overlay_col, 1)
 
         actions = QWidget(self)
         actions_layout = QHBoxLayout(actions)

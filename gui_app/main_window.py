@@ -403,6 +403,9 @@ class MainWindow(QMainWindow):
                 raise ValueError("CM 版本未选择，请先在中栏选择 CM 版本")
             self.calibration_service.set_cm_install(cm_install)
             if not self._is_runtime_ready_for_direct_start(launch):
+                if self._is_runtime_almost_ready(launch):
+                    self._auto_prepare_and_start(launch)
+                    return
                 summary_text = self._build_start_requires_prepare_summary(launch)
                 self.calibration_panel.set_failure_summary(summary_text)
                 QMessageBox.warning(self, "Runtime Not Ready", summary_text)
@@ -992,6 +995,33 @@ class MainWindow(QMainWindow):
         if first_camera is None:
             return False
         return first_camera in [str(sensor) for sensor in active_sensors]
+
+    def _is_runtime_almost_ready(self, launch: CalibrationLaunchConfig) -> bool:
+        payload = self._last_runtime_summary if isinstance(self._last_runtime_summary, dict) else None
+        if payload is None:
+            return False
+        return self._is_runtime_ready_for_launch(payload, launch)
+
+    def _auto_prepare_and_start(self, launch: CalibrationLaunchConfig) -> None:
+        payload = self._last_runtime_summary if isinstance(self._last_runtime_summary, dict) else {}
+        old_sensors = ", ".join(str(s) for s in payload.get("active_sensors", []))
+        first_camera = launch.cameras[0]
+        self.state.selected_cameras = launch.cameras
+        cm_install = self.calibration_panel.cm_install_path
+        if cm_install is None:
+            raise ValueError("CM 版本未选择，请先在中栏选择 CM 版本")
+        self.calibration_service.set_cm_install(cm_install)
+        self._runtime_mode = "prepare"
+        self._pending_launch = launch
+        self.output_panel.append_log(
+            f"[INFO] Active sensor 不匹配: 当前=[{old_sensors}], 需要={first_camera}。自动触发 CM Prepare。",
+            source="runtime",
+        )
+        self._set_status_summary(f"Active sensor 从 [{old_sensors}] 切换到 {first_camera}...")
+        self.calibration_panel.set_phase_label("正在切换 Active Sensor...")
+        self.runtime_service.prepare_runtime(
+            launch.project_root, launch.testrun, cameras=launch.cameras, cm_install=cm_install,
+        )
 
     def _build_start_requires_prepare_summary(self, launch: CalibrationLaunchConfig) -> str:
         payload = self._last_runtime_summary if isinstance(self._last_runtime_summary, dict) else None

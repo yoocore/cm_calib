@@ -95,7 +95,8 @@ class MainWindow(QMainWindow):
         self._wire_signals()
         self._refresh_camera_list()
         self._apply_status(AppStatus.IDLE)
-        self._set_status_summary("Waiting for action.")
+        self._status_summary_lines.clear()
+        self.calibration_panel.clear_failure_summary()
 
     def _wire_signals(self) -> None:
         self.calibration_panel.start_button.clicked.connect(self._start_calibration)
@@ -154,9 +155,7 @@ class MainWindow(QMainWindow):
         self._refresh_calibration_progress()
 
     def _set_red_failure(self, text: str) -> None:
-        self.calibration_panel.failure_summary.setHtml(
-            f'<p style="color:#e53935;font-weight:bold;margin:0;">{text}</p>'
-        )
+        self.calibration_panel.set_failure_summary(text)
 
     def _restore_gui_to_foreground(self) -> None:
         self.raise_()

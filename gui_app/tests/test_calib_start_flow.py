@@ -16,6 +16,10 @@ from gui_app.widgets.output_panel import (
 class TestCalibStartFlow:
     """验证 Calib Start 的三级流水线：预检 → Prepare → 标定"""
 
+    def test_main_window_starts_with_hidden_failure_summary(self, main_window: MainWindow):
+        """主窗初始化后，摘要框默认应保持隐藏，直到出现需要展示的状态或错误"""
+        assert main_window.calibration_panel.failure_summary.isHidden() is True
+
     def test_start_calibration_precheck_fails(self, main_window: MainWindow, qtbot, mocker):
         """预检失败时不应调用 prepare 或 calibration"""
         mocker.patch("gui_app.main_window.QMessageBox")
@@ -195,6 +199,22 @@ class TestCalibStartFlow:
 
         summary_text = main_window.calibration_panel.failure_summary.toPlainText()
         assert "CM Prepare triggered" in summary_text
+
+    def test_generate_configs_failure_shows_failure_summary(self, main_window: MainWindow, mocker):
+        """Generate Configs 失败时，即使摘要框默认隐藏，也应重新显示错误摘要"""
+        message_box = mocker.patch("gui_app.main_window.QMessageBox")
+        main_window.precheck_service.generate_configs_for_cameras = MagicMock(side_effect=RuntimeError("boom"))
+        main_window.calibration_panel.clear_failure_summary()
+
+        main_window.precheck_service.run_for_cameras = MagicMock(return_value=[
+            {"camera": "cam1", "ok": True, "message": "ok"}
+        ])
+
+        main_window._generate_configs()
+
+        assert main_window.calibration_panel.failure_summary.isHidden() is False
+        assert "boom" in main_window.calibration_panel.failure_summary.toPlainText()
+        message_box.critical.assert_called_once()
 
     def test_runtime_line_prepare_logs_incremental_structured_steps(self, main_window: MainWindow):
         """prepare 期间 runtime stdout 应逐步补充结构化 Prepare 日志，同时保留原始行"""

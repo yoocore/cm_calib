@@ -32,6 +32,12 @@ from dde_health_check import (
     run_check_attempt,
 )
 
+try:
+    import optuna
+    _OPTUNA_AVAILABLE = True
+except ImportError:
+    _OPTUNA_AVAILABLE = False
+
 
 _ANNOTATION_OCR_ENGINE = None
 
@@ -3372,11 +3378,15 @@ def _resolve_parameter_bounds(param_cfg: dict) -> Tuple[float, float]:
 def _build_explicit_parameter_config(param_cfg: dict, initial_value: float) -> dict:
     min_value, max_value = _resolve_parameter_bounds(param_cfg)
     decimals = int(param_cfg.get("decimals", 4))
+    min_value = round(min_value, decimals)
+    max_value = round(max_value, decimals)
     quantized_initial = _quantize_float(initial_value, decimals)
-    if quantized_initial < min_value or quantized_initial > max_value:
+    _EPS = 1e-9
+    if quantized_initial < min_value - _EPS or quantized_initial > max_value + _EPS:
         raise ValueError(
             f"initial value {quantized_initial} is outside range [{min_value}, {max_value}]"
         )
+    quantized_initial = max(min_value, min(max_value, quantized_initial))
 
     explicit_param_cfg = copy.deepcopy(param_cfg)
     explicit_param_cfg["initial"] = quantized_initial
@@ -5371,6 +5381,10 @@ class CameraCalibrator:
         )
         self.no_signal_penalty = float(cfg.get("no_signal_penalty", 1e5))
         self.progress_flush_every = max(1, int(cfg.get("progress_flush_every", 1)))
+        self.max_history_entries = max(0, int(cfg.get("max_history_entries", 500)))
+        self.optimizer_mode = str(cfg.get("optimizer_mode", "coordinate_descent")).lower()
+        if self.optimizer_mode not in {"coordinate_descent", "bayesian", "auto"}:
+            raise ValueError("optimizer_mode must be 'coordinate_descent', 'bayesian', or 'auto'")
         self.keep_aspect_resize = bool(cfg.get("keep_aspect_resize", True))
         self.auto_generate_best_score_image = bool(
             cfg.get("auto_generate_best_score_image", True)
@@ -5545,6 +5559,9 @@ class CameraCalibrator:
         self.run_started_perf = time.perf_counter()
         self._best_score_image_cache: Dict[str, Path] = {}
         self._best_overlay_image_cache: Dict[str, Path] = {}
+        self._total_trial_count: int = 0
+        self._total_iteration_count: int = 0
+        self._trial_log_path: Path = self.output_dir / "trial_log.jsonl"
 
         self.boards = self._load_boards(cfg.get("boards", []))
         if not self.boards:
@@ -6442,6 +6459,7 @@ class CameraCalibrator:
             return None
 
         self.resume_result_path = result_path
+        self._restore_counters_from_result(result_path)
         best_score = result.get("best_score")
         self.resume_best_score = float(best_score) if isinstance(best_score, (int, float)) else None
         print(
@@ -6449,6 +6467,24 @@ class CameraCalibrator:
             f"path={result_path}, values={self._format_value_map(applied)}"
         )
         return applied
+
+    def _restore_counters_from_result(self, result_path: Path) -> None:
+        if not result_path.exists():
+            return
+        try:
+            with open(result_path, "r", encoding="utf-8") as f:
+                result = json.load(f)
+            if not isinstance(result, dict):
+                print(f"Counter restore skipped: invalid result format in {result_path}")
+                return
+            self._total_trial_count = int(result.get("total_trial_count", 0))
+            self._total_iteration_count = int(result.get("total_iteration_count", 0))
+            print(
+                f"Restored counters: trial_count={self._total_trial_count}, "
+                f"iteration_count={self._total_iteration_count} from {result_path}"
+            )
+        except Exception as e:
+            print(f"Counter restore failed: {e}")
 
     def _run_script_control_dde_runscript(self, script_path: Path) -> bool:
         self._ensure_dde_dispatch_ready("script_control_runscript")
@@ -7461,6 +7497,49 @@ class CameraCalibrator:
             entry.update(meta)
         return entry
 
+    def _append_trial_log(
+        self,
+        *,
+        iteration: int,
+        score: float,
+        accepted: bool,
+        phase: str,
+        param_name: Optional[str] = None,
+        direction: Optional[str] = None,
+        trial_multiplier: Optional[float] = None,
+        accepted_reason: Optional[str] = None,
+        failed_reason: Optional[str] = None,
+        recovered: bool = False,
+        elapsed_sec: Optional[float] = None,
+    ) -> None:
+        try:
+            self._trial_log_path.parent.mkdir(parents=True, exist_ok=True)
+            record: Dict[str, object] = {
+                "iteration": iteration,
+                "score": score,
+                "accepted": accepted,
+                "phase": phase,
+                "timestamp": datetime.now().astimezone().isoformat(),
+            }
+            if param_name is not None:
+                record["param_name"] = param_name
+            if direction is not None:
+                record["direction"] = direction
+            if trial_multiplier is not None:
+                record["trial_multiplier"] = trial_multiplier
+            if accepted_reason is not None:
+                record["accepted_reason"] = accepted_reason
+            if failed_reason is not None:
+                record["failed_reason"] = failed_reason
+            if recovered:
+                record["recovered"] = recovered
+            if elapsed_sec is not None:
+                record["elapsed_sec"] = elapsed_sec
+            with open(self._trial_log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record) + "\n")
+        except Exception as exc:
+            print(f"Warning: failed to append trial log: {exc}")
+
     def _extract_roi(
         self,
         image: np.ndarray,
@@ -8127,7 +8206,7 @@ class CameraCalibrator:
         return f"{hours:02d}:{minutes:02d}:{secs:02d}.{millis:03d}"
 
     def _build_run_stats(self, history: List[dict]) -> dict:
-        calibration_count = len(history)
+        calibration_count = self._total_trial_count
         total_elapsed_sec = max(0.0, time.perf_counter() - self.run_started_perf)
         average_elapsed_sec = total_elapsed_sec / max(1, calibration_count)
         return {
@@ -9900,6 +9979,8 @@ class CameraCalibrator:
             "finished_at": None if in_progress else updated_at,
             "stop_reason": stop_reason,
             "history_count": len(history),
+            "total_trial_count": self._total_trial_count,
+            "total_iteration_count": self._total_iteration_count,
             "run_stats": run_stats,
             "summary": summary,
             "strategy_adaptation": self._strategy_state_payload(),
@@ -9975,7 +10056,7 @@ class CameraCalibrator:
             best_total_detail=best_total_detail,
             best_img=best_img,
             stop_reason=stop_reason,
-            history=history,
+            history=self._trim_history(history),
             in_progress=True,
         )
 
@@ -10005,7 +10086,533 @@ class CameraCalibrator:
             "Initial evaluation aborted due to fatal board scores: " + ", ".join(failures)
         )
 
-    def optimize(self) -> dict:
+    def _trim_history(self, history: List[dict]) -> List[dict]:
+        if self.max_history_entries <= 0:
+            return history
+        if len(history) <= self.max_history_entries:
+            return history
+        kept = [history[0]]
+        tail = history[-(self.max_history_entries - 1):]
+        kept.extend(tail)
+        return kept
+
+    def _optimize_coordinate_descent(self) -> dict:
+        return self._optimize_coordinate_descent_impl()
+
+    def _optimize_bayesian(self) -> dict:
+        if not _OPTUNA_AVAILABLE:
+            print("WARNING: optuna not installed, falling back to coordinate_descent")
+            return self._optimize_coordinate_descent_impl()
+        return self._optimize_bayesian_impl()
+
+    def _optimize_bayesian_impl(self) -> dict:
+        self._ensure_live_log()
+        if self.real_detections is None:
+            self.real_detections = self._detect_reference_boards()
+
+        self._print_run_summary()
+        self._preflight_capture_aspect_ratio()
+        self.preflight_script_control()
+        try:
+            self._apply_initial_value_map_with_retry(
+                self._snapshot_values(),
+                "Failed initial Script Control apply",
+            )
+        except RuntimeError as exc:
+            print(f"Initial Script Control apply skipped: {exc}")
+
+        best_total_detail, best_img = self.evaluate("initial", baseline_metrics=None)
+        self._raise_if_initial_board_failures(best_total_detail)
+        best_score = best_total_detail.total_score
+        best_baseline = self._as_baseline_metrics(best_total_detail)
+        best_values = {p.name: p.value for p in self.params}
+        stop_reason = "max_iters_reached"
+        initial_score_image = self._build_score_image_for_snapshot(
+            best_img,
+            best_total_detail,
+            best_values,
+            output_path=best_img.with_name("initial_score.png"),
+        )
+
+        history = [
+            {
+                "iter": 0,
+                "total_score": best_score,
+                "compared_board_count": best_total_detail.compared_board_count,
+                "degrade_penalty": best_total_detail.degrade_penalty,
+                "has_critical_degrade": best_total_detail.has_critical_degrade,
+                "degraded_boards": best_total_detail.degraded_boards,
+                "board_scores": [
+                    {
+                        "board_id": s.board_id,
+                        "board_type": s.board_type,
+                        "compared": s.compared,
+                        "reference_visible": s.reference_visible,
+                        "sim_visible": s.sim_visible,
+                        "score": s.total_score,
+                        "rmse": s.rmse,
+                        "mean_error": s.mean_error,
+                        "max_error": s.max_error,
+                        "miss_rate": s.miss_rate,
+                        "matched_point_count": s.matched_point_count,
+                        "failed_reason": s.failed_reason,
+                    }
+                    for s in best_total_detail.board_scores
+                ],
+                "accepted": True,
+                "image": str(best_img),
+                "score_image": str(initial_score_image) if initial_score_image else None,
+                "values": best_values.copy(),
+            }
+        ]
+
+        print(
+            "iter=0 "
+            f"total_score={best_score:.6f} "
+            f"compared_boards={best_total_detail.compared_board_count} "
+            f"degrade_penalty={best_total_detail.degrade_penalty:.6f} "
+            f"{self._top_board_summary(best_total_detail)}"
+        )
+        self._write_progress_result(
+            best_score=best_score,
+            best_values=best_values,
+            best_total_detail=best_total_detail,
+            best_img=best_img,
+            stop_reason="running",
+            history=history,
+            in_progress=True,
+        )
+
+        def objective(trial: optuna.Trial) -> float:
+            trial_values = {}
+            self._total_trial_count += 1
+            for p in self.params:
+                trial_values[p.name] = trial.suggest_float(
+                    p.name,
+                    float(p.min_value),
+                    float(p.max_value),
+                )
+
+            self._apply_value_map_or_recover(
+                trial_values,
+                f"Failed to apply trial values in Bayesian iteration {trial.number}",
+            )
+
+            tag = f"bayesian_trial_{trial.number:04d}"
+            try:
+                total_detail, img_path = self.evaluate(
+                    tag,
+                    baseline_metrics=best_baseline,
+                )
+                score = total_detail.total_score
+
+                accepted, accepted_reason = self._acceptance_decision(
+                    baseline_score=best_score,
+                    baseline_detail=best_total_detail,
+                    candidate_score=score,
+                    candidate_detail=total_detail,
+                )
+
+                history.append(
+                    self._make_history_entry(
+                        trial.number + 1,
+                        total_detail,
+                        img_path,
+                        accepted,
+                        meta={
+                            "phase": "bayesian",
+                            "values": trial_values.copy(),
+                            "accepted_reason": accepted_reason,
+                        },
+                    )
+                )
+                history_trimmed = self._trim_history(history)
+
+                self._append_trial_log(
+                    iteration=trial.number + 1,
+                    score=score,
+                    accepted=accepted,
+                    phase="bayesian",
+                    accepted_reason=accepted_reason,
+                )
+
+                print(
+                    f"iter={trial.number + 1} phase=bayesian "
+                    f"total_score={score:.6f} compared={total_detail.compared_board_count} "
+                    f"degrade={total_detail.degrade_penalty:.6f} "
+                    f"critical_degrade={total_detail.has_critical_degrade} "
+                    f"accepted={accepted} accepted_reason={accepted_reason} "
+                    f"{self._top_board_summary(total_detail)}"
+                )
+
+                if trial.number % self.progress_flush_every == 0:
+                    self._write_progress_result(
+                        best_score=best_score,
+                        best_values=best_values,
+                        best_total_detail=best_total_detail,
+                        best_img=best_img,
+                        stop_reason="running",
+                        history=history_trimmed,
+                        in_progress=True,
+                    )
+
+                return score
+            except RuntimeError as exc:
+                print(f"iter={trial.number + 1} phase=bayesian runtime_error={exc}")
+                self._apply_value_map_or_recover(
+                    best_values,
+                    f"Failed to restore best values after Bayesian runtime error: {exc}",
+                )
+                history.append(
+                    self._make_history_entry(
+                        trial.number + 1,
+                        best_total_detail,
+                        best_img,
+                        False,
+                        failed_reason=str(exc),
+                        meta={"phase": "bayesian_runtime_error"},
+                    )
+                )
+                self._total_trial_count += 1
+                self._append_trial_log(
+                    iteration=trial.number + 1,
+                    score=float("inf"),
+                    accepted=False,
+                    phase="bayesian_runtime_error",
+                    failed_reason=str(exc),
+                )
+                return float("inf")
+
+        sampler = optuna.samplers.TPESampler(
+            seed=int(cfg.get("bayesian_seed", 42)),
+            n_startup_trials=min(self.max_iters // 2, 10),
+        )
+        study = optuna.create_study(
+            direction="minimize",
+            sampler=sampler,
+            study_name=f"calibration_{self.camera_name}",
+        )
+
+        study.enqueue_trial(best_values)
+
+        n_trials = self.max_iters
+        study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
+
+        if study.best_trial is not None:
+            best_params = study.best_params
+            best_score = study.best_value
+            self._apply_value_map_or_recover(
+                best_params,
+                "Failed to apply best Bayesian parameters",
+            )
+            best_total_detail, best_img = self.evaluate(
+                "bayesian_best",
+                baseline_metrics=None,
+            )
+            best_values = best_params.copy()
+            stop_reason = "bayesian_converged"
+
+        result = self._build_result_payload(
+            best_score=best_score,
+            best_values=best_values,
+            best_total_detail=best_total_detail,
+            best_img=best_img,
+            best_score_image=self._ensure_best_score_image(
+                best_img,
+                best_total_detail,
+                values=best_values,
+            ),
+            best_overlay_image=self._ensure_best_overlay_image(best_img),
+            stop_reason=stop_reason,
+            history=self._trim_history(history),
+            in_progress=False,
+        )
+        self._print_acceptance_summary(best_total_detail)
+        self._print_calibration_summary(result["summary"])
+        self._write_progress_result(
+            best_score=best_score,
+            best_values=best_values,
+            best_total_detail=best_total_detail,
+            best_img=best_img,
+            stop_reason=stop_reason,
+            history=self._trim_history(history),
+            in_progress=False,
+        )
+        return result
+
+    @dataclass
+    class TrialResult:
+        total_detail: Optional[TotalScoreDetail] = None
+        img_path: Optional[Path] = None
+        score: float = float("inf")
+        accepted: bool = False
+        accepted_reason: str = ""
+        joint_candidate_reason: Optional[str] = None
+        recovered: bool = False
+        failed_reason: Optional[str] = None
+
+    def _run_single_param_trial(
+        self,
+        p,
+        trial_value: float,
+        base_values: Dict[str, float],
+        base_score: float,
+        best_total_detail: TotalScoreDetail,
+        best_baseline: Dict,
+        it: int,
+        direction: float,
+        trial_multiplier: float,
+        iteration_strategy_stats: Dict,
+        history: List[dict],
+        best_score: float,
+        best_values: Dict[str, float],
+        best_img: Path,
+    ) -> "CameraCalibrator.TrialResult":
+        result = self.TrialResult()
+        self._total_trial_count += 1
+        tag = f"iter_{it:04d}_{p.name}_{'p' if direction > 0 else 'n'}"
+        try:
+            self._apply_value_map({p.name: trial_value})
+            total_detail, img_path = self.evaluate(tag, baseline_metrics=best_baseline)
+            score = total_detail.total_score
+            accepted, accepted_reason = self._acceptance_decision(
+                baseline_score=base_score,
+                baseline_detail=best_total_detail,
+                candidate_score=score,
+                candidate_detail=total_detail,
+            )
+            joint_candidate_reason = None
+            if not accepted:
+                joint_candidate_reason = self._joint_exploration_candidate_reason(
+                    p.name, base_score, total_detail, score
+                )
+            self._record_strategy_trial(
+                iteration_strategy_stats,
+                param_name=p.name,
+                accepted=accepted,
+                joint_candidate=joint_candidate_reason is not None,
+                score_delta=score - base_score,
+                trial_multiplier=trial_multiplier,
+                baseline_detail=best_total_detail,
+                candidate_detail=total_detail,
+            )
+            history.append(
+                self._make_history_entry(
+                    it, total_detail, img_path, accepted,
+                    meta={
+                        "phase": "single",
+                        "param": p.name,
+                        "trial": trial_value,
+                        "direction": "+" if direction > 0 else "-",
+                        "trial_multiplier": trial_multiplier,
+                        "accepted_reason": accepted_reason,
+                        "joint_candidate_reason": joint_candidate_reason,
+                    },
+                )
+            )
+            print(
+                f"iter={it} phase=single param={p.name} trial={trial_value:.{p.decimals}f} "
+                f"total_score={score:.6f} compared={total_detail.compared_board_count} "
+                f"degrade={total_detail.degrade_penalty:.6f} "
+                f"critical_degrade={total_detail.has_critical_degrade} "
+                f"accepted={accepted} accepted_reason={accepted_reason} "
+                f"joint_candidate={joint_candidate_reason or '-'} "
+                f"direction={'+' if direction > 0 else '-'} "
+                f"step_scale={trial_multiplier:g} "
+                f"{self._top_board_summary(total_detail)}"
+            )
+            self._flush_progress_if_needed(
+                best_score=best_score, best_values=best_values,
+                best_total_detail=best_total_detail, best_img=best_img,
+                stop_reason="running", history=history,
+            )
+            self._apply_value_map({p.name: base_values[p.name]})
+
+            result.total_detail = total_detail
+            result.img_path = img_path
+            result.score = score
+            result.accepted = accepted
+            result.accepted_reason = accepted_reason
+            result.joint_candidate_reason = joint_candidate_reason
+            self._append_trial_log(
+                iteration=it,
+                score=score,
+                accepted=accepted,
+                phase="single",
+                param_name=p.name,
+                direction="+" if direction > 0 else "-",
+                trial_multiplier=trial_multiplier,
+                accepted_reason=accepted_reason,
+            )
+        except RuntimeError as exc:
+            restored = self._recover_after_runtime_error(base_values, exc)
+            history.append(
+                self._make_history_entry(
+                    it, best_total_detail, best_img, False,
+                    failed_reason=str(exc),
+                    meta={
+                        "phase": "single_runtime_error",
+                        "param": p.name,
+                        "trial": trial_value,
+                        "direction": "+" if direction > 0 else "-",
+                        "trial_multiplier": trial_multiplier,
+                        "recovered": restored,
+                    },
+                )
+            )
+            print(
+                f"iter={it} phase=single param={p.name} trial={trial_value:.{p.decimals}f} "
+                f"runtime_error={exc} recovered={restored}"
+            )
+            self._flush_progress_if_needed(
+                best_score=best_score, best_values=best_values,
+                best_total_detail=best_total_detail, best_img=best_img,
+                stop_reason="running", history=history,
+            )
+            if not restored:
+                raise RuntimeError(f"Failed to recover after Script Control runtime error: {exc}")
+            self._append_trial_log(
+                iteration=it,
+                score=float("inf"),
+                accepted=False,
+                phase="single_runtime_error",
+                param_name=p.name,
+                direction="+" if direction > 0 else "-",
+                trial_multiplier=trial_multiplier,
+                failed_reason=str(exc),
+                recovered=restored,
+            )
+            result.recovered = True
+            result.failed_reason = str(exc)
+        return result
+
+    def _run_joint_param_trial(
+        self,
+        name: str,
+        trial_value: float,
+        previous_value: float,
+        joint_score: float,
+        joint_total_detail: TotalScoreDetail,
+        joint_baseline: Dict,
+        it: int,
+        move: Dict[str, object],
+        iteration_strategy_stats: Dict,
+        history: List[dict],
+        best_score: float,
+        best_values: Dict[str, float],
+        best_total_detail: TotalScoreDetail,
+        best_img: Path,
+    ) -> "CameraCalibrator.TrialResult":
+        result = self.TrialResult()
+        self._total_trial_count += 1
+        try:
+            self._apply_value_map({name: trial_value})
+            total_detail, img_path = self.evaluate(
+                f"iter_{it:04d}_joint_{name}",
+                baseline_metrics=joint_baseline,
+            )
+            score = total_detail.total_score
+            accepted, accepted_reason = self._acceptance_decision(
+                baseline_score=joint_score,
+                baseline_detail=joint_total_detail,
+                candidate_score=score,
+                candidate_detail=total_detail,
+            )
+            self._record_strategy_trial(
+                iteration_strategy_stats,
+                param_name=name,
+                accepted=accepted,
+                joint_candidate=False,
+                score_delta=score - joint_score,
+                trial_multiplier=float(move.get("trial_multiplier", 1.0)),
+                baseline_detail=joint_total_detail,
+                candidate_detail=total_detail,
+            )
+            history.append(
+                self._make_history_entry(
+                    it, total_detail, img_path, accepted,
+                    meta={
+                        "phase": "joint",
+                        "param": name,
+                        "trial": trial_value,
+                        "direction": "+" if float(move["direction"]) > 0 else "-",
+                        "joint_params": move.get("joint_params", []),
+                        "accepted_reason": accepted_reason,
+                    },
+                )
+            )
+            print(
+                f"iter={it} phase=joint param={name} trial={trial_value:.4f} "
+                f"total_score={score:.6f} compared={total_detail.compared_board_count} "
+                f"degrade={total_detail.degrade_penalty:.6f} "
+                f"critical_degrade={total_detail.has_critical_degrade} accepted={accepted} "
+                f"accepted_reason={accepted_reason} "
+                f"{self._top_board_summary(total_detail)}"
+            )
+            self._flush_progress_if_needed(
+                best_score=best_score, best_values=best_values,
+                best_total_detail=best_total_detail, best_img=best_img,
+                stop_reason="running", history=history,
+            )
+
+            result.total_detail = total_detail
+            result.img_path = img_path
+            result.score = score
+            result.accepted = accepted
+            result.accepted_reason = accepted_reason
+            self._append_trial_log(
+                iteration=it,
+                score=score,
+                accepted=accepted,
+                phase="joint",
+                param_name=name,
+                direction="+" if float(move["direction"]) > 0 else "-",
+                trial_multiplier=float(move.get("trial_multiplier", 1.0)),
+                accepted_reason=accepted_reason,
+            )
+        except RuntimeError as exc:
+            restored = self._recover_after_runtime_error({name: previous_value}, exc)
+            history.append(
+                self._make_history_entry(
+                    it, joint_total_detail, best_img, False,
+                    failed_reason=str(exc),
+                    meta={
+                        "phase": "joint_runtime_error",
+                        "param": name,
+                        "trial": trial_value,
+                        "direction": "+" if float(move["direction"]) > 0 else "-",
+                        "joint_params": move.get("joint_params", []),
+                        "recovered": restored,
+                    },
+                )
+            )
+            print(
+                f"iter={it} phase=joint param={name} trial={trial_value:.4f} "
+                f"runtime_error={exc} recovered={restored}"
+            )
+            self._flush_progress_if_needed(
+                best_score=best_score, best_values=best_values,
+                best_total_detail=best_total_detail, best_img=best_img,
+                stop_reason="running", history=history,
+            )
+            if not restored:
+                raise RuntimeError(f"Failed to recover after Script Control runtime error: {exc}")
+            self._append_trial_log(
+                iteration=it,
+                score=float("inf"),
+                accepted=False,
+                phase="joint_runtime_error",
+                param_name=name,
+                direction="+" if float(move["direction"]) > 0 else "-",
+                trial_multiplier=float(move.get("trial_multiplier", 1.0)),
+                failed_reason=str(exc),
+                recovered=restored,
+            )
+            result.recovered = True
+            result.failed_reason = str(exc)
+        return result
+
+    def _optimize_coordinate_descent_impl(self) -> dict:
         self._ensure_live_log()
         if self.real_detections is None:
             self.real_detections = self._detect_reference_boards()
@@ -10078,13 +10685,14 @@ class CameraCalibrator:
             best_total_detail=best_total_detail,
             best_img=best_img,
             stop_reason="running",
-            history=history,
+            history=self._trim_history(history),
             in_progress=True,
         )
 
         it = 1
         while it <= self.max_iters:
             improved_in_iter = False
+            self._total_iteration_count += 1
             base_values = self._snapshot_values()
             base_score = best_score
             candidate_moves: List[Dict[str, object]] = []
@@ -10142,114 +10750,36 @@ class CameraCalibrator:
                             continue
                         seen_trial_values.add(trial_value)
 
-                        try:
-                            self._apply_value_map({p.name: trial_value})
-                            total_detail, img_path = self.evaluate(
-                                f"iter_{it:04d}_{p.name}_{'p' if direction > 0 else 'n'}",
-                                baseline_metrics=best_baseline,
-                            )
-                            score = total_detail.total_score
-                            accepted, accepted_reason = self._acceptance_decision(
-                                baseline_score=base_score,
-                                baseline_detail=best_total_detail,
-                                candidate_score=score,
-                                candidate_detail=total_detail,
-                            )
-                            joint_candidate_reason = None
-                            if not accepted:
-                                joint_candidate_reason = self._joint_exploration_candidate_reason(
-                                    p.name,
-                                    base_score,
-                                    total_detail,
-                                    score,
-                                )
-                            self._record_strategy_trial(
-                                iteration_strategy_stats,
-                                param_name=p.name,
-                                accepted=accepted,
-                                joint_candidate=joint_candidate_reason is not None,
-                                score_delta=score - base_score,
-                                trial_multiplier=trial_multiplier,
-                                baseline_detail=best_total_detail,
-                                candidate_detail=total_detail,
-                            )
-                            history.append(
-                                self._make_history_entry(
-                                    it,
-                                    total_detail,
-                                    img_path,
-                                    accepted,
-                                    meta={
-                                        "phase": "single",
-                                        "param": p.name,
-                                        "trial": trial_value,
-                                        "direction": "+" if direction > 0 else "-",
-                                        "trial_multiplier": trial_multiplier,
-                                        "accepted_reason": accepted_reason,
-                                        "joint_candidate_reason": joint_candidate_reason,
-                                    },
-                                )
-                            )
-                            print(
-                                f"iter={it} phase=single param={p.name} trial={trial_value:.{p.decimals}f} "
-                                f"total_score={score:.6f} compared={total_detail.compared_board_count} "
-                                f"degrade={total_detail.degrade_penalty:.6f} "
-                                f"critical_degrade={total_detail.has_critical_degrade} "
-                                f"accepted={accepted} accepted_reason={accepted_reason} "
-                                f"joint_candidate={joint_candidate_reason or '-'} "
-                                f"direction={'+' if direction > 0 else '-'} "
-                                f"step_scale={trial_multiplier:g} "
-                                f"{self._top_board_summary(total_detail)}"
-                            )
-                            self._flush_progress_if_needed(
-                                best_score=best_score,
-                                best_values=best_values,
-                                best_total_detail=best_total_detail,
-                                best_img=best_img,
-                                stop_reason="running",
-                                history=history,
-                            )
-                            self._apply_value_map({p.name: base_values[p.name]})
-                        except RuntimeError as exc:
-                            restored = self._recover_after_runtime_error(base_values, exc)
-                            history.append(
-                                self._make_history_entry(
-                                    it,
-                                    best_total_detail,
-                                    best_img,
-                                    False,
-                                    failed_reason=str(exc),
-                                    meta={
-                                        "phase": "single_runtime_error",
-                                        "param": p.name,
-                                        "trial": trial_value,
-                                        "direction": "+" if direction > 0 else "-",
-                                        "trial_multiplier": trial_multiplier,
-                                        "recovered": restored,
-                                    },
-                                )
-                            )
-                            print(
-                                f"iter={it} phase=single param={p.name} trial={trial_value:.{p.decimals}f} "
-                                f"runtime_error={exc} recovered={restored}"
-                            )
-                            self._flush_progress_if_needed(
-                                best_score=best_score,
-                                best_values=best_values,
-                                best_total_detail=best_total_detail,
-                                best_img=best_img,
-                                stop_reason="running",
-                                history=history,
-                            )
-                            if not restored:
-                                raise RuntimeError(
-                                    f"Failed to recover after Script Control runtime error: {exc}"
-                                )
+                        trial_result = self._run_single_param_trial(
+                            p=p,
+                            trial_value=trial_value,
+                            base_values=base_values,
+                            base_score=base_score,
+                            best_total_detail=best_total_detail,
+                            best_baseline=best_baseline,
+                            it=it,
+                            direction=direction,
+                            trial_multiplier=trial_multiplier,
+                            iteration_strategy_stats=iteration_strategy_stats,
+                            history=history,
+                            best_score=best_score,
+                            best_values=best_values,
+                            best_img=best_img,
+                        )
+
+                        if trial_result.recovered:
                             it += 1
                             if it > self.max_iters:
                                 stop_param_search = True
                                 break
                             continue
+
+                        total_detail = trial_result.total_detail
+                        img_path = trial_result.img_path
+                        score = trial_result.score
+                        accepted = trial_result.accepted
+                        accepted_reason = trial_result.accepted_reason
+                        joint_candidate_reason = trial_result.joint_candidate_reason
 
                         eligible_for_joint = accepted or joint_candidate_reason is not None
                         if eligible_for_joint and (
@@ -10326,108 +10856,47 @@ class CameraCalibrator:
                     name = str(move["name"])
                     trial_value = float(move["value"])
                     previous_value = float(joint_values[name])
+                    move_with_params = dict(move)
+                    move_with_params["joint_params"] = accepted_params_in_pass + [name]
 
-                    try:
-                        self._apply_value_map({name: trial_value})
-                        total_detail, img_path = self.evaluate(
-                            f"iter_{it:04d}_joint_{name}",
-                            baseline_metrics=joint_baseline,
-                        )
-                        score = total_detail.total_score
-                        accepted, accepted_reason = self._acceptance_decision(
-                            baseline_score=joint_score,
-                            baseline_detail=joint_total_detail,
-                            candidate_score=score,
-                            candidate_detail=total_detail,
-                        )
-                        self._record_strategy_trial(
-                            iteration_strategy_stats,
-                            param_name=name,
-                            accepted=accepted,
-                            joint_candidate=False,
-                            score_delta=score - joint_score,
-                            trial_multiplier=float(move.get("trial_multiplier", 1.0)),
-                            baseline_detail=joint_total_detail,
-                            candidate_detail=total_detail,
-                        )
-                        history.append(
-                            self._make_history_entry(
-                                it,
-                                total_detail,
-                                img_path,
-                                accepted,
-                                meta={
-                                    "phase": "joint",
-                                    "param": name,
-                                    "trial": trial_value,
-                                    "direction": "+" if float(move["direction"]) > 0 else "-",
-                                    "joint_params": accepted_params_in_pass + [name],
-                                    "accepted_reason": accepted_reason,
-                                },
-                            )
-                        )
-                        print(
-                            f"iter={it} phase=joint param={name} trial={trial_value:.4f} "
-                            f"total_score={score:.6f} compared={total_detail.compared_board_count} "
-                            f"degrade={total_detail.degrade_penalty:.6f} "
-                            f"critical_degrade={total_detail.has_critical_degrade} accepted={accepted} "
-                            f"accepted_reason={accepted_reason} "
-                            f"{self._top_board_summary(total_detail)}"
-                        )
-                        self._flush_progress_if_needed(
-                            best_score=best_score,
-                            best_values=best_values,
-                            best_total_detail=best_total_detail,
-                            best_img=best_img,
-                            stop_reason="running",
-                            history=history,
-                        )
+                    trial_result = self._run_joint_param_trial(
+                        name=name,
+                        trial_value=trial_value,
+                        previous_value=previous_value,
+                        joint_score=joint_score,
+                        joint_total_detail=joint_total_detail,
+                        joint_baseline=joint_baseline,
+                        it=it,
+                        move=move_with_params,
+                        iteration_strategy_stats=iteration_strategy_stats,
+                        history=history,
+                        best_score=best_score,
+                        best_values=best_values,
+                        best_total_detail=best_total_detail,
+                        best_img=best_img,
+                    )
 
-                        if accepted:
-                            joint_values[name] = trial_value
-                            joint_score = score
-                            joint_total_detail = total_detail
-                            joint_baseline = self._as_baseline_metrics(total_detail)
-                            joint_img = img_path
-                            accepted_params_in_pass.append(name)
-                            improved_in_iter = True
-                        else:
-                            self._apply_value_map({name: previous_value})
-                    except RuntimeError as exc:
-                        restored = self._recover_after_runtime_error(joint_values, exc)
-                        history.append(
-                            self._make_history_entry(
-                                it,
-                                joint_total_detail,
-                                joint_img,
-                                False,
-                                failed_reason=str(exc),
-                                meta={
-                                    "phase": "joint_runtime_error",
-                                    "param": name,
-                                    "trial": trial_value,
-                                    "direction": "+" if float(move["direction"]) > 0 else "-",
-                                    "joint_params": accepted_params_in_pass + [name],
-                                    "recovered": restored,
-                                },
-                            )
-                        )
-                        print(
-                            f"iter={it} phase=joint param={name} trial={trial_value:.4f} "
-                            f"runtime_error={exc} recovered={restored}"
-                        )
-                        self._flush_progress_if_needed(
-                            best_score=best_score,
-                            best_values=best_values,
-                            best_total_detail=best_total_detail,
-                            best_img=best_img,
-                            stop_reason="running",
-                            history=history,
-                        )
-                        if not restored:
-                            raise RuntimeError(
-                                f"Failed to recover after Script Control runtime error: {exc}"
-                            )
+                    if trial_result.recovered:
+                        it += 1
+                        if it > self.max_iters:
+                            break
+                        continue
+
+                    total_detail = trial_result.total_detail
+                    img_path = trial_result.img_path
+                    score = trial_result.score
+                    accepted = trial_result.accepted
+
+                    if accepted:
+                        joint_values[name] = trial_value
+                        joint_score = score
+                        joint_total_detail = total_detail
+                        joint_baseline = self._as_baseline_metrics(total_detail)
+                        joint_img = img_path
+                        accepted_params_in_pass.append(name)
+                        improved_in_iter = True
+                    else:
+                        self._apply_value_map({name: previous_value})
 
                     it += 1
                     if it > self.max_iters:
@@ -10449,7 +10918,7 @@ class CameraCalibrator:
                         best_total_detail=best_total_detail,
                         best_img=best_img,
                         stop_reason="running",
-                        history=history,
+                        history=self._trim_history(history),
                         in_progress=True,
                     )
                 else:
@@ -10487,7 +10956,7 @@ class CameraCalibrator:
                     best_total_detail=best_total_detail,
                     best_img=best_img,
                     stop_reason="running",
-                    history=history,
+                    history=self._trim_history(history),
                     in_progress=True,
                 )
 
@@ -10525,7 +10994,7 @@ class CameraCalibrator:
             ),
             best_overlay_image=self._ensure_best_overlay_image(best_img),
             stop_reason=stop_reason,
-            history=history,
+            history=self._trim_history(history),
             in_progress=False,
         )
         self._print_acceptance_summary(best_total_detail)
@@ -10536,10 +11005,23 @@ class CameraCalibrator:
             best_total_detail=best_total_detail,
             best_img=best_img,
             stop_reason=stop_reason,
-            history=history,
+            history=self._trim_history(history),
             in_progress=False,
         )
         return result
+
+    def optimize(self) -> dict:
+        if self.optimizer_mode == "bayesian":
+            return self._optimize_bayesian()
+        elif self.optimizer_mode == "auto":
+            if _OPTUNA_AVAILABLE:
+                print("Using Bayesian optimizer (optuna available)")
+                return self._optimize_bayesian()
+            else:
+                print("Using coordinate_descent optimizer (optuna not available)")
+                return self._optimize_coordinate_descent()
+        else:
+            return self._optimize_coordinate_descent()
 
 
 def parse_args() -> argparse.Namespace:

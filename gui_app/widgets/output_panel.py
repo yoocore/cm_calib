@@ -238,17 +238,21 @@ class CameraResultCard(QGroupBox):
         self.current_iter_value.setText(_format_score(result.current_iter_score))
         if result.current_iter_image is not None:
             self.iter_preview.set_artifact(result.current_iter_image)
+        else:
+            self.iter_preview.set_artifact(None)
         if result.best_score_image is not None:
             self.score_preview.set_artifact(result.best_score_image)
-        elif result.best_image is not None:
-            self.score_preview.set_artifact(result.best_image)
+        else:
+            self.score_preview.set_artifact(None)
         if result.best_overlay_image is not None:
             self.overlay_preview.set_artifact(result.best_overlay_image)
+        else:
+            self.overlay_preview.set_artifact(None)
         self.open_log_button.setEnabled(bool(result.live_log))
         self.open_result_button.setEnabled(bool(result.result_json))
         self.open_current_button.setEnabled(bool(result.current_iter_image or result.best_image))
         self.open_best_button.setEnabled(bool(result.best_image))
-        self.open_score_button.setEnabled(bool(result.best_score_image or result.best_image))
+        self.open_score_button.setEnabled(bool(result.best_score_image))
         self.open_overlay_button.setEnabled(bool(result.best_overlay_image))
 
     def mousePressEvent(self, event) -> None:
@@ -417,7 +421,7 @@ class OutputPanel(QGroupBox):
         candidates_by_column = {
             0: [result_json, best_image, best_score_image, best_overlay_image],
             1: [result_json, best_image, best_score_image, best_overlay_image],
-            2: [best_score_image, best_image, result_json, best_overlay_image],
+            2: [best_score_image],
             3: [best_overlay_image, best_image, result_json, best_score_image],
         }
         for candidate in candidates_by_column.get(column, [result_json, best_image, best_score_image, best_overlay_image]):

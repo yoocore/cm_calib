@@ -73,3 +73,47 @@ class TestOutputPanel:
         panel._open_log_file()
 
         startfile.assert_called_once_with(r"C:\logs\events.jsonl")
+
+    def test_best_score_preview_clears_when_real_score_image_is_missing(self, qtbot):
+        panel = OutputPanel()
+        qtbot.addWidget(panel)
+
+        panel.update_camera_result(
+            CameraResult(
+                camera="cam1",
+                status="running",
+                best_score=59.0,
+                best_score_image=r"C:\artifacts\best_score.png",
+            )
+        )
+        panel.update_camera_result(
+            CameraResult(
+                camera="cam1",
+                status="running",
+                best_score=59.0,
+                best_image=r"C:\artifacts\best.png",
+                result_json=r"C:\artifacts\result.json",
+            )
+        )
+
+        card = panel._result_cards["cam1"]
+        assert card.score_preview._artifact_path is None
+        assert card.open_score_button.isEnabled() is False
+
+    def test_best_score_column_does_not_fallback_to_other_artifacts(self, qtbot):
+        panel = OutputPanel()
+        qtbot.addWidget(panel)
+
+        panel.update_camera_result(
+            CameraResult(
+                camera="cam1",
+                status="running",
+                best_score=59.0,
+                best_image=r"C:\artifacts\best.png",
+                result_json=r"C:\artifacts\result.json",
+            )
+        )
+
+        item = panel.result_tree.topLevelItem(0)
+        assert item is not None
+        assert panel.resolve_item_artifact(item, 2) is None

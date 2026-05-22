@@ -7439,6 +7439,53 @@ class CameraCalibrator:
     def _snapshot_values(self) -> Dict[str, float]:
         return {p.name: p.value for p in self.params}
 
+    def _remember_historical_best_snapshot(
+        self,
+        *,
+        score: float,
+        values: Dict[str, float],
+        total_detail: TotalScoreDetail,
+        img_path: Path,
+    ) -> None:
+        snapshot = getattr(self, "_historical_best_snapshot", None)
+        previous_score: Optional[float] = None
+        if isinstance(snapshot, dict):
+            try:
+                previous_score = float(snapshot.get("score"))
+            except (TypeError, ValueError):
+                previous_score = None
+        if previous_score is not None and score >= previous_score:
+            return
+        self._historical_best_score = float(score)
+        self._historical_best_snapshot = {
+            "score": float(score),
+            "values": values.copy(),
+            "total_detail": copy.deepcopy(total_detail),
+            "img_path": Path(img_path),
+        }
+
+    def _resolve_best_snapshot_state(
+        self,
+        *,
+        best_score: float,
+        best_values: Dict[str, float],
+        best_total_detail: TotalScoreDetail,
+        best_img: Path,
+    ) -> Tuple[float, Dict[str, float], TotalScoreDetail, Path]:
+        snapshot = getattr(self, "_historical_best_snapshot", None)
+        if not isinstance(snapshot, dict):
+            return best_score, best_values, best_total_detail, best_img
+        snapshot_values = snapshot.get("values")
+        snapshot_total_detail = snapshot.get("total_detail")
+        snapshot_img = snapshot.get("img_path")
+        if not isinstance(snapshot_values, dict) or snapshot_total_detail is None or snapshot_img is None:
+            return best_score, best_values, best_total_detail, best_img
+        try:
+            snapshot_score = float(snapshot.get("score"))
+        except (TypeError, ValueError):
+            snapshot_score = best_score
+        return snapshot_score, dict(snapshot_values), snapshot_total_detail, Path(snapshot_img)
+
     def _apply_value_map(self, values: Dict[str, float]) -> None:
         touched = False
         touched_params: List[ParameterSpec] = []
@@ -9913,6 +9960,12 @@ class CameraCalibrator:
         history: List[dict],
         in_progress: bool,
     ) -> dict:
+        best_score, best_values, best_total_detail, best_img = self._resolve_best_snapshot_state(
+            best_score=best_score,
+            best_values=best_values,
+            best_total_detail=best_total_detail,
+            best_img=best_img,
+        )
         updated_at = datetime.now().astimezone().isoformat(timespec="seconds")
         run_stats = self._build_run_stats(history)
         acceptance = self._acceptance_payload(best_total_detail)
@@ -9999,6 +10052,12 @@ class CameraCalibrator:
         history: List[dict],
         in_progress: bool,
     ) -> None:
+        best_score, best_values, best_total_detail, best_img = self._resolve_best_snapshot_state(
+            best_score=best_score,
+            best_values=best_values,
+            best_total_detail=best_total_detail,
+            best_img=best_img,
+        )
         best_score_image = None
         if not in_progress:
             best_score_image = self._ensure_best_score_image(
@@ -10008,7 +10067,7 @@ class CameraCalibrator:
             )
         best_overlay_image = self._ensure_best_overlay_image(best_img)
         result = self._build_result_payload(
-            best_score=getattr(self, '_historical_best_score', best_score),
+            best_score=best_score,
             best_values=best_values,
             best_total_detail=best_total_detail,
             best_img=best_img,
@@ -10110,6 +10169,7 @@ class CameraCalibrator:
 
     def _optimize_bayesian_impl(self) -> dict:
         self._ensure_live_log()
+        self._historical_best_snapshot = None
         if self.real_detections is None:
             self.real_detections = self._detect_reference_boards()
 
@@ -10617,6 +10677,7 @@ class CameraCalibrator:
 
     def _optimize_coordinate_descent_impl(self) -> dict:
         self._ensure_live_log()
+        self._historical_best_snapshot = None
         if self.real_detections is None:
             self.real_detections = self._detect_reference_boards()
 
@@ -10633,9 +10694,14 @@ class CameraCalibrator:
         best_total_detail, best_img = self.evaluate("initial", baseline_metrics=None)
         self._raise_if_initial_board_failures(best_total_detail)
         best_score = best_total_detail.total_score
-        self._historical_best_score = best_score
         best_baseline = self._as_baseline_metrics(best_total_detail)
         best_values = {p.name: p.value for p in self.params}
+        self._remember_historical_best_snapshot(
+            score=best_score,
+            values=best_values,
+            total_detail=best_total_detail,
+            img_path=best_img,
+        )
         stop_reason = "max_iters_reached"
         initial_score_image = self._build_score_image_for_snapshot(
             best_img,
@@ -10908,11 +10974,16 @@ class CameraCalibrator:
 
                 if accepted_params_in_pass:
                     best_score = joint_score
-                    self._historical_best_score = min(self._historical_best_score, joint_score)
                     best_total_detail = joint_total_detail
                     best_baseline = joint_baseline
                     best_img = joint_img
                     best_values = joint_values.copy()
+                    self._remember_historical_best_snapshot(
+                        score=best_score,
+                        values=best_values,
+                        total_detail=best_total_detail,
+                        img_path=best_img,
+                    )
                     self._apply_value_map_or_recover(
                         joint_values,
                         "Failed to apply joint values after accepted joint update",
@@ -10945,11 +11016,16 @@ class CameraCalibrator:
                     f"Failed to apply fallback values for {fallback_name}",
                 )
                 best_score = float(fallback_move["score"])
-                self._historical_best_score = min(self._historical_best_score, float(fallback_move["score"]))
                 best_total_detail = fallback_move["total_detail"]  # type: ignore[assignment]
                 best_baseline = fallback_move["baseline"]  # type: ignore[assignment]
                 best_img = fallback_move["img_path"]  # type: ignore[assignment]
                 best_values = fallback_values.copy()
+                self._remember_historical_best_snapshot(
+                    score=best_score,
+                    values=best_values,
+                    total_detail=best_total_detail,
+                    img_path=best_img,
+                )
                 improved_in_iter = True
                 print(
                     f"single_fallback accepted_param={fallback_name} "
@@ -10988,22 +11064,30 @@ class CameraCalibrator:
                 print("No further improvement and all steps at min_step. Stop.")
                 break
 
+        final_best_score, final_best_values, final_best_total_detail, final_best_img = (
+            self._resolve_best_snapshot_state(
+                best_score=best_score,
+                best_values=best_values,
+                best_total_detail=best_total_detail,
+                best_img=best_img,
+            )
+        )
         result = self._build_result_payload(
-            best_score=self._historical_best_score,
-            best_values=best_values,
-            best_total_detail=best_total_detail,
-            best_img=best_img,
+            best_score=final_best_score,
+            best_values=final_best_values,
+            best_total_detail=final_best_total_detail,
+            best_img=final_best_img,
             best_score_image=self._ensure_best_score_image(
-                best_img,
-                best_total_detail,
-                values=best_values,
+                final_best_img,
+                final_best_total_detail,
+                values=final_best_values,
             ),
-            best_overlay_image=self._ensure_best_overlay_image(best_img),
+            best_overlay_image=self._ensure_best_overlay_image(final_best_img),
             stop_reason=stop_reason,
             history=self._trim_history(history),
             in_progress=False,
         )
-        self._print_acceptance_summary(best_total_detail)
+        self._print_acceptance_summary(final_best_total_detail)
         self._print_calibration_summary(result["summary"])
         self._write_progress_result(
             best_score=best_score,

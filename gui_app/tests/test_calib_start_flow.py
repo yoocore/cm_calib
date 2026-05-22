@@ -430,6 +430,96 @@ class TestCalibStartFlow:
         assert card.score_preview._artifact_path == r"C:\best_a_score.png"
         assert card.overlay_preview._artifact_path == r"C:\best_a_overlay.png"
 
+    def test_camera_run_finished_keeps_last_current_iter_frame(self, main_window: MainWindow, mocker):
+        """单相机运行结束后 current iter 预览应保留最后一帧"""
+        mocker.patch("gui_app.main_window.QMessageBox")
+        from pathlib import Path
+
+        main_window.calibration_panel.cm_version_combo.clear()
+        main_window.calibration_panel.cm_version_combo.addItem("test", Path("D:/cm/win64-test"))
+        main_window._build_launch_config()
+        main_window._on_process_started()
+        main_window._on_orchestration_event({"event": "task_started", "output_dir": str(main_window.project_root / "out")})
+        main_window._on_orchestration_event({"event": "camera_run_started", "camera": "cam1"})
+
+        main_window._on_orchestration_event(
+            {
+                "event": "camera_run_progress",
+                "camera": "cam1",
+                "progress": {
+                    "best_score": 59.0,
+                    "best_image": r"C:\best_a.png",
+                    "best_score_image": r"C:\best_a_score.png",
+                    "best_overlay_image": r"C:\best_a_overlay.png",
+                    "current_iter_score": 61.0,
+                    "current_iter_index": 7,
+                    "current_iter_image": r"C:\iter_7.png",
+                },
+            }
+        )
+        main_window._on_orchestration_event({"event": "camera_run_finished", "camera": "cam1"})
+
+        item = main_window.output_panel.result_tree.topLevelItem(0)
+        assert item is not None
+        assert item.data(0, CURRENT_ITER_IMAGE_ROLE) == r"C:\iter_7.png"
+
+        card = main_window.output_panel._result_cards["cam1"]
+        assert card.iter_preview._artifact_path == r"C:\iter_7.png"
+
+    def test_orchestration_summary_keeps_last_current_iter_frame(self, main_window: MainWindow, mocker):
+        """最终 summary 未携带 current_iter_image 时，也应保留最后一帧"""
+        mocker.patch("gui_app.main_window.QMessageBox")
+        from pathlib import Path
+
+        main_window.calibration_panel.cm_version_combo.clear()
+        main_window.calibration_panel.cm_version_combo.addItem("test", Path("D:/cm/win64-test"))
+        main_window._build_launch_config()
+        main_window._on_process_started()
+        main_window._on_orchestration_event({"event": "task_started", "output_dir": str(main_window.project_root / "out")})
+        main_window._on_orchestration_event({"event": "camera_run_started", "camera": "cam1"})
+        main_window._on_orchestration_event(
+            {
+                "event": "camera_run_progress",
+                "camera": "cam1",
+                "progress": {
+                    "best_score": 59.0,
+                    "best_image": r"C:\best_a.png",
+                    "best_score_image": r"C:\best_a_score.png",
+                    "best_overlay_image": r"C:\best_a_overlay.png",
+                    "current_iter_score": 61.0,
+                    "current_iter_index": 7,
+                    "current_iter_image": r"C:\iter_7.png",
+                },
+            }
+        )
+
+        main_window._on_orchestration_summary(
+            {
+                "status": "finished",
+                "per_camera": [
+                    {
+                        "camera": "cam1",
+                        "status": "finished",
+                        "calibration": {
+                            "best_score": 59.0,
+                            "current_iter_score": 61.0,
+                            "current_iter_index": 7,
+                            "best_image": r"C:\best_a.png",
+                            "best_score_image": r"C:\best_a_score.png",
+                            "best_overlay_image": r"C:\best_a_overlay.png",
+                        },
+                    }
+                ],
+            }
+        )
+
+        item = main_window.output_panel.result_tree.topLevelItem(0)
+        assert item is not None
+        assert item.data(0, CURRENT_ITER_IMAGE_ROLE) == r"C:\iter_7.png"
+
+        card = main_window.output_panel._result_cards["cam1"]
+        assert card.iter_preview._artifact_path == r"C:\iter_7.png"
+
     def test_stop_calibration_during_preparing(self, main_window: MainWindow):
         """在 PREPARING 阶段点击 Stop 应停止 runtime_service"""
         main_window.state.status = AppStatus.PREPARING

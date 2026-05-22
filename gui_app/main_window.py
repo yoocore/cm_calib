@@ -41,6 +41,7 @@ class MainWindow(QMainWindow):
         self._camera_progress_status: dict[str, str] = {}
         self._camera_progress_detail: dict[str, str] = {}
         self._camera_task_best_progress: dict[str, dict[str, object]] = {}
+        self._camera_last_progress: dict[str, dict[str, object]] = {}
         self.state = ApplicationState()
         self.config_service = ConfigService(self.project_root)
         self.precheck_service = PrecheckService(self.project_root)
@@ -206,6 +207,7 @@ class MainWindow(QMainWindow):
         self._camera_progress_status = {camera_name: "pending" for camera_name in cameras}
         self._camera_progress_detail = {}
         self._camera_task_best_progress = {}
+        self._camera_last_progress = {}
         self._rebuild_sensor_progress_plan()
         self._refresh_calibration_progress()
 
@@ -817,11 +819,13 @@ class MainWindow(QMainWindow):
             camera_name = str(payload.get("camera") or "")
             self._set_camera_progress_state(camera_name, "running")
             self._camera_task_best_progress.pop(camera_name, None)
+            self._camera_last_progress.pop(camera_name, None)
             self._append_status_summary_line(f"{camera_name}: 标定开始。")
             self.output_panel.update_camera_result(CameraResult(camera=camera_name, status="running"))
         elif event_name == "camera_run_progress":
             camera_name = str(payload.get("camera") or "")
             progress = payload.get("progress") if isinstance(payload.get("progress"), dict) else {}
+            self._camera_last_progress[camera_name] = dict(progress)
             global_best = self._merge_camera_task_best_progress(camera_name, progress)
             best_score = self._as_float(global_best.get("best_score"))
             iter_index = self._as_int(progress.get("current_iter_index"))
@@ -857,7 +861,22 @@ class MainWindow(QMainWindow):
             camera_name = str(payload.get("camera") or "")
             self._set_camera_progress_state(camera_name, "finished", finalize=True)
             self._append_status_summary_line(f"{camera_name}: 标定完成。")
-            self.output_panel.update_camera_result(CameraResult(camera=camera_name, status="finished"))
+            last_progress = self._camera_last_progress.get(camera_name, {})
+            self.output_panel.update_camera_result(
+                CameraResult(
+                    camera=camera_name,
+                    status="finished",
+                    live_log=self._as_text(last_progress.get("live_log")),
+                    best_score=self._as_float(last_progress.get("best_score")),
+                    current_iter_score=self._as_float(last_progress.get("current_iter_score")),
+                    current_iter_index=self._as_int(last_progress.get("current_iter_index")),
+                    current_iter_image=self._as_text(last_progress.get("current_iter_image")),
+                    result_json=self._as_text(last_progress.get("result_json")),
+                    best_image=self._as_text(last_progress.get("best_image")),
+                    best_score_image=self._as_text(last_progress.get("best_score_image")),
+                    best_overlay_image=self._as_text(last_progress.get("best_overlay_image")),
+                )
+            )
         elif event_name == "task_failed":
             self._finalize_active_camera("failed")
             self._set_status_summary(self._build_failure_summary("Calibration task failed", [self._as_text(payload.get("error")) or "Unknown failure", *self._calibration_recent_lines]))
@@ -890,14 +909,16 @@ class MainWindow(QMainWindow):
                 continue
             camera_name = str(entry.get("camera") or "")
             calibration = entry.get("calibration") if isinstance(entry.get("calibration"), dict) else {}
+            last_progress = self._camera_last_progress.get(camera_name, {})
             result = CameraResult(
                 camera=camera_name,
                 status=str(entry.get("status") or status or "finished"),
-                live_log=self._as_text(calibration.get("live_log")),
+                live_log=self._as_text(calibration.get("live_log")) or self._as_text(last_progress.get("live_log")),
                 best_score=self._as_float(calibration.get("best_score")),
                 current_iter_score=self._as_float(calibration.get("current_iter_score")),
                 current_iter_index=self._as_int(calibration.get("current_iter_index")),
-                result_json=self._as_text(calibration.get("result_json")),
+                current_iter_image=self._as_text(calibration.get("current_iter_image")) or self._as_text(last_progress.get("current_iter_image")),
+                result_json=self._as_text(calibration.get("result_json")) or self._as_text(last_progress.get("result_json")),
                 best_image=self._as_text(calibration.get("best_image")),
                 best_score_image=self._as_text(calibration.get("best_score_image")),
                 best_overlay_image=self._as_text(calibration.get("best_overlay_image")),

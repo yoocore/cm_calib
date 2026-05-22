@@ -125,6 +125,33 @@ class TestCalibStartFlow:
         assert "CM Prepare succeeded. Runtime is ready." in summary_text
         assert "Active sensors: cam1" in summary_text
 
+    def test_prepare_ready_can_direct_start_without_extra_status_probe_fields(self, main_window: MainWindow, qtbot, mocker):
+        """prepare 刚返回 ready 时，即使尚未收到后续 status probe，也应允许直接启动首相机"""
+        message_box = mocker.patch("gui_app.main_window.QMessageBox")
+        from pathlib import Path
+
+        main_window.calibration_panel.cm_version_combo.clear()
+        main_window.calibration_panel.cm_version_combo.addItem("test", Path("D:/cm/win64-test"))
+        main_window.precheck_service.run_for_cameras = MagicMock(return_value=[
+            {"camera": "cam1", "ok": True, "message": "ok"}
+        ])
+        main_window.runtime_service.prepare_runtime = MagicMock()
+        main_window.calibration_service.start = MagicMock()
+
+        main_window._on_runtime_summary({
+            "mode": "prepare",
+            "status": "ready",
+            "project_root": str(main_window.project_root),
+            "active_sensors": ["cam1"],
+            "health": {"code": "ok"},
+        })
+
+        main_window._start_calibration()
+
+        main_window.runtime_service.prepare_runtime.assert_not_called()
+        main_window.calibration_service.start.assert_called_once()
+        message_box.warning.assert_not_called()
+
     def test_runtime_summary_prepare_passive_updates_feedback_box(self, main_window: MainWindow, mocker):
         """prepare 未就绪时，中栏底部文本框应显示失败原因"""
         mocker.patch("gui_app.main_window.QMessageBox")

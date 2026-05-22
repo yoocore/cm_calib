@@ -1206,16 +1206,23 @@ class MainWindow(QMainWindow):
 
     def _is_runtime_ready_for_launch(self, payload: dict, launch: CalibrationLaunchConfig) -> bool:
         expected_project_root = launch.project_root.resolve()
-        running_project_root_text = self._as_text(payload.get("running_projectdir"))
+        running_project_root_text = self._as_text(payload.get("running_projectdir")) or self._as_text(payload.get("project_root"))
         running_project_root = Path(running_project_root_text).resolve() if running_project_root_text else None
         counts = payload.get("process_counts") if isinstance(payload.get("process_counts"), dict) else {}
         active_sensors = payload.get("active_sensors") if isinstance(payload.get("active_sensors"), list) else []
         health = payload.get("health") if isinstance(payload.get("health"), dict) else None
+        mode = self._as_text(payload.get("mode"))
 
         if str(payload.get("status") or "") != "ready":
             return False
         if running_project_root is None or running_project_root != expected_project_root:
             return False
+        if mode == "prepare":
+            if not active_sensors:
+                return False
+            if health is not None and str(health.get("code") or "") != "ok":
+                return False
+            return True
         if int(counts.get("carmaker_runtime", counts.get("carmaker", 0))) != 1:
             return False
         if int(counts.get("carmaker_gui", 1)) < 1:

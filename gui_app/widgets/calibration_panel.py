@@ -239,6 +239,7 @@ class CalibrationPanel(QGroupBox):
 
         self.estimate_label = QLabel("~ 0s")
         self.phase_label = QLabel("")
+        self.phase_label.setWordWrap(True)
         self.phase_label.hide()
 
         self.failure_summary = QTextEdit()
@@ -248,6 +249,7 @@ class CalibrationPanel(QGroupBox):
         )
         self.failure_summary.setMinimumHeight(88)
         self.failure_summary.setStyleSheet(_SUMMARY_STYLE)
+        self.failure_summary.hide()
 
         self.prepare_button = QPushButton("CM Prepare")
         self.prepare_button.clicked.connect(self.prepare_clicked.emit)
@@ -348,9 +350,10 @@ class CalibrationPanel(QGroupBox):
 
         status_row = QHBoxLayout()
         status_row.addWidget(QLabel("Status"))
-        status_row.addWidget(self.status_label, 1)
-        status_row.addWidget(self.phase_label, 1)
+        status_row.addWidget(self.status_label)
+        status_row.addStretch(1)
         status_layout.addLayout(status_row)
+        status_layout.addWidget(self.phase_label)
 
         estimate_row = QHBoxLayout()
         estimate_row.addWidget(QLabel("Estimated Time"))
@@ -378,8 +381,8 @@ class CalibrationPanel(QGroupBox):
 
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
-        layout.addWidget(self.strategy_group)
         layout.addWidget(self.status_group)
+        layout.addWidget(self.strategy_group)
         control_layout.addWidget(cm_row)
         control_layout.addWidget(self.status_query_button)
         control_layout.addWidget(button_row)
@@ -477,10 +480,13 @@ class CalibrationPanel(QGroupBox):
         self.phase_label.setVisible(bool(phase_text))
 
     def set_failure_summary(self, text: str | None) -> None:
-        self.failure_summary.setPlainText((text or "").strip())
+        summary_text = (text or "").strip()
+        self.failure_summary.setPlainText(summary_text)
+        self.failure_summary.setVisible(bool(summary_text))
 
     def clear_failure_summary(self) -> None:
         self.failure_summary.clear()
+        self.failure_summary.hide()
 
     def set_inputs_locked(self, locked: bool) -> None:
         self.campaign_rounds_spin.setEnabled(not locked)

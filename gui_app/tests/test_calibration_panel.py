@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QLabel, QHBoxLayout, QVBoxLayout
 
 from gui_app.widgets.calibration_panel import CalibrationPanel
 from gui_app.widgets.cm_settings_panel import CmSettingsPanel
@@ -25,9 +26,9 @@ class TestCalibrationPanel:
         panel = CalibrationPanel()
         qtbot.addWidget(panel)
         assert panel.phase_label.isHidden() is True
-        assert panel.failure_summary.isHidden() is False
+        assert panel.failure_summary.isHidden() is True
 
-    def test_uses_linear_top_to_bottom_flow_with_english_labels(self, qtbot):
+    def test_uses_runtime_first_top_to_bottom_flow_with_english_labels(self, qtbot):
         panel = CalibrationPanel()
         qtbot.addWidget(panel)
 
@@ -37,10 +38,24 @@ class TestCalibrationPanel:
         assert panel.status_group.title() == "Runtime Status"
         assert panel.control_group.title() == "Run Controls"
         layout = panel.layout()
-        assert layout.itemAt(0).widget() is panel.strategy_group
-        assert layout.itemAt(1).widget() is panel.status_group
+        assert layout.itemAt(0).widget() is panel.status_group
+        assert layout.itemAt(1).widget() is panel.strategy_group
         assert layout.itemAt(2).widget() is panel.control_group
         assert panel.start_button.isDefault() is True
+
+        status_layout = panel.status_group.layout()
+        assert isinstance(status_layout, QVBoxLayout)
+        status_row = status_layout.itemAt(0).layout()
+        assert isinstance(status_row, QHBoxLayout)
+        assert status_row.itemAt(0).widget().text() == "Status"
+        assert status_row.itemAt(1).widget() is panel.status_label
+        phase_row = status_layout.itemAt(1).widget()
+        assert isinstance(phase_row, QLabel)
+        assert phase_row is panel.phase_label
+        estimate_row = status_layout.itemAt(2).layout()
+        assert isinstance(estimate_row, QHBoxLayout)
+        assert estimate_row.itemAt(0).widget().text() == "Estimated Time"
+        assert estimate_row.itemAt(1).widget() is panel.estimate_label
 
     def test_outer_title_is_stronger_than_inner_sections(self, qtbot):
         panel = CalibrationPanel()
@@ -182,3 +197,16 @@ class TestSensorProgressPanel:
         assert progress_bar.value() == 42
         assert "iter=12" in item.text(3)
         assert panel.current_sensor_label.text() == "Current Sensor: cam1"
+
+    def test_failure_summary_shows_only_when_needed(self, qtbot):
+        panel = CalibrationPanel()
+        qtbot.addWidget(panel)
+
+        assert panel.failure_summary.isHidden() is True
+
+        panel.set_failure_summary("Runtime issue")
+        assert panel.failure_summary.isHidden() is False
+        assert panel.failure_summary.toPlainText() == "Runtime issue"
+
+        panel.clear_failure_summary()
+        assert panel.failure_summary.isHidden() is True

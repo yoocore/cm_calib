@@ -1939,7 +1939,9 @@ def ensure_movie_camera_widgets(
                 'update',
                 'update idletasks',
                 'if {[winfo exists .camera.cammoddlg]} {',
-                '    wm deiconify .camera.cammoddlg',
+                '    if {!$before_lens} {',
+                '        wm deiconify .camera.cammoddlg',
+                '    }',
                 '} elseif {[winfo exists .camera.fmore.bcammod]} {',
                 '    .camera.fmore.bcammod invoke',
                 '}',
@@ -1988,14 +1990,22 @@ def ensure_movie_camera_dialogs_normal(
             output_dir / f"{probe_name}.txt",
             "IPG-MOVIE",
             [
+                'set before_camera [expr {[winfo exists .camera] ? 1 : 0}]',
+                'set before_lens [expr {[winfo exists .camera.cammoddlg] ? 1 : 0}]',
                 "Camera::ShowSettingsDlg",
                 "update",
                 "update idletasks",
-                'if {[winfo exists .camera]} { wm deiconify .camera }',
+                'if {[winfo exists .camera]} {',
+                '    if {!$before_camera} {',
+                '        wm deiconify .camera',
+                '    }',
+                '}',
                 "update",
                 "update idletasks",
                 'if {[winfo exists .camera.cammoddlg]} {',
-                '    wm deiconify .camera.cammoddlg',
+                '    if {!$before_lens} {',
+                '        wm deiconify .camera.cammoddlg',
+                '    }',
                 '} elseif {[winfo exists .camera.fmore.bcammod]} {',
                 '    .camera.fmore.bcammod invoke',
                 '}',
@@ -2024,10 +2034,10 @@ def ensure_movie_camera_dialogs_normal(
         raise RuntimeError("IPG-MOVIE Camera Settings dialog is missing after deiconify probe")
     if payload.get("lens_exists") != "1":
         raise RuntimeError("IPG-MOVIE Camera Lens Parameters dialog is missing after deiconify probe")
-    if payload.get("camera_state") != "normal":
-        raise RuntimeError(f"IPG-MOVIE Camera Settings dialog is not normal: {payload.get('camera_state')}")
-    if payload.get("lens_state") != "normal":
-        raise RuntimeError(f"IPG-MOVIE Camera Lens Parameters dialog is not normal: {payload.get('lens_state')}")
+    if payload.get("camera_state") not in ("normal", "iconic"):
+        raise RuntimeError(f"IPG-MOVIE Camera Settings dialog is not in normal or iconic state: {payload.get('camera_state')}")
+    if payload.get("lens_state") not in ("normal", "iconic"):
+        raise RuntimeError(f"IPG-MOVIE Camera Lens Parameters dialog is not in normal or iconic state: {payload.get('lens_state')}")
 
     payload["mode"] = "camera_dialogs_normal"
     return payload

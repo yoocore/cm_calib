@@ -46,7 +46,7 @@ _LOG_SOURCE_COLORS = {
 }
 
 _PANEL_STYLE = (
-    "QGroupBox {"
+    "QGroupBox#OutputPanel {"
     "border: 1px solid #cbd5e1;"
     "border-radius: 12px;"
     "margin-top: 12px;"
@@ -54,7 +54,7 @@ _PANEL_STYLE = (
     "background-color: #ffffff;"
     "font-weight: 700;"
     "}"
-    "QGroupBox::title {"
+    "QGroupBox#OutputPanel::title {"
     "subcontrol-origin: margin;"
     "left: 12px;"
     "padding: 0 6px;"
@@ -317,6 +317,7 @@ class CameraResultCard(QGroupBox):
 class OutputPanel(QGroupBox):
     def __init__(self, parent: QWidget | None = None):
         super().__init__("Output", parent)
+        self.setObjectName("OutputPanel")
         self.setStyleSheet(_PANEL_STYLE)
         self.output_dir_label = QLabel("-")
         self.open_output_button = QPushButton("Open Output")

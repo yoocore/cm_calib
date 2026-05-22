@@ -21,6 +21,16 @@ class TestOutputPanel:
         assert card.open_current_button.text() == "Current"
         assert card.open_overlay_button.text() == "Overlay"
 
+    def test_output_panel_title_style_does_not_leak_into_result_cards(self, qtbot):
+        panel = OutputPanel()
+        qtbot.addWidget(panel)
+
+        card = panel._ensure_result_card("cam1")
+
+        assert "QGroupBox#OutputPanel" in panel.styleSheet()
+        assert "font-weight: 700" in panel.styleSheet()
+        assert "QGroupBox#OutputPanel" not in card.styleSheet()
+
     def test_output_panel_has_no_bottom_preview_area(self, qtbot):
         panel = OutputPanel()
         qtbot.addWidget(panel)

@@ -36,7 +36,7 @@ class TestMainWindowCameraList:
         window = MainWindow(project_root)
         qtbot.addWidget(window)
         window.show()
-        qtbot.waitExposed(window)
+        qtbot.wait(50)
 
         from PySide6.QtWidgets import QSplitter
         central_container = window.centralWidget()

@@ -24,6 +24,28 @@ from PySide6.QtWidgets import (
 _DEFAULT_BROWSE_ROOT = "C:/CM_Projects"
 _GREEN = QBrush(QColor("#4caf50"))
 _RED = QBrush(QColor("#e53935"))
+_SECTION_GROUP_STYLE = (
+    "QGroupBox {"
+    "border: 1px solid #d0d7de;"
+    "border-radius: 10px;"
+    "margin-top: 10px;"
+    "padding: 12px;"
+    "background-color: #ffffff;"
+    "font-weight: 600;"
+    "}"
+    "QGroupBox::title {"
+    "subcontrol-origin: margin;"
+    "left: 10px;"
+    "padding: 0 4px;"
+    "color: #334155;"
+    "}"
+)
+
+
+class _SectionGroup(QGroupBox):
+    def __init__(self, title: str, parent: QWidget | None = None):
+        super().__init__(title, parent)
+        self.setStyleSheet(_SECTION_GROUP_STYLE)
 
 
 class CmSettingsPanel(QGroupBox):
@@ -34,15 +56,15 @@ class CmSettingsPanel(QGroupBox):
     camera_selection_changed = Signal()
 
     def __init__(self, parent: QWidget | None = None):
-        super().__init__("CM Settings", parent)
+        super().__init__("工程设置", parent)
 
         self.project_root_edit = QLineEdit()
         self.project_root_edit.setPlaceholderText("e.g. C:/CM_Projects/CMO141_Calibration")
         self.testrun_edit = QLineEdit()
         self.testrun_edit.setPlaceholderText("e.g. vctc_ngxpro")
         self.vehicle_label = QLabel("-")
-        self.browse_button = QPushButton("Browse")
-        self.testrun_browse_button = QPushButton("Browse")
+        self.browse_button = QPushButton("浏览")
+        self.testrun_browse_button = QPushButton("浏览")
 
         self.camera_list = QListWidget()
         self.camera_list.setDragDropMode(QAbstractItemView.InternalMove)
@@ -52,8 +74,8 @@ class CmSettingsPanel(QGroupBox):
         self.camera_list.setAcceptDrops(True)
         self.camera_list.setDropIndicatorShown(True)
 
-        self.precheck_button = QPushButton("Check Inputs")
-        self.generate_config_button = QPushButton("Generate Configs")
+        self.precheck_button = QPushButton("检查输入")
+        self.generate_config_button = QPushButton("生成配置")
         self._generate_configs_ready = False
         self.generate_config_button.setEnabled(False)
 
@@ -90,9 +112,9 @@ class CmSettingsPanel(QGroupBox):
         testrun_layout.addWidget(self.testrun_browse_button)
 
         form = QFormLayout()
-        form.addRow("ProjectDir", proj_row)
+        form.addRow("工程目录", proj_row)
         form.addRow("TestRun", testrun_row)
-        form.addRow("Vehicle", self.vehicle_label)
+        form.addRow("车辆", self.vehicle_label)
 
         precheck_row = QWidget(self)
         precheck_layout = QHBoxLayout(precheck_row)
@@ -100,13 +122,31 @@ class CmSettingsPanel(QGroupBox):
         precheck_layout.addWidget(self.precheck_button)
         precheck_layout.addWidget(self.generate_config_button)
 
+        self.project_group = _SectionGroup("工程输入", self)
+        project_layout = QVBoxLayout(self.project_group)
+        project_layout.setContentsMargins(10, 6, 10, 10)
+        project_layout.addLayout(form)
+
+        self.camera_group = _SectionGroup("相机选择", self)
+        camera_layout = QVBoxLayout(self.camera_group)
+        camera_layout.setContentsMargins(10, 6, 10, 10)
+        camera_layout.setSpacing(8)
+        self.camera_list.setMinimumHeight(150)
+        camera_layout.addWidget(self.camera_list, 1)
+        camera_layout.addWidget(precheck_row)
+
+        self.results_group = _SectionGroup("检查结果", self)
+        results_layout = QVBoxLayout(self.results_group)
+        results_layout.setContentsMargins(10, 6, 10, 10)
+        results_layout.setSpacing(8)
+        self.precheck_tree.setMinimumHeight(140)
+        results_layout.addWidget(self.precheck_tree, 1)
+
         layout = QVBoxLayout(self)
-        layout.addLayout(form)
-        layout.addWidget(QLabel("Camera Select"))
-        layout.addWidget(self.camera_list, 1)
-        layout.addWidget(precheck_row)
-        layout.addWidget(QLabel("Check Results"))
-        layout.addWidget(self.precheck_tree, 1)
+        layout.setSpacing(10)
+        layout.addWidget(self.project_group)
+        layout.addWidget(self.camera_group, 1)
+        layout.addWidget(self.results_group, 1)
 
     def _browse_project_root(self) -> None:
         start = self.project_root_edit.text().strip() or _DEFAULT_BROWSE_ROOT

@@ -156,9 +156,9 @@ class ArtifactPreviewLabel(QLabel):
 
 
 _PREVIEW_GROUP_STYLE = (
-    "QGroupBox { border: 1px solid #666; border-radius: 4px;"
-    " margin-top: 6px; padding-top: 14px; font-weight: normal; }"
-    "QGroupBox::title { subcontrol-origin: margin; left: 6px; padding: 0 3px; }"
+    "QGroupBox { border: 1px solid #d0d7de; border-radius: 10px;"
+    " margin-top: 8px; padding-top: 14px; font-weight: 600; background-color: #ffffff; }"
+    "QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; color: #334155; }"
 )
 
 
@@ -176,12 +176,12 @@ class CameraResultCard(QGroupBox):
         self.iter_preview = ArtifactPreviewLabel("")
         self.score_preview = ArtifactPreviewLabel("")
         self.overlay_preview = ArtifactPreviewLabel("")
-        self.open_log_button = QPushButton("Log")
-        self.open_result_button = QPushButton("Result JSON")
-        self.open_current_button = QPushButton("Current")
-        self.open_best_button = QPushButton("Best")
-        self.open_score_button = QPushButton("Score")
-        self.open_overlay_button = QPushButton("Overlap")
+        self.open_log_button = QPushButton("日志")
+        self.open_result_button = QPushButton("结果")
+        self.open_current_button = QPushButton("当前帧")
+        self.open_best_button = QPushButton("最佳图")
+        self.open_score_button = QPushButton("分数图")
+        self.open_overlay_button = QPushButton("叠加")
 
         info_layout = QGridLayout()
         info_layout.addWidget(QLabel("Status"), 0, 0)
@@ -212,6 +212,29 @@ class CameraResultCard(QGroupBox):
         actions_layout.addWidget(self.open_score_button)
         actions_layout.addWidget(self.open_overlay_button)
 
+        for button in (
+            self.open_log_button,
+            self.open_result_button,
+            self.open_current_button,
+            self.open_best_button,
+            self.open_score_button,
+            self.open_overlay_button,
+        ):
+            button.setMinimumHeight(30)
+            button.setStyleSheet(
+                "QPushButton {"
+                "background-color: #ffffff;"
+                "color: #475569;"
+                "border: 1px solid #cbd5e1;"
+                "border-radius: 8px;"
+                "padding: 5px 10px;"
+                "}"
+                "QPushButton:disabled {"
+                "color: #94a3b8;"
+                "border-color: #e2e8f0;"
+                "}"
+            )
+
         layout = QVBoxLayout(self)
         layout.addLayout(info_layout)
         layout.addWidget(previews)
@@ -230,7 +253,16 @@ class CameraResultCard(QGroupBox):
 
     def set_selected(self, selected: bool) -> None:
         border_color = "#1f6feb" if selected else "#666"
-        self.setStyleSheet(f"QGroupBox {{ border: 2px solid {border_color}; margin-top: 8px; padding-top: 8px; }}")
+        background = "#f8fbff" if selected else "#ffffff"
+        self.setStyleSheet(
+            "QGroupBox {"
+            f"border: 2px solid {border_color};"
+            "border-radius: 12px;"
+            "margin-top: 8px;"
+            "padding-top: 10px;"
+            f"background-color: {background};"
+            "}"
+        )
 
     def update_result(self, result: CameraResult) -> None:
         self.status_value.setText("fail" if result.status == "failed" else result.status)
@@ -267,13 +299,13 @@ class CameraResultCard(QGroupBox):
 
 class OutputPanel(QGroupBox):
     def __init__(self, parent: QWidget | None = None):
-        super().__init__("Output", parent)
+        super().__init__("结果与日志", parent)
         self.output_dir_label = QLabel("-")
-        self.open_output_button = QPushButton("Open Output")
+        self.open_output_button = QPushButton("打开输出")
         self.open_output_button.setEnabled(False)
         self.log_path_label = QLabel("-")
         self.log_path_label.setWordWrap(True)
-        self.open_log_button = QPushButton("Open Log File")
+        self.open_log_button = QPushButton("打开日志")
         self.open_log_button.setEnabled(False)
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
@@ -347,16 +379,19 @@ class OutputPanel(QGroupBox):
         top_row = QWidget(self)
         top_layout = QHBoxLayout(top_row)
         top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.addWidget(QLabel("输出目录"))
         top_layout.addWidget(self.output_dir_label, 1)
         top_layout.addWidget(self.open_output_button)
 
         log_row = QWidget(self)
         log_layout = QHBoxLayout(log_row)
         log_layout.setContentsMargins(0, 0, 0, 0)
+        log_layout.addWidget(QLabel("日志文件"))
         log_layout.addWidget(self.log_path_label, 1)
         log_layout.addWidget(self.open_log_button)
 
         layout = QVBoxLayout(self)
+        layout.setSpacing(10)
         layout.addWidget(top_row)
         layout.addWidget(self.results_scroll, 3)
         layout.addWidget(log_row)

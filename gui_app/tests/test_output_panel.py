@@ -8,6 +8,19 @@ from gui_app.widgets.output_panel import OutputPanel, _classify_log_level, _norm
 
 
 class TestOutputPanel:
+    def test_output_panel_uses_clear_results_and_logs_labels(self, qtbot):
+        panel = OutputPanel()
+        qtbot.addWidget(panel)
+
+        assert panel.title() == "结果与日志"
+        assert panel.open_output_button.text() == "打开输出"
+        assert panel.open_log_button.text() == "打开日志"
+
+        card = panel._ensure_result_card("cam1")
+        assert card.open_result_button.text() == "结果"
+        assert card.open_current_button.text() == "当前帧"
+        assert card.open_overlay_button.text() == "叠加"
+
     def test_output_panel_has_no_bottom_preview_area(self, qtbot):
         panel = OutputPanel()
         qtbot.addWidget(panel)

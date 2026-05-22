@@ -21,11 +21,20 @@ class TestCalibrationPanel:
         assert panel.cm_version_combo.currentText() == "请选择 CM 版本"
         assert panel.cm_install_path is None
 
-    def test_phase_label_hidden(self, qtbot):
+    def test_phase_label_hidden_but_summary_stays_visible(self, qtbot):
         panel = CalibrationPanel()
         qtbot.addWidget(panel)
         assert panel.phase_label.isHidden() is True
-        assert panel.failure_summary.isHidden() is True
+        assert panel.failure_summary.isHidden() is False
+
+    def test_uses_dedicated_status_strategy_and_control_sections(self, qtbot):
+        panel = CalibrationPanel()
+        qtbot.addWidget(panel)
+
+        assert panel.status_group.title() == "运行状态"
+        assert panel.strategy_group.title() == "优化策略"
+        assert panel.control_group.title() == "运行控制"
+        assert panel.start_button.isDefault() is True
 
     def test_status_badge_default_idle(self, qtbot):
         panel = CalibrationPanel()
@@ -55,6 +64,14 @@ class TestCalibrationPanel:
 
 
 class TestCmSettingsPanel:
+    def test_uses_project_camera_and_result_sections(self, qtbot):
+        panel = CmSettingsPanel()
+        qtbot.addWidget(panel)
+
+        assert panel.project_group.title() == "工程输入"
+        assert panel.camera_group.title() == "相机选择"
+        assert panel.results_group.title() == "检查结果"
+
     def test_update_precheck_results_shows_checkmarks(self, qtbot):
         panel = CmSettingsPanel()
         qtbot.addWidget(panel)
@@ -88,6 +105,13 @@ class TestCmSettingsPanel:
 
 
 class TestSensorProgressPanel:
+    def test_uses_summary_and_detail_sections(self, qtbot):
+        panel = SensorProgressPanel()
+        qtbot.addWidget(panel)
+
+        assert panel.summary_group.title() == "总体进度"
+        assert panel.detail_group.title() == "相机明细"
+
     def test_sensor_progress_plan_and_runtime_update(self, qtbot):
         panel = SensorProgressPanel()
         qtbot.addWidget(panel)

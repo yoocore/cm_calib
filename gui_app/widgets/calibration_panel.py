@@ -17,6 +17,95 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+_SECTION_GROUP_STYLE = (
+    "QGroupBox {"
+    "border: 1px solid #d0d7de;"
+    "border-radius: 10px;"
+    "margin-top: 10px;"
+    "padding: 12px;"
+    "background-color: #ffffff;"
+    "font-weight: 600;"
+    "}"
+    "QGroupBox::title {"
+    "subcontrol-origin: margin;"
+    "left: 10px;"
+    "padding: 0 4px;"
+    "color: #334155;"
+    "}"
+)
+
+_SUMMARY_STYLE = (
+    "QTextEdit {"
+    "background-color: #f8fafc;"
+    "border: 1px solid #cbd5e1;"
+    "border-radius: 8px;"
+    "padding: 8px;"
+    "color: #0f172a;"
+    "}"
+)
+
+_PRIMARY_BUTTON_STYLE = (
+    "QPushButton {"
+    "background-color: #0f62fe;"
+    "color: #ffffff;"
+    "border: none;"
+    "border-radius: 8px;"
+    "padding: 8px 14px;"
+    "font-weight: 700;"
+    "}"
+    "QPushButton:disabled {"
+    "background-color: #94a3b8;"
+    "color: #e2e8f0;"
+    "}"
+)
+
+_SECONDARY_BUTTON_STYLE = (
+    "QPushButton {"
+    "background-color: #eef2ff;"
+    "color: #1e3a8a;"
+    "border: 1px solid #c7d2fe;"
+    "border-radius: 8px;"
+    "padding: 8px 14px;"
+    "font-weight: 600;"
+    "}"
+    "QPushButton:disabled {"
+    "background-color: #f8fafc;"
+    "color: #94a3b8;"
+    "border-color: #e2e8f0;"
+    "}"
+)
+
+_TERTIARY_BUTTON_STYLE = (
+    "QPushButton {"
+    "background-color: #ffffff;"
+    "color: #475569;"
+    "border: 1px solid #cbd5e1;"
+    "border-radius: 8px;"
+    "padding: 8px 14px;"
+    "font-weight: 500;"
+    "}"
+    "QPushButton:disabled {"
+    "color: #94a3b8;"
+    "border-color: #e2e8f0;"
+    "}"
+)
+
+_DANGER_BUTTON_STYLE = (
+    "QPushButton {"
+    "background-color: #fff1f2;"
+    "color: #b42318;"
+    "border: 1px solid #fecdd3;"
+    "border-radius: 8px;"
+    "padding: 8px 14px;"
+    "font-weight: 600;"
+    "}"
+    "QPushButton:disabled {"
+    "background-color: #f8fafc;"
+    "color: #94a3b8;"
+    "border-color: #e2e8f0;"
+    "}"
+)
+
 _STATUS_BADGE_STYLES = {
     "idle": ("#546e7a", "#f4f7f9"),
     "preparing": ("#ef6c00", "#fff3e0"),
@@ -70,10 +159,16 @@ class _SubGroup(QGroupBox):
     def __init__(self, title: str, parent: QWidget | None = None):
         super().__init__(title, parent)
         self.setStyleSheet(
-            "QGroupBox { border: 1px solid #555; border-radius: 4px;"
-            " margin-top: 4px; padding-top: 12px; font-weight: normal; }"
-            "QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; }"
+            "QGroupBox { border: 1px solid #dbe4ee; border-radius: 8px;"
+            " margin-top: 8px; padding-top: 12px; font-weight: 600; background-color: #fbfdff; }"
+            "QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; color: #475569; }"
         )
+
+
+class _SectionGroup(QGroupBox):
+    def __init__(self, title: str, parent: QWidget | None = None):
+        super().__init__(title, parent)
+        self.setStyleSheet(_SECTION_GROUP_STYLE)
 
 
 class CalibrationPanel(QGroupBox):
@@ -82,7 +177,7 @@ class CalibrationPanel(QGroupBox):
     estimated_time_changed = Signal()
 
     def __init__(self, parent: QWidget | None = None):
-        super().__init__("Calibration", parent)
+        super().__init__("标定控制", parent)
 
         self.campaign_rounds_spin = QSpinBox()
         self.campaign_rounds_spin.setRange(1, 999)
@@ -131,16 +226,20 @@ class CalibrationPanel(QGroupBox):
         self.failure_summary = QTextEdit()
         self.failure_summary.setReadOnly(True)
         self.failure_summary.setPlaceholderText(
-            "Failures in prepare/start/stop will be summarized here."
+            "状态摘要、准备结果和异常信息会显示在这里。"
         )
-        self.failure_summary.setMinimumHeight(96)
-        self.failure_summary.hide()
+        self.failure_summary.setMinimumHeight(88)
+        self.failure_summary.setStyleSheet(_SUMMARY_STYLE)
 
         self.prepare_button = QPushButton("CM Prepare")
         self.prepare_button.clicked.connect(self.prepare_clicked.emit)
+        self.prepare_button.setStyleSheet(_SECONDARY_BUTTON_STYLE)
+        self.prepare_button.setMinimumHeight(38)
 
         self.status_query_button = QPushButton("Query Status")
         self.status_query_button.clicked.connect(self.status_query_clicked.emit)
+        self.status_query_button.setStyleSheet(_TERTIARY_BUTTON_STYLE)
+        self.status_query_button.setMinimumHeight(38)
 
         cm_versions = detect_cm_versions()
         self.cm_version_combo = QComboBox()
@@ -153,13 +252,20 @@ class CalibrationPanel(QGroupBox):
         self.cm_version_combo.setCurrentIndex(0)
 
         self.start_button = QPushButton("Calib Start")
+        self.start_button.setDefault(True)
+        self.start_button.setAutoDefault(True)
+        self.start_button.setStyleSheet(_PRIMARY_BUTTON_STYLE)
+        self.start_button.setMinimumHeight(42)
         self.stop_button = QPushButton("Calib Stop")
         self.stop_button.setEnabled(False)
+        self.stop_button.setStyleSheet(_DANGER_BUTTON_STYLE)
+        self.stop_button.setMinimumHeight(42)
 
         # --- Build UI ---
-        rounds_group = _SubGroup("Campaign Rounds")
-        rounds_inner = QVBoxLayout(rounds_group)
+        self.strategy_group = _SectionGroup("优化策略")
+        rounds_inner = QVBoxLayout(self.strategy_group)
         rounds_inner.setContentsMargins(8, 4, 8, 4)
+        rounds_inner.setSpacing(10)
 
         rounds_top = QHBoxLayout()
         rounds_top.addWidget(QLabel("Rounds"))
@@ -217,36 +323,54 @@ class CalibrationPanel(QGroupBox):
         jitter_row.addWidget(self.jitter_spin, 1)
         rounds_inner.addLayout(jitter_row)
 
-        estimate_row = QHBoxLayout()
-        estimate_row.addWidget(QLabel("Estimated Time"))
-        estimate_row.addWidget(self.estimate_label, 1)
-        rounds_inner.addLayout(estimate_row)
+        self.status_group = _SectionGroup("运行状态")
+        status_layout = QVBoxLayout(self.status_group)
+        status_layout.setContentsMargins(10, 6, 10, 10)
+        status_layout.setSpacing(10)
 
         status_row = QHBoxLayout()
         status_row.addWidget(QLabel("Status"))
         status_row.addWidget(self.status_label, 1)
         status_row.addWidget(self.phase_label, 1)
+        status_layout.addLayout(status_row)
 
-        cm_row = QWidget(self)
+        estimate_row = QHBoxLayout()
+        estimate_row.addWidget(QLabel("Estimated Time"))
+        estimate_row.addWidget(self.estimate_label, 1)
+        status_layout.addLayout(estimate_row)
+        status_layout.addWidget(self.failure_summary)
+
+        self.control_group = _SectionGroup("运行控制")
+        control_layout = QVBoxLayout(self.control_group)
+        control_layout.setContentsMargins(10, 6, 10, 10)
+        control_layout.setSpacing(10)
+
+        cm_row = QWidget(self.control_group)
         cm_layout = QHBoxLayout(cm_row)
         cm_layout.setContentsMargins(0, 0, 0, 0)
-        cm_layout.addWidget(QLabel("CM Version:"))
-        cm_layout.addWidget(self.cm_version_combo)
-        cm_layout.addWidget(self.prepare_button)
+        cm_layout.addWidget(QLabel("CM Version"))
+        cm_layout.addWidget(self.cm_version_combo, 1)
 
-        button_row = QWidget(self)
+        runtime_row = QWidget(self.control_group)
+        runtime_layout = QHBoxLayout(runtime_row)
+        runtime_layout.setContentsMargins(0, 0, 0, 0)
+        cm_layout.addWidget(self.prepare_button)
+        runtime_layout.addWidget(self.status_query_button)
+
+        button_row = QWidget(self.control_group)
         button_layout = QHBoxLayout(button_row)
         button_layout.setContentsMargins(0, 0, 0, 0)
         button_layout.addWidget(self.start_button)
         button_layout.addWidget(self.stop_button)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(rounds_group)
-        layout.addLayout(status_row)
-        layout.addWidget(self.failure_summary, 1)
-        layout.addWidget(cm_row)
-        layout.addWidget(self.status_query_button)
-        layout.addWidget(button_row)
+        layout.setSpacing(10)
+        layout.addWidget(self.status_group)
+        layout.addWidget(self.strategy_group)
+        control_layout.addWidget(cm_row)
+        control_layout.addWidget(runtime_row)
+        control_layout.addWidget(button_row)
+        layout.addWidget(self.control_group)
 
         self.strategy_tabs.currentChanged.connect(
             lambda _i: self._on_estimated_time_changed()
@@ -335,7 +459,9 @@ class CalibrationPanel(QGroupBox):
         )
 
     def set_phase_label(self, text: str | None) -> None:
-        self.phase_label.setText(text or "")
+        phase_text = (text or "").strip()
+        self.phase_label.setText(phase_text)
+        self.phase_label.setVisible(bool(phase_text))
 
     def set_failure_summary(self, text: str | None) -> None:
         self.failure_summary.setPlainText((text or "").strip())

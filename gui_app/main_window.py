@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import re
 import time
 from collections import deque
 from pathlib import Path
@@ -29,6 +30,8 @@ class MainWindow(QMainWindow):
         self._pending_launch: CalibrationLaunchConfig | None = None
         self._last_runtime_summary: dict | None = None
         self._runtime_recent_lines: deque[str] = deque(maxlen=12)
+        self._prepare_trace_state: dict[str, object] = {}
+        self._prepare_trace_emitted: set[str] = set()
         self._status_summary_lines: deque[str] = deque(maxlen=10)
         self._health_check_active = False
         self._calibration_recent_lines: deque[str] = deque(maxlen=20)
@@ -655,6 +658,7 @@ class MainWindow(QMainWindow):
     def _on_runtime_process_started(self) -> None:
         self._runtime_recent_lines.clear()
         if self._runtime_mode == "prepare":
+            self._reset_prepare_trace_state()
             self._set_status_summary("CM Prepare 进行中...")
             self.output_panel.append_log(self._build_prepare_start_log(), source="runtime")
             self.output_panel.append_log(
@@ -711,6 +715,7 @@ class MainWindow(QMainWindow):
             if was_health_check and exit_code != 0:
                 self._append_status_summary_line("运行态轮询进程异常结束。")
             self._sync_control_states()
+        self._reset_prepare_trace_state()
         self._runtime_mode = None
 
     @Slot(dict)
@@ -728,7 +733,6 @@ class MainWindow(QMainWindow):
         status = str(payload.get("status") or "")
         if mode == "prepare":
             self._set_status_summary(self._build_prepare_summary(payload))
-            self._append_prepare_trace(payload)
             if status == "ready" and self._pending_launch is not None:
                 launch = self._pending_launch
                 self._pending_launch = None
@@ -930,8 +934,197 @@ class MainWindow(QMainWindow):
         text = line.strip()
         if text:
             self._runtime_recent_lines.append(text)
+            if self._runtime_mode == "prepare":
+                self._append_prepare_runtime_trace(text)
             if self._should_surface_status_line(text, source="runtime"):
                 self._append_status_summary_line(text)
+
+    def _reset_prepare_trace_state(self) -> None:
+        self._prepare_trace_state = {}
+        self._prepare_trace_emitted = set()
+
+    def _append_prepare_runtime_trace(self, text: str) -> None:
+        self._update_prepare_trace_state(text)
+        for line in self._build_incremental_prepare_trace_lines():
+            self.output_panel.append_log(line, source="runtime")
+            self._append_status_summary_line(line)
+
+    def _update_prepare_trace_state(self, text: str) -> None:
+        state = self._prepare_trace_state
+        if text.startswith("Project root: "):
+            state["project_root"] = text.partition(": ")[2].strip()
+            return
+        if text.startswith("TestRun: "):
+            state["testrun"] = text.partition(": ")[2].strip()
+            return
+        if text.startswith("Vehicle: "):
+            state["vehicle"] = text.partition(": ")[2].strip()
+            return
+        if text.startswith("Activated vehicle sensor: "):
+            match = re.match(r"^Activated vehicle sensor:\s*(.+?)\s*\(Sensor\.(\d+)\.Active\s*=\s*1\)$", text)
+            if match:
+                state["sensor_name"] = match.group(1).strip()
+                state["sensor_index"] = match.group(2).strip()
+            return
+        if text == "Vehicle file already matched the requested single-sensor state":
+            state["sensor_changed"] = "no"
+            return
+        if text.startswith("Vehicle file updated in place: "):
+            state["sensor_changed"] = "yes"
+            return
+        if text.startswith("CarMaker action: "):
+            state["carmaker_action"] = text.partition(": ")[2].strip()
+            return
+        if text.startswith("CarMaker PID: "):
+            state["carmaker_pid"] = text.partition(": ")[2].strip()
+            return
+        if text.startswith("CarMaker GUI TestRun selected: "):
+            state["selected_testrun"] = text.partition(": ")[2].strip()
+            return
+        if text.startswith("Bootstrap run: "):
+            detail = text.partition(": ")[2].strip()
+            label = detail.partition(" reached ")[0].strip() or detail
+            bootstrapped_testrun = detail.rpartition(" for TestRun ")[2].strip() or detail
+            state["bootstrap_label"] = label
+            state["bootstrapped_testrun"] = bootstrapped_testrun
+            return
+        if text.startswith("IPG-MOVIE action: "):
+            action = text.partition(": ")[2].strip()
+            state["movie_action"] = action
+            pid_match = re.search(r"\bPID\s+(\d+)\b", action)
+            if pid_match:
+                state.setdefault("movie_pid", pid_match.group(1))
+            return
+        if text.startswith("IPG-MOVIE PID: "):
+            state["movie_pid"] = text.partition(": ")[2].strip()
+            return
+        if text.startswith("IPG-MOVIE scene ready: "):
+            state["scene"] = self._parse_prepare_key_value_fields(text.partition(": ")[2].strip())
+            return
+        if text.startswith("IPG-MOVIE ABRAXAS: "):
+            state["abraxas"] = self._parse_prepare_key_value_fields(text.partition(": ")[2].strip())
+            return
+        if text.startswith("IPG-MOVIE selected camera sensor: "):
+            state["camera_selection"] = self._parse_prepare_key_value_fields(text.partition(": ")[2].strip())
+            return
+        if text.startswith("IPG-MOVIE camera widgets: "):
+            state["camera_widgets"] = self._parse_prepare_key_value_fields(text.partition(": ")[2].strip())
+            return
+        if text.startswith("IPG-MOVIE captured current initial values: "):
+            state["initial_capture"] = self._parse_prepare_key_value_fields(text.partition(": ")[2].strip())
+            return
+        if text.startswith("IPG-MOVIE health check: "):
+            state["health"] = self._parse_prepare_key_value_fields(text.partition(": ")[2].strip())
+
+    def _build_incremental_prepare_trace_lines(self) -> list[str]:
+        state = self._prepare_trace_state
+        lines: list[str] = []
+
+        def emit(key: str, line: str | None) -> None:
+            if not line or key in self._prepare_trace_emitted:
+                return
+            self._prepare_trace_emitted.add(key)
+            lines.append(line)
+
+        project_root = self._as_text(state.get("project_root"))
+        testrun = self._as_text(state.get("testrun"))
+        vehicle = self._as_text(state.get("vehicle"))
+        if project_root and testrun and vehicle:
+            emit("target", f"Prepare target: project={project_root} | testrun={testrun} | vehicle={vehicle}")
+
+        sensor_name = self._as_text(state.get("sensor_name"))
+        sensor_index = self._as_text(state.get("sensor_index"))
+        sensor_changed = self._as_text(state.get("sensor_changed"))
+        if sensor_name and sensor_index and sensor_changed:
+            emit(
+                "sensor_activation",
+                f"Prepare sensor activation: {sensor_name} (Sensor.{sensor_index}.Active=1, changed={sensor_changed})",
+            )
+
+        selected_testrun = self._as_text(state.get("selected_testrun"))
+        if selected_testrun:
+            emit("selected_testrun", f"Prepare GUI TestRun selection: {selected_testrun}")
+
+        bootstrap_label = self._as_text(state.get("bootstrap_label"))
+        bootstrapped_testrun = self._as_text(state.get("bootstrapped_testrun"))
+        if bootstrap_label and bootstrapped_testrun:
+            emit("bootstrap", f"Prepare bootstrap: {bootstrap_label} -> {bootstrapped_testrun}")
+
+        carmaker_action = self._as_text(state.get("carmaker_action"))
+        carmaker_pid = self._as_text(state.get("carmaker_pid"))
+        if carmaker_action and carmaker_pid:
+            emit("carmaker", f"Prepare CarMaker: action={carmaker_action} | pid={carmaker_pid}")
+
+        movie_action = self._as_text(state.get("movie_action"))
+        movie_pid = self._as_text(state.get("movie_pid"))
+        if movie_action and movie_pid:
+            emit("movie", f"Prepare IPG-MOVIE: action={movie_action} | pid={movie_pid}")
+
+        scene = state.get("scene") if isinstance(state.get("scene"), dict) else {}
+        scene_mode = self._as_text(scene.get("mode"))
+        scene_camera = self._as_text(scene.get("camera_name"))
+        scene_size = self._as_text(scene.get("size"))
+        scene_widget = self._as_text(scene.get("camera_widget"))
+        if scene_mode and scene_camera and scene_size and scene_widget:
+            emit(
+                "scene",
+                f"Prepare IPG-MOVIE scene: mode={scene_mode} | camera={scene_camera} | size={scene_size} | view_widget={scene_widget}",
+            )
+
+        abraxas = state.get("abraxas") if isinstance(state.get("abraxas"), dict) else {}
+        abraxas_before = self._as_text(abraxas.get("before"))
+        abraxas_after = self._as_text(abraxas.get("after"))
+        if abraxas_before and abraxas_after:
+            emit("abraxas", f"Prepare ABRAXAS: before={abraxas_before} | after={abraxas_after}")
+
+        camera_selection = state.get("camera_selection") if isinstance(state.get("camera_selection"), dict) else {}
+        requested = self._as_text(camera_selection.get("requested"))
+        current = self._as_text(camera_selection.get("current"))
+        if requested and current:
+            emit(
+                "camera_selection",
+                f"Prepare camera selection: requested={requested} | current={current}",
+            )
+
+        camera_widgets = state.get("camera_widgets") if isinstance(state.get("camera_widgets"), dict) else {}
+        camera_widget = self._as_text(camera_widgets.get("camera"))
+        lens_widget = self._as_text(camera_widgets.get("lens"))
+        lens_state = self._as_text(camera_widgets.get("lens_state"))
+        if camera_widget and lens_widget and lens_state:
+            emit(
+                "camera_widgets",
+                f"Prepare camera widgets: camera={camera_widget} | lens={lens_widget} | lens_state={lens_state}",
+            )
+
+        initial_capture = state.get("initial_capture") if isinstance(state.get("initial_capture"), dict) else {}
+        config_path = self._as_text(initial_capture.get("config"))
+        captured_names = self._as_text(initial_capture.get("names"))
+        if config_path and captured_names:
+            emit(
+                "initial_capture",
+                f"Prepare initial capture: config={config_path} | names={captured_names}",
+            )
+
+        health = state.get("health") if isinstance(state.get("health"), dict) else {}
+        all_ok = self._as_text(health.get("all_ok"))
+        health_code = self._as_text(health.get("code"))
+        if all_ok and health_code:
+            emit("health", f"Prepare health check: all_ok={all_ok} | code={health_code}")
+
+        return lines
+
+    @staticmethod
+    def _parse_prepare_key_value_fields(text: str) -> dict[str, str]:
+        matches = list(re.finditer(r"(\w+)=", text))
+        if not matches:
+            return {}
+        values: dict[str, str] = {}
+        for index, match in enumerate(matches):
+            key = match.group(1)
+            value_start = match.end()
+            value_end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+            values[key] = text[value_start:value_end].strip()
+        return values
 
     @Slot(str)
     def _on_calibration_line(self, line: str) -> None:

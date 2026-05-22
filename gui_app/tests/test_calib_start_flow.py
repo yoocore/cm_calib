@@ -163,8 +163,69 @@ class TestCalibStartFlow:
         summary_text = main_window.calibration_panel.failure_summary.toPlainText()
         assert "CM Prepare 已触发" in summary_text
 
-    def test_runtime_summary_prepare_logs_detailed_steps(self, main_window: MainWindow, mocker):
-        """prepare summary 返回后，右侧日志应展开实际执行步骤"""
+    def test_runtime_line_prepare_logs_incremental_structured_steps(self, main_window: MainWindow):
+        """prepare 期间 runtime stdout 应逐步补充结构化 Prepare 日志，同时保留原始行"""
+        config_path = main_window.project_root / "Data" / "Script" / "CameraCalibration" / "configs" / "camera.cam1.json"
+        main_window._runtime_mode = "prepare"
+        main_window.output_panel.append_log = MagicMock()
+
+        main_window._on_runtime_line(f"Project root: {main_window.project_root}")
+        main_window._on_runtime_line("TestRun: Data/TestRun/vctc_ngxpro")
+        main_window._on_runtime_line("Vehicle: Data/Vehicle/Examples/TestVehicle")
+        main_window._on_runtime_line("Activated vehicle sensor: cam1 (Sensor.0.Active = 1)")
+        main_window._on_runtime_line("Vehicle file already matched the requested single-sensor state")
+        main_window._on_runtime_line("CarMaker action: reused existing CarMaker GUI/runtime")
+        main_window._on_runtime_line("CarMaker PID: 1234")
+        main_window._on_runtime_line("CarMaker GUI TestRun selected: vctc_ngxpro")
+        main_window._on_runtime_line(
+            "Bootstrap run: Tcl StartSim/StopSim reached running state and returned to idle for TestRun vctc_ngxpro"
+        )
+        main_window._on_runtime_line("IPG-MOVIE action: reused existing GUI IPG-MOVIE PID 5678")
+        main_window._on_runtime_line("IPG-MOVIE PID: 5678")
+        main_window._on_runtime_line(
+            "IPG-MOVIE scene ready: mode=strict recovery=none camera_name=CAMERA_RSI-SENSOR Vhcl.cam1 size=1920x1536 camera_widget=.view"
+        )
+        main_window._on_runtime_line("IPG-MOVIE ABRAXAS: before=0 after=1")
+        main_window._on_runtime_line(
+            "IPG-MOVIE selected camera sensor: requested=CAMERA_RSI-SENSOR Vhcl.cam1 current=CAMERA_RSI-SENSOR Vhcl.cam1"
+        )
+        main_window._on_runtime_line("IPG-MOVIE camera widgets: camera=.camera lens=.lens lens_state=normal")
+        main_window._on_runtime_line(
+            f"IPG-MOVIE captured current initial values: config={config_path} names=pos_x, pos_y"
+        )
+        main_window._on_runtime_line("IPG-MOVIE health check: all_ok=True code=ok")
+
+        logged_messages = [call.args[0] for call in main_window.output_panel.append_log.call_args_list]
+        assert "CarMaker action: reused existing CarMaker GUI/runtime" in logged_messages
+        assert any(
+            message == (
+                f"Prepare target: project={main_window.project_root} | "
+                "testrun=Data/TestRun/vctc_ngxpro | vehicle=Data/Vehicle/Examples/TestVehicle"
+            )
+            for message in logged_messages
+        )
+        assert "Prepare sensor activation: cam1 (Sensor.0.Active=1, changed=no)" in logged_messages
+        assert "Prepare GUI TestRun selection: vctc_ngxpro" in logged_messages
+        assert "Prepare bootstrap: Tcl StartSim/StopSim -> vctc_ngxpro" in logged_messages
+        assert "Prepare CarMaker: action=reused existing CarMaker GUI/runtime | pid=1234" in logged_messages
+        assert "Prepare IPG-MOVIE: action=reused existing GUI IPG-MOVIE PID 5678 | pid=5678" in logged_messages
+        assert (
+            "Prepare IPG-MOVIE scene: mode=strict | camera=CAMERA_RSI-SENSOR Vhcl.cam1 | size=1920x1536 | view_widget=.view"
+            in logged_messages
+        )
+        assert "Prepare ABRAXAS: before=0 | after=1" in logged_messages
+        assert (
+            "Prepare camera selection: requested=CAMERA_RSI-SENSOR Vhcl.cam1 | current=CAMERA_RSI-SENSOR Vhcl.cam1"
+            in logged_messages
+        )
+        assert "Prepare camera widgets: camera=.camera | lens=.lens | lens_state=normal" in logged_messages
+        assert (
+            f"Prepare initial capture: config={config_path} | names=pos_x, pos_y" in logged_messages
+        )
+        assert "Prepare health check: all_ok=True | code=ok" in logged_messages
+
+    def test_runtime_summary_prepare_does_not_replay_full_trace(self, main_window: MainWindow, mocker):
+        """prepare summary 返回后，只保留 summary 行，不再整组补打 Prepare 明细"""
         mocker.patch("gui_app.main_window.QMessageBox")
         main_window.output_panel.append_log = MagicMock()
 
@@ -230,10 +291,8 @@ class TestCalibStartFlow:
         })
 
         logged_messages = [call.args[0] for call in main_window.output_panel.append_log.call_args_list]
-        assert any("Prepare target:" in message for message in logged_messages)
-        assert any("Prepare CarMaker:" in message for message in logged_messages)
-        assert any("Prepare IPG-MOVIE scene:" in message for message in logged_messages)
-        assert any("Prepare result: status=ready" in message for message in logged_messages)
+        assert any(message.startswith("summary mode=prepare status=ready") for message in logged_messages)
+        assert not any(message.startswith("Prepare ") for message in logged_messages)
 
     def test_orchestration_events_update_sensor_progress_display(self, main_window: MainWindow, mocker):
         """编排事件应推动左侧传感器进度显示"""

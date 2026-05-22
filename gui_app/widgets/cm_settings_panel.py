@@ -56,15 +56,15 @@ class CmSettingsPanel(QGroupBox):
     camera_selection_changed = Signal()
 
     def __init__(self, parent: QWidget | None = None):
-        super().__init__("工程设置", parent)
+        super().__init__("CM Settings", parent)
 
         self.project_root_edit = QLineEdit()
         self.project_root_edit.setPlaceholderText("e.g. C:/CM_Projects/CMO141_Calibration")
         self.testrun_edit = QLineEdit()
         self.testrun_edit.setPlaceholderText("e.g. vctc_ngxpro")
         self.vehicle_label = QLabel("-")
-        self.browse_button = QPushButton("浏览")
-        self.testrun_browse_button = QPushButton("浏览")
+        self.browse_button = QPushButton("Browse")
+        self.testrun_browse_button = QPushButton("Browse")
 
         self.camera_list = QListWidget()
         self.camera_list.setDragDropMode(QAbstractItemView.InternalMove)
@@ -74,8 +74,8 @@ class CmSettingsPanel(QGroupBox):
         self.camera_list.setAcceptDrops(True)
         self.camera_list.setDropIndicatorShown(True)
 
-        self.precheck_button = QPushButton("检查输入")
-        self.generate_config_button = QPushButton("生成配置")
+        self.precheck_button = QPushButton("Check Inputs")
+        self.generate_config_button = QPushButton("Generate Configs")
         self._generate_configs_ready = False
         self.generate_config_button.setEnabled(False)
 
@@ -112,9 +112,9 @@ class CmSettingsPanel(QGroupBox):
         testrun_layout.addWidget(self.testrun_browse_button)
 
         form = QFormLayout()
-        form.addRow("工程目录", proj_row)
+        form.addRow("ProjectDir", proj_row)
         form.addRow("TestRun", testrun_row)
-        form.addRow("车辆", self.vehicle_label)
+        form.addRow("Vehicle", self.vehicle_label)
 
         precheck_row = QWidget(self)
         precheck_layout = QHBoxLayout(precheck_row)
@@ -122,12 +122,12 @@ class CmSettingsPanel(QGroupBox):
         precheck_layout.addWidget(self.precheck_button)
         precheck_layout.addWidget(self.generate_config_button)
 
-        self.project_group = _SectionGroup("工程输入", self)
+        self.project_group = _SectionGroup("Project Inputs", self)
         project_layout = QVBoxLayout(self.project_group)
         project_layout.setContentsMargins(10, 6, 10, 10)
         project_layout.addLayout(form)
 
-        self.camera_group = _SectionGroup("相机选择", self)
+        self.camera_group = _SectionGroup("Camera Selection", self)
         camera_layout = QVBoxLayout(self.camera_group)
         camera_layout.setContentsMargins(10, 6, 10, 10)
         camera_layout.setSpacing(8)
@@ -135,7 +135,7 @@ class CmSettingsPanel(QGroupBox):
         camera_layout.addWidget(self.camera_list, 1)
         camera_layout.addWidget(precheck_row)
 
-        self.results_group = _SectionGroup("检查结果", self)
+        self.results_group = _SectionGroup("Check Results", self)
         results_layout = QVBoxLayout(self.results_group)
         results_layout.setContentsMargins(10, 6, 10, 10)
         results_layout.setSpacing(8)

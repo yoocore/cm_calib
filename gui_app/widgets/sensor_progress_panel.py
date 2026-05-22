@@ -1,15 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import (
-    QGroupBox,
-    QGroupBox,
-    QLabel,
-    QProgressBar,
-    QTreeWidget,
-    QTreeWidgetItem,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtWidgets import QGroupBox, QLabel, QProgressBar, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
 
 _SECTION_GROUP_STYLE = (
     "QGroupBox {"
@@ -37,7 +28,7 @@ class _SectionGroup(QGroupBox):
 
 class SensorProgressPanel(QGroupBox):
     def __init__(self, parent: QWidget | None = None):
-        super().__init__("任务进度", parent)
+        super().__init__("Sensor Progress", parent)
         self.current_sensor_label = QLabel("Current Sensor: -")
         self.overall_progress_bar = QProgressBar()
         self.overall_progress_bar.setRange(0, 100)
@@ -52,7 +43,7 @@ class SensorProgressPanel(QGroupBox):
         self._sensor_progress_items: dict[str, QTreeWidgetItem] = {}
         self._sensor_progress_bars: dict[str, QProgressBar] = {}
 
-        self.summary_group = _SectionGroup("总体进度", self)
+        self.summary_group = _SectionGroup("Overall Progress", self)
         summary_layout = QVBoxLayout(self.summary_group)
         summary_layout.setContentsMargins(10, 6, 10, 10)
         summary_layout.setSpacing(8)
@@ -60,7 +51,7 @@ class SensorProgressPanel(QGroupBox):
         summary_layout.addWidget(self.overall_progress_bar)
         summary_layout.addWidget(self.overall_progress_detail_label)
 
-        self.detail_group = _SectionGroup("相机明细", self)
+        self.detail_group = _SectionGroup("Sensor Details", self)
         detail_layout = QVBoxLayout(self.detail_group)
         detail_layout.setContentsMargins(10, 6, 10, 10)
         detail_layout.addWidget(self.sensor_progress_tree)

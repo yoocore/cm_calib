@@ -177,7 +177,7 @@ class CalibrationPanel(QGroupBox):
     estimated_time_changed = Signal()
 
     def __init__(self, parent: QWidget | None = None):
-        super().__init__("标定控制", parent)
+        super().__init__("Calibration", parent)
 
         self.campaign_rounds_spin = QSpinBox()
         self.campaign_rounds_spin.setRange(1, 999)
@@ -226,7 +226,7 @@ class CalibrationPanel(QGroupBox):
         self.failure_summary = QTextEdit()
         self.failure_summary.setReadOnly(True)
         self.failure_summary.setPlaceholderText(
-            "状态摘要、准备结果和异常信息会显示在这里。"
+            "Status, prepare results, and errors appear here."
         )
         self.failure_summary.setMinimumHeight(88)
         self.failure_summary.setStyleSheet(_SUMMARY_STYLE)
@@ -243,9 +243,9 @@ class CalibrationPanel(QGroupBox):
 
         cm_versions = detect_cm_versions()
         self.cm_version_combo = QComboBox()
-        self.cm_version_combo.addItem("请选择 CM 版本", None)
+        self.cm_version_combo.addItem("Select CM version", None)
         if not cm_versions:
-            self.cm_version_combo.setItemText(0, "未检测到 CM 版本")
+            self.cm_version_combo.setItemText(0, "No CM versions detected")
         else:
             for ver in cm_versions:
                 self.cm_version_combo.addItem(ver, cm_versions[ver])
@@ -262,7 +262,7 @@ class CalibrationPanel(QGroupBox):
         self.stop_button.setMinimumHeight(42)
 
         # --- Build UI ---
-        self.strategy_group = _SectionGroup("优化策略")
+        self.strategy_group = _SectionGroup("Campaign Rounds")
         rounds_inner = QVBoxLayout(self.strategy_group)
         rounds_inner.setContentsMargins(8, 4, 8, 4)
         rounds_inner.setSpacing(10)
@@ -323,7 +323,7 @@ class CalibrationPanel(QGroupBox):
         jitter_row.addWidget(self.jitter_spin, 1)
         rounds_inner.addLayout(jitter_row)
 
-        self.status_group = _SectionGroup("运行状态")
+        self.status_group = _SectionGroup("Runtime Status")
         status_layout = QVBoxLayout(self.status_group)
         status_layout.setContentsMargins(10, 6, 10, 10)
         status_layout.setSpacing(10)
@@ -340,7 +340,7 @@ class CalibrationPanel(QGroupBox):
         status_layout.addLayout(estimate_row)
         status_layout.addWidget(self.failure_summary)
 
-        self.control_group = _SectionGroup("运行控制")
+        self.control_group = _SectionGroup("Run Controls")
         control_layout = QVBoxLayout(self.control_group)
         control_layout.setContentsMargins(10, 6, 10, 10)
         control_layout.setSpacing(10)
@@ -348,14 +348,9 @@ class CalibrationPanel(QGroupBox):
         cm_row = QWidget(self.control_group)
         cm_layout = QHBoxLayout(cm_row)
         cm_layout.setContentsMargins(0, 0, 0, 0)
-        cm_layout.addWidget(QLabel("CM Version"))
+        cm_layout.addWidget(QLabel("CM Version:"))
         cm_layout.addWidget(self.cm_version_combo, 1)
-
-        runtime_row = QWidget(self.control_group)
-        runtime_layout = QHBoxLayout(runtime_row)
-        runtime_layout.setContentsMargins(0, 0, 0, 0)
         cm_layout.addWidget(self.prepare_button)
-        runtime_layout.addWidget(self.status_query_button)
 
         button_row = QWidget(self.control_group)
         button_layout = QHBoxLayout(button_row)
@@ -365,10 +360,10 @@ class CalibrationPanel(QGroupBox):
 
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
-        layout.addWidget(self.status_group)
         layout.addWidget(self.strategy_group)
+        layout.addWidget(self.status_group)
         control_layout.addWidget(cm_row)
-        control_layout.addWidget(runtime_row)
+        control_layout.addWidget(self.status_query_button)
         control_layout.addWidget(button_row)
         layout.addWidget(self.control_group)
 

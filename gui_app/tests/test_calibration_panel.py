@@ -18,7 +18,7 @@ class TestCalibrationPanel:
         panel = CalibrationPanel()
         qtbot.addWidget(panel)
 
-        assert panel.cm_version_combo.currentText() == "请选择 CM 版本"
+        assert panel.cm_version_combo.currentText() == "Select CM version"
         assert panel.cm_install_path is None
 
     def test_phase_label_hidden_but_summary_stays_visible(self, qtbot):
@@ -27,13 +27,19 @@ class TestCalibrationPanel:
         assert panel.phase_label.isHidden() is True
         assert panel.failure_summary.isHidden() is False
 
-    def test_uses_dedicated_status_strategy_and_control_sections(self, qtbot):
+    def test_uses_linear_top_to_bottom_flow_with_english_labels(self, qtbot):
         panel = CalibrationPanel()
         qtbot.addWidget(panel)
 
-        assert panel.status_group.title() == "运行状态"
-        assert panel.strategy_group.title() == "优化策略"
-        assert panel.control_group.title() == "运行控制"
+        assert panel.title() == "Calibration"
+        assert panel.failure_summary.placeholderText() == "Status, prepare results, and errors appear here."
+        assert panel.strategy_group.title() == "Campaign Rounds"
+        assert panel.status_group.title() == "Runtime Status"
+        assert panel.control_group.title() == "Run Controls"
+        layout = panel.layout()
+        assert layout.itemAt(0).widget() is panel.strategy_group
+        assert layout.itemAt(1).widget() is panel.status_group
+        assert layout.itemAt(2).widget() is panel.control_group
         assert panel.start_button.isDefault() is True
 
     def test_status_badge_default_idle(self, qtbot):
@@ -64,13 +70,17 @@ class TestCalibrationPanel:
 
 
 class TestCmSettingsPanel:
-    def test_uses_project_camera_and_result_sections(self, qtbot):
+    def test_uses_linear_project_camera_and_results_flow_in_english(self, qtbot):
         panel = CmSettingsPanel()
         qtbot.addWidget(panel)
 
-        assert panel.project_group.title() == "工程输入"
-        assert panel.camera_group.title() == "相机选择"
-        assert panel.results_group.title() == "检查结果"
+        assert panel.title() == "CM Settings"
+        assert panel.browse_button.text() == "Browse"
+        assert panel.precheck_button.text() == "Check Inputs"
+        assert panel.generate_config_button.text() == "Generate Configs"
+        assert panel.project_group.title() == "Project Inputs"
+        assert panel.camera_group.title() == "Camera Selection"
+        assert panel.results_group.title() == "Check Results"
 
     def test_update_precheck_results_shows_checkmarks(self, qtbot):
         panel = CmSettingsPanel()
@@ -105,12 +115,13 @@ class TestCmSettingsPanel:
 
 
 class TestSensorProgressPanel:
-    def test_uses_summary_and_detail_sections(self, qtbot):
+    def test_uses_english_progress_sections(self, qtbot):
         panel = SensorProgressPanel()
         qtbot.addWidget(panel)
 
-        assert panel.summary_group.title() == "总体进度"
-        assert panel.detail_group.title() == "相机明细"
+        assert panel.title() == "Sensor Progress"
+        assert panel.summary_group.title() == "Overall Progress"
+        assert panel.detail_group.title() == "Sensor Details"
 
     def test_sensor_progress_plan_and_runtime_update(self, qtbot):
         panel = SensorProgressPanel()

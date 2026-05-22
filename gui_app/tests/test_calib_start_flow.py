@@ -84,7 +84,7 @@ class TestCalibStartFlow:
         main_window.calibration_service.start.assert_not_called()
         main_window.runtime_service.prepare_runtime.assert_not_called()
         feedback = main_window.calibration_panel.failure_summary.toPlainText()
-        assert "环境状态未知，请点击 CM Prepare 准备环境。" in feedback
+        assert "Runtime state is unknown. Run CM Prepare first." in feedback
         message_box.warning.assert_called_once()
 
     def test_runtime_summary_prepare_ready_triggers_calibration_start(self, main_window: MainWindow, mocker):
@@ -122,7 +122,7 @@ class TestCalibStartFlow:
         })
 
         summary_text = main_window.calibration_panel.failure_summary.toPlainText()
-        assert "CM Prepare 成功" in summary_text
+        assert "CM Prepare succeeded. Runtime is ready." in summary_text
         assert "Active sensors: cam1" in summary_text
 
     def test_runtime_summary_prepare_passive_updates_feedback_box(self, main_window: MainWindow, mocker):
@@ -139,7 +139,7 @@ class TestCalibStartFlow:
         })
 
         summary_text = main_window.calibration_panel.failure_summary.toPlainText()
-        assert "CM Prepare 未达到就绪状态" in summary_text
+        assert "CM Prepare did not reach a ready state." in summary_text
         assert "expected exactly 1 CarMaker backend runtime, found 2" in summary_text
 
     def test_runtime_process_started_logs_prepare_plan(self, main_window: MainWindow):
@@ -153,7 +153,7 @@ class TestCalibStartFlow:
         assert any("CM Prepare started:" in message for message in logged_messages)
         assert any("CM Prepare steps:" in message for message in logged_messages)
         summary_text = main_window.calibration_panel.failure_summary.toPlainText()
-        assert "CM Prepare 进行中..." in summary_text
+        assert "CM Prepare in progress..." in summary_text
         assert "Prepare steps:" in summary_text
 
     def test_prepare_runtime_sets_summary_box_immediately(self, main_window: MainWindow):
@@ -167,7 +167,7 @@ class TestCalibStartFlow:
         main_window._prepare_runtime()
 
         summary_text = main_window.calibration_panel.failure_summary.toPlainText()
-        assert "CM Prepare 已触发" in summary_text
+        assert "CM Prepare triggered" in summary_text
 
     def test_runtime_line_prepare_logs_incremental_structured_steps(self, main_window: MainWindow):
         """prepare 期间 runtime stdout 应逐步补充结构化 Prepare 日志，同时保留原始行"""
@@ -620,7 +620,7 @@ class TestCalibStartFlow:
         assert main_window.state.status == AppStatus.RUNNING
         assert main_window.calibration_panel.status_label.text() == "running"
         summary_text = main_window.calibration_panel.failure_summary.toPlainText()
-        assert "保持当前 Status=running" in summary_text
+        assert "keeping current Status=running" in summary_text
 
     def test_running_status_skips_periodic_health_probe(self, main_window: MainWindow):
         """Status=running 时不应继续发起 runtime health probe"""

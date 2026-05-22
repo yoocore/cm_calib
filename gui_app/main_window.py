@@ -95,7 +95,7 @@ class MainWindow(QMainWindow):
         self._wire_signals()
         self._refresh_camera_list()
         self._apply_status(AppStatus.IDLE)
-        self._set_status_summary("等待操作。")
+        self._set_status_summary("Waiting for action.")
 
     def _wire_signals(self) -> None:
         self.calibration_panel.start_button.clicked.connect(self._start_calibration)
@@ -406,10 +406,10 @@ class MainWindow(QMainWindow):
 
         try:
             self.output_panel.append_log("─" * 60, source="system")
-            self._set_status_summary("Calib Start 已触发，正在执行预检与运行态校验。")
+            self._set_status_summary("Calib Start triggered. Running precheck and runtime validation.")
             cm_install = self.calibration_panel.cm_install_path
             if cm_install is None:
-                raise ValueError("CM 版本未选择，请先在中栏选择 CM 版本")
+                raise ValueError("CM version is not selected. Choose a CM version first.")
             self.calibration_service.set_cm_install(cm_install)
             if not self._is_runtime_ready_for_direct_start(launch):
                 if self._is_runtime_almost_ready(launch):
@@ -421,7 +421,7 @@ class MainWindow(QMainWindow):
                 return
             launch.skip_prepare_for_first_camera = True
             self.output_panel.append_log("Calib Start will reuse the existing prepared runtime for the first camera", source="runtime")
-            self._append_status_summary_line("Calib Start 将复用当前已准备的运行态。")
+            self._append_status_summary_line("Calib Start will reuse the current prepared runtime.")
             self.calibration_service.start(launch)
         except Exception as exc:
             self._set_status_summary(str(exc))
@@ -448,10 +448,10 @@ class MainWindow(QMainWindow):
             self.state.selected_cameras = selected_cameras
             cm_install = self.calibration_panel.cm_install_path
             if cm_install is None:
-                raise ValueError("CM 版本未选择，请先在中栏选择 CM 版本")
+                raise ValueError("CM version is not selected. Choose a CM version first.")
             self.calibration_service.set_cm_install(cm_install)
             self._runtime_mode = "prepare"
-            self._set_status_summary("CM Prepare 已触发，等待运行态进程启动。")
+            self._set_status_summary("CM Prepare triggered. Waiting for the runtime process to start.")
             self.runtime_service.prepare_runtime(project_root, testrun, cameras=selected_cameras, cm_install=cm_install)
         except Exception as exc:
             self._runtime_mode = None
@@ -472,7 +472,7 @@ class MainWindow(QMainWindow):
             self.cm_settings_panel.update_precheck_results(results)
             ok_count = sum(1 for result in results if bool(result.get("ok")))
             self.output_panel.append_log(f"Check inputs: {ok_count}/{len(results)} passed", source="system")
-            self._set_status_summary(f"输入检查完成：{ok_count}/{len(results)} 个 camera 通过。")
+            self._set_status_summary(f"Input check finished: {ok_count}/{len(results)} cameras passed.")
         except Exception as exc:
             self.output_panel.append_log(f"Check inputs failed: {exc}", source="system")
             self._set_status_summary(str(exc))
@@ -499,11 +499,11 @@ class MainWindow(QMainWindow):
             generated_results = self.precheck_service.generate_configs_for_cameras(selected_cameras)
             self.cm_settings_panel.update_precheck_results(generated_results)
             self.output_panel.append_log(f"Generate configs: {len(generated_results)} configs updated", source="system")
-            self._set_status_summary(f"配置生成完成：{len(generated_results)} 个 camera 已更新。")
+            self._set_status_summary(f"Config generation finished: {len(generated_results)} cameras updated.")
         except ModuleNotFoundError as exc:
-            msg = f"缺少 Python 包: {exc.name}。请在终端运行: python -m pip install {exc.name}"
+            msg = f"Missing Python package: {exc.name}. Run: python -m pip install {exc.name}"
             self._set_red_failure(msg)
-            QMessageBox.critical(self, "缺少依赖包", msg)
+            QMessageBox.critical(self, "Missing Dependency", msg)
         except Exception as exc:
             self._set_red_failure(str(exc))
             self.output_panel.append_log(f"Generate configs failed: {exc}", source="system")
@@ -524,11 +524,11 @@ class MainWindow(QMainWindow):
                 raise ValueError("TestRun is required")
             cm_install = self.calibration_panel.cm_install_path
             if cm_install is None:
-                raise ValueError("CM 版本未选择，请先在中栏选择 CM 版本")
+                raise ValueError("CM version is not selected. Choose a CM version first.")
             self.output_panel.append_log("Query Status triggered", source="system")
             self._runtime_mode = "status"
             self._health_check_active = False
-            self._set_status_summary("正在查询运行态状态...")
+            self._set_status_summary("Querying runtime status...")
             self.runtime_service.probe_status(
                 project_root,
                 testrun,
@@ -607,20 +607,20 @@ class MainWindow(QMainWindow):
         self.calibration_panel.set_inputs_locked(not controls_enabled)
         self.calibration_panel.status_query_button.setEnabled(can_query_status)
         if preparing or calibration_running:
-            self.calibration_panel.status_query_button.setToolTip("运行态准备或标定期间不可手动查询。")
+            self.calibration_panel.status_query_button.setToolTip("Manual query is unavailable during CM Prepare or calibration.")
         elif self.state.status == AppStatus.READY:
-            self.calibration_panel.status_query_button.setToolTip("Status=ready 时会自动进行运行态轮询。")
+            self.calibration_panel.status_query_button.setToolTip("Runtime polling runs automatically when Status=ready.")
         elif self.state.status in {AppStatus.FINISHED, AppStatus.FAILED, AppStatus.STOPPED, AppStatus.PASSIVE}:
-            self.calibration_panel.status_query_button.setToolTip("" if can_query_status else "当前有运行中的后台命令，暂不可查询。")
+            self.calibration_panel.status_query_button.setToolTip("" if can_query_status else "A background command is still running. Query is temporarily unavailable.")
         else:
-            self.calibration_panel.status_query_button.setToolTip("当前状态无需手动查询。")
+            self.calibration_panel.status_query_button.setToolTip("Manual query is not needed for the current state.")
 
     @Slot()
     def _on_process_started(self) -> None:
         self._calibration_recent_lines.clear()
         self._begin_calibration_progress_tracking()
-        self._set_status_summary("标定进行中...\n等待编排事件与单相机结果。")
-        self.calibration_panel.set_phase_label("标定进行中...")
+        self._set_status_summary("Calibration in progress...\nWaiting for orchestration events and per-camera results.")
+        self.calibration_panel.set_phase_label("Calibration in progress...")
         self._apply_status(AppStatus.RUNNING)
 
     @Slot(int)
@@ -650,11 +650,11 @@ class MainWindow(QMainWindow):
         self._pending_launch = None
         self.calibration_panel.set_failure_summary(self._build_failure_summary("Runtime process error", [error_text, *self._runtime_recent_lines]))
         if self._runtime_mode == "prepare":
-            self.calibration_panel.set_phase_label("CM Prepare 失败")
+            self.calibration_panel.set_phase_label("CM Prepare failed")
             self._apply_status(AppStatus.PASSIVE)
         else:
             if was_health_check:
-                self._append_status_summary_line(f"运行态轮询失败：{error_text}")
+                self._append_status_summary_line(f"Runtime polling failed: {error_text}")
             self._sync_control_states()
         self._runtime_mode = None
         if not was_health_check:
@@ -665,7 +665,7 @@ class MainWindow(QMainWindow):
         self._runtime_recent_lines.clear()
         if self._runtime_mode == "prepare":
             self._reset_prepare_trace_state()
-            self._set_status_summary("CM Prepare 进行中...")
+            self._set_status_summary("CM Prepare in progress...")
             self.output_panel.append_log(self._build_prepare_start_log(), source="runtime")
             self.output_panel.append_log(
                 "CM Prepare steps: activate sensor -> sync TestRun -> bootstrap run -> reuse/start IPG-MOVIE -> wait scene ready -> initialize camera widgets/dialogs -> capture initials -> health check",
@@ -675,7 +675,7 @@ class MainWindow(QMainWindow):
             self._append_status_summary_line(
                 "Prepare steps: activate sensor -> sync TestRun -> bootstrap run -> IPG-MOVIE ready -> widgets/dialogs -> capture initials -> health check"
             )
-            self.calibration_panel.set_phase_label("CM Prepare 进行中...")
+            self.calibration_panel.set_phase_label("CM Prepare in progress...")
             self._apply_status(AppStatus.PREPARING)
         else:
             self._sync_control_states()
@@ -699,7 +699,7 @@ class MainWindow(QMainWindow):
                         self._build_failure_summary("Prepare failed", self._runtime_recent_lines)
                     )
                     self._set_status_summary(self._build_failure_summary("Prepare failed", self._runtime_recent_lines))
-                    self.calibration_panel.set_phase_label("CM Prepare 失败")
+                    self.calibration_panel.set_phase_label("CM Prepare failed")
                     self._apply_status(AppStatus.PASSIVE)
                 else:
                     self._sync_control_states()
@@ -709,17 +709,17 @@ class MainWindow(QMainWindow):
                     self._build_failure_summary("Prepare finished but no runtime summary received", self._runtime_recent_lines)
                 )
                 self._set_status_summary(self._build_failure_summary("Prepare finished but no runtime summary received", self._runtime_recent_lines))
-                self.calibration_panel.set_phase_label("CM Prepare 状态异常")
+                self.calibration_panel.set_phase_label("CM Prepare ended without a valid runtime summary")
                 self._apply_status(AppStatus.PASSIVE)
             else:
                 if self.state.status == AppStatus.PREPARING:
-                    self._append_status_summary_line("CM Prepare 进程已结束。")
+                    self._append_status_summary_line("CM Prepare process finished.")
                     self._apply_status(AppStatus.PASSIVE)
                 else:
                     self._sync_control_states()
         else:
             if was_health_check and exit_code != 0:
-                self._append_status_summary_line("运行态轮询进程异常结束。")
+                self._append_status_summary_line("Runtime polling process ended unexpectedly.")
             self._sync_control_states()
         self._reset_prepare_trace_state()
         self._runtime_mode = None
@@ -742,8 +742,8 @@ class MainWindow(QMainWindow):
             if status == "ready" and self._pending_launch is not None:
                 launch = self._pending_launch
                 self._pending_launch = None
-                self.calibration_panel.set_phase_label("CM Prepare 完成，正在启动标定...")
-                self._append_status_summary_line("CM Prepare 完成，正在启动标定。")
+                self.calibration_panel.set_phase_label("CM Prepare finished. Starting calibration...")
+                self._append_status_summary_line("CM Prepare finished. Starting calibration.")
                 try:
                     self.calibration_service.start(launch)
                 except Exception as exc:
@@ -758,7 +758,7 @@ class MainWindow(QMainWindow):
                 launch = self._pending_launch
                 self._pending_launch = None
                 if self._is_runtime_ready_for_launch(payload, launch):
-                    self._set_status_summary("运行态检查通过，开始启动标定。")
+                    self._set_status_summary("Runtime validation passed. Starting calibration.")
                     try:
                         self.calibration_service.start(launch)
                     except Exception as exc:
@@ -770,8 +770,8 @@ class MainWindow(QMainWindow):
                 self._apply_status(AppStatus.PASSIVE)
             elif status:
                 status_reason = self._as_text(payload.get("status_reason"))
-                summary_prefix = "运行态轮询" if self._health_check_active else "运行态查询"
-                summary_line = f"{summary_prefix}：status={status}"
+                summary_prefix = "Runtime poll" if self._health_check_active else "Runtime query"
+                summary_line = f"{summary_prefix}: status={status}"
                 if status_reason and status_reason != "runtime ready":
                     summary_line += f" | {status_reason}"
                 if self._runtime_status_probe_can_update_status():
@@ -779,7 +779,7 @@ class MainWindow(QMainWindow):
                     self._apply_status(AppStatus.READY if status == "ready" else AppStatus.PASSIVE)
                 else:
                     self._append_status_summary_line(
-                        f"{summary_line} | 保持当前 Status={self.state.status.value}"
+                        f"{summary_line} | keeping current Status={self.state.status.value}"
                     )
                     self._sync_control_states()
             else:
@@ -798,7 +798,7 @@ class MainWindow(QMainWindow):
             self.output_panel.set_output_dir(output_dir or None)
             self.output_panel.set_log_path(str(Path(output_dir) / "events.jsonl") if output_dir else None)
             self._append_status_summary_line(
-                "标定任务已启动。"
+                "Calibration task started."
                 + (f" output_dir={output_dir}" if output_dir else "")
             )
             for camera_name in self.state.selected_cameras:
@@ -807,7 +807,7 @@ class MainWindow(QMainWindow):
             camera_name = str(payload.get("camera") or "")
             self.output_panel.append_log(f"{camera_name}: runtime prepare starting...", source="calibration")
             self._set_camera_progress_state(camera_name, "preparing")
-            self._append_status_summary_line(f"{camera_name}: 运行态准备开始。")
+            self._append_status_summary_line(f"{camera_name}: runtime prepare started.")
             self.output_panel.update_camera_result(CameraResult(camera=camera_name, status="preparing"))
         elif event_name == "camera_prepare_finished":
             camera_name = str(payload.get("camera") or "")
@@ -815,14 +815,14 @@ class MainWindow(QMainWindow):
             label = "reused existing runtime" if reused else "full prepare done"
             self.output_panel.append_log(f"{camera_name}: runtime ready ({label})", source="calibration")
             self._set_camera_progress_state(camera_name, "ready")
-            self._append_status_summary_line(f"{camera_name}: 运行态已就绪。")
+            self._append_status_summary_line(f"{camera_name}: runtime ready.")
             self.output_panel.update_camera_result(CameraResult(camera=camera_name, status="ready"))
         elif event_name == "camera_run_started":
             camera_name = str(payload.get("camera") or "")
             self._set_camera_progress_state(camera_name, "running")
             self._camera_task_best_progress.pop(camera_name, None)
             self._camera_last_progress.pop(camera_name, None)
-            self._append_status_summary_line(f"{camera_name}: 标定开始。")
+            self._append_status_summary_line(f"{camera_name}: calibration started.")
             self.output_panel.update_camera_result(CameraResult(camera=camera_name, status="running"))
         elif event_name == "camera_run_progress":
             camera_name = str(payload.get("camera") or "")
@@ -862,7 +862,7 @@ class MainWindow(QMainWindow):
         elif event_name == "camera_run_finished":
             camera_name = str(payload.get("camera") or "")
             self._set_camera_progress_state(camera_name, "finished", finalize=True)
-            self._append_status_summary_line(f"{camera_name}: 标定完成。")
+            self._append_status_summary_line(f"{camera_name}: calibration finished.")
             last_progress = self._camera_last_progress.get(camera_name, {})
             self.output_panel.update_camera_result(
                 CameraResult(
@@ -903,7 +903,7 @@ class MainWindow(QMainWindow):
             self._set_status_summary(self._build_failure_summary("Calibration task failed", [self._as_text(payload.get("error")) or "Unknown failure", *self._calibration_recent_lines]))
             self._apply_status(AppStatus.FAILED)
         else:
-            self._append_status_summary_line("标定任务完成。")
+            self._append_status_summary_line("Calibration task finished.")
             self._apply_status(AppStatus.FINISHED)
 
         for entry in payload.get("per_camera", []):
@@ -1253,30 +1253,30 @@ class MainWindow(QMainWindow):
         self.state.selected_cameras = launch.cameras
         cm_install = self.calibration_panel.cm_install_path
         if cm_install is None:
-            raise ValueError("CM 版本未选择，请先在中栏选择 CM 版本")
+            raise ValueError("CM version is not selected. Choose a CM version first.")
         self.calibration_service.set_cm_install(cm_install)
         self._runtime_mode = "prepare"
         self._pending_launch = launch
         self.output_panel.append_log(
-            f"[INFO] Active sensor 不匹配: 当前=[{old_sensors}], 需要={first_camera}。自动触发 CM Prepare。",
+            f"[INFO] Active sensor mismatch: current=[{old_sensors}], required={first_camera}. Triggering CM Prepare automatically.",
             source="runtime",
         )
-        self._set_status_summary(f"Active sensor 从 [{old_sensors}] 切换到 {first_camera}...")
-        self.calibration_panel.set_phase_label("正在切换 Active Sensor...")
+        self._set_status_summary(f"Switching active sensor from [{old_sensors}] to {first_camera}...")
+        self.calibration_panel.set_phase_label("Switching active sensor...")
         self.runtime_service.prepare_runtime(
             launch.project_root, launch.testrun, cameras=launch.cameras, cm_install=cm_install,
         )
 
     def _build_start_requires_prepare_summary(self, launch: CalibrationLaunchConfig) -> str:
         payload = self._last_runtime_summary if isinstance(self._last_runtime_summary, dict) else None
-        details = ["环境状态未知，请点击 CM Prepare 准备环境。"]
+        details = ["Runtime state is unknown. Run CM Prepare first."]
         if payload is None:
-            details.append("尚未获取到运行态摘要。")
+            details.append("No runtime summary has been received yet.")
             return "\n".join(details)
 
         status = self._as_text(payload.get("status"))
         if status and status != "ready":
-            details.append(f"当前 Status = {status}")
+            details.append(f"Current status = {status}")
 
         status_reason = self._as_text(payload.get("status_reason"))
         if status_reason and status_reason != "runtime ready":
@@ -1286,11 +1286,11 @@ class MainWindow(QMainWindow):
         first_camera = launch.cameras[0] if launch.cameras else None
         if first_camera and active_sensors and first_camera not in [str(sensor) for sensor in active_sensors]:
             details.append(
-                f"当前 active sensor = {', '.join(str(sensor) for sensor in active_sensors)}，"
-                f"与待运行首个 camera = {first_camera} 不一致。"
+                f"Current active sensor = {', '.join(str(sensor) for sensor in active_sensors)}, "
+                f"which does not match the first camera to run = {first_camera}."
             )
         elif not active_sensors:
-            details.append("当前没有检测到 active sensor。")
+            details.append("No active sensor is currently detected.")
 
         return "\n".join(details[:4])
 
@@ -1357,7 +1357,7 @@ class MainWindow(QMainWindow):
 
         if status == "ready":
             return "\n".join([
-                "CM Prepare 成功，运行态已就绪。",
+                "CM Prepare succeeded. Runtime is ready.",
                 *details[:5],
             ])
 
@@ -1366,7 +1366,7 @@ class MainWindow(QMainWindow):
         if not details:
             details.append("prepare did not return a ready state")
         return "\n".join([
-            "CM Prepare 未达到就绪状态。",
+            "CM Prepare did not reach a ready state.",
             *details[:6],
         ])
 

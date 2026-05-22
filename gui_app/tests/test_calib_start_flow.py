@@ -16,9 +16,9 @@ from gui_app.widgets.output_panel import (
 class TestCalibStartFlow:
     """验证 Calib Start 的三级流水线：预检 → Prepare → 标定"""
 
-    def test_main_window_starts_with_hidden_failure_summary(self, main_window: MainWindow):
-        """主窗初始化后，摘要框默认应保持隐藏，直到出现需要展示的状态或错误"""
-        assert main_window.calibration_panel.failure_summary.isHidden() is True
+    def test_main_window_starts_with_empty_status_summary(self, main_window: MainWindow):
+        """主窗初始化后，不应残留旧的状态摘要文本"""
+        assert list(main_window._status_summary_lines) == []
 
     def test_start_calibration_precheck_fails(self, main_window: MainWindow, qtbot, mocker):
         """预检失败时不应调用 prepare 或 calibration"""
@@ -87,9 +87,9 @@ class TestCalibStartFlow:
 
         main_window.calibration_service.start.assert_not_called()
         main_window.runtime_service.prepare_runtime.assert_not_called()
-        feedback = main_window.calibration_panel.failure_summary.toPlainText()
-        assert "Runtime state is unknown. Run CM Prepare first." in feedback
         message_box.warning.assert_called_once()
+        warning_text = message_box.warning.call_args.args[2]
+        assert "Runtime state is unknown. Run CM Prepare first." in warning_text
 
     def test_runtime_summary_prepare_ready_triggers_calibration_start(self, main_window: MainWindow, mocker):
         """prepare 成功后 _on_runtime_summary 收到 status=ready + _pending_launch 应自动启动标定"""
@@ -112,8 +112,8 @@ class TestCalibStartFlow:
         main_window.calibration_service.start.assert_called_once()
         assert main_window._pending_launch is None  # consumed
 
-    def test_runtime_summary_prepare_ready_updates_feedback_box(self, main_window: MainWindow, mocker):
-        """手动 prepare 成功时，中栏底部文本框应显示成功摘要"""
+    def test_runtime_summary_prepare_ready_updates_status_summary(self, main_window: MainWindow, mocker):
+        """手动 prepare 成功时，内部状态摘要应记录成功摘要"""
         mocker.patch("gui_app.main_window.QMessageBox")
 
         main_window._on_runtime_summary({
@@ -125,7 +125,7 @@ class TestCalibStartFlow:
             "process_counts": {"carmaker": 2, "carmaker_gui": 1, "carmaker_runtime": 1, "gui_movie": 1, "gpusensor_movie": 1},
         })
 
-        summary_text = main_window.calibration_panel.failure_summary.toPlainText()
+        summary_text = "\n".join(main_window._status_summary_lines)
         assert "CM Prepare succeeded. Runtime is ready." in summary_text
         assert "Active sensors: cam1" in summary_text
 
@@ -156,8 +156,8 @@ class TestCalibStartFlow:
         main_window.calibration_service.start.assert_called_once()
         message_box.warning.assert_not_called()
 
-    def test_runtime_summary_prepare_passive_updates_feedback_box(self, main_window: MainWindow, mocker):
-        """prepare 未就绪时，中栏底部文本框应显示失败原因"""
+    def test_runtime_summary_prepare_passive_updates_status_summary(self, main_window: MainWindow, mocker):
+        """prepare 未就绪时，内部状态摘要应记录失败原因"""
         mocker.patch("gui_app.main_window.QMessageBox")
 
         main_window._on_runtime_summary({
@@ -169,7 +169,7 @@ class TestCalibStartFlow:
             "process_counts": {"carmaker": 3, "carmaker_gui": 1, "carmaker_runtime": 2, "gui_movie": 1, "gpusensor_movie": 1},
         })
 
-        summary_text = main_window.calibration_panel.failure_summary.toPlainText()
+        summary_text = "\n".join(main_window._status_summary_lines)
         assert "CM Prepare did not reach a ready state." in summary_text
         assert "expected exactly 1 CarMaker backend runtime, found 2" in summary_text
 
@@ -183,12 +183,13 @@ class TestCalibStartFlow:
         logged_messages = [call.args[0] for call in main_window.output_panel.append_log.call_args_list]
         assert any("CM Prepare started:" in message for message in logged_messages)
         assert any("CM Prepare steps:" in message for message in logged_messages)
-        summary_text = main_window.calibration_panel.failure_summary.toPlainText()
+        summary_text = "\n".join(main_window._status_summary_lines)
         assert "CM Prepare in progress..." in summary_text
         assert "Prepare steps:" in summary_text
+        assert main_window.calibration_panel.phase_label.text() == "CM Prepare in progress..."
 
-    def test_prepare_runtime_sets_summary_box_immediately(self, main_window: MainWindow):
-        """点击 CM Prepare 后，中栏摘要栏不应保持空白"""
+    def test_prepare_runtime_sets_status_summary_immediately(self, main_window: MainWindow):
+        """点击 CM Prepare 后，内部状态摘要不应保持空白"""
         from pathlib import Path
 
         main_window.calibration_panel.cm_version_combo.clear()
@@ -197,12 +198,13 @@ class TestCalibStartFlow:
 
         main_window._prepare_runtime()
 
-        summary_text = main_window.calibration_panel.failure_summary.toPlainText()
+        summary_text = "\n".join(main_window._status_summary_lines)
         assert "CM Prepare triggered" in summary_text
 
-    def test_generate_configs_failure_shows_failure_summary(self, main_window: MainWindow, mocker):
-        """Generate Configs 失败时，即使摘要框默认隐藏，也应重新显示错误摘要"""
+    def test_generate_configs_failure_records_status_summary(self, main_window: MainWindow, mocker):
+        """Generate Configs 失败时，应通过弹窗和日志暴露错误"""
         message_box = mocker.patch("gui_app.main_window.QMessageBox")
+        main_window.output_panel.append_log = MagicMock()
         main_window.precheck_service.generate_configs_for_cameras = MagicMock(side_effect=RuntimeError("boom"))
         main_window.calibration_panel.clear_failure_summary()
 
@@ -212,9 +214,10 @@ class TestCalibStartFlow:
 
         main_window._generate_configs()
 
-        assert main_window.calibration_panel.failure_summary.isHidden() is False
-        assert "boom" in main_window.calibration_panel.failure_summary.toPlainText()
         message_box.critical.assert_called_once()
+        assert "boom" in message_box.critical.call_args.args[2]
+        logged_messages = [call.args[0] for call in main_window.output_panel.append_log.call_args_list]
+        assert any("Generate configs failed: boom" in message for message in logged_messages)
 
     def test_runtime_line_prepare_logs_incremental_structured_steps(self, main_window: MainWindow):
         """prepare 期间 runtime stdout 应逐步补充结构化 Prepare 日志，同时保留原始行"""
@@ -666,7 +669,7 @@ class TestCalibStartFlow:
 
         assert main_window.state.status == AppStatus.RUNNING
         assert main_window.calibration_panel.status_label.text() == "running"
-        summary_text = main_window.calibration_panel.failure_summary.toPlainText()
+        summary_text = "\n".join(main_window._status_summary_lines)
         assert "keeping current Status=running" in summary_text
 
     def test_running_status_skips_periodic_health_probe(self, main_window: MainWindow):

@@ -22,40 +22,48 @@ class TestCalibrationPanel:
         assert panel.cm_version_combo.currentText() == "Select CM version"
         assert panel.cm_install_path is None
 
-    def test_phase_label_hidden_but_summary_stays_visible(self, qtbot):
+    def test_calibration_panel_does_not_force_large_minimum_width(self, qtbot):
+        panel = CalibrationPanel()
+        qtbot.addWidget(panel)
+
+        assert panel.minimumSizeHint().width() < 400
+
+    def test_phase_label_hidden_by_default(self, qtbot):
         panel = CalibrationPanel()
         qtbot.addWidget(panel)
         assert panel.phase_label.isHidden() is True
-        assert panel.failure_summary.isHidden() is True
 
-    def test_uses_runtime_first_top_to_bottom_flow_with_english_labels(self, qtbot):
+    def test_uses_campaign_and_controls_flow_without_runtime_status_group(self, qtbot):
         panel = CalibrationPanel()
         qtbot.addWidget(panel)
 
         assert panel.title() == "Calibration"
-        assert panel.failure_summary.placeholderText() == "Status, prepare results, and errors appear here."
         assert panel.strategy_group.title() == "Campaign Rounds"
-        assert panel.status_group.title() == "Runtime Status"
         assert panel.control_group.title() == "Run Controls"
+        assert not hasattr(panel, "status_group")
+        assert not hasattr(panel, "failure_summary")
         layout = panel.layout()
-        assert layout.itemAt(0).widget() is panel.status_group
-        assert layout.itemAt(1).widget() is panel.strategy_group
-        assert layout.itemAt(2).widget() is panel.control_group
+        assert layout.itemAt(0).widget() is panel.strategy_group
+        assert layout.itemAt(1).widget() is panel.control_group
         assert panel.start_button.isDefault() is True
 
-        status_layout = panel.status_group.layout()
-        assert isinstance(status_layout, QVBoxLayout)
-        status_row = status_layout.itemAt(0).layout()
-        assert isinstance(status_row, QHBoxLayout)
-        assert status_row.itemAt(0).widget().text() == "Status"
-        assert status_row.itemAt(1).widget() is panel.status_label
-        phase_row = status_layout.itemAt(1).widget()
-        assert isinstance(phase_row, QLabel)
-        assert phase_row is panel.phase_label
-        estimate_row = status_layout.itemAt(2).layout()
+        strategy_layout = panel.strategy_group.layout()
+        assert isinstance(strategy_layout, QVBoxLayout)
+        estimate_row = strategy_layout.itemAt(strategy_layout.count() - 1).layout()
         assert isinstance(estimate_row, QHBoxLayout)
         assert estimate_row.itemAt(0).widget().text() == "Estimated Time"
         assert estimate_row.itemAt(1).widget() is panel.estimate_label
+
+        control_layout = panel.control_group.layout()
+        assert isinstance(control_layout, QVBoxLayout)
+        status_row = control_layout.itemAt(0).layout()
+        assert isinstance(status_row, QHBoxLayout)
+        assert status_row.itemAt(0).widget().text() == "Status"
+        assert status_row.itemAt(1).widget() is panel.status_label
+        phase_row = control_layout.itemAt(1).widget()
+        assert isinstance(phase_row, QLabel)
+        assert phase_row is panel.phase_label
+        assert control_layout.itemAt(2).widget() is panel.status_query_button
 
     def test_outer_title_is_stronger_than_inner_sections(self, qtbot):
         panel = CalibrationPanel()
@@ -197,16 +205,3 @@ class TestSensorProgressPanel:
         assert progress_bar.value() == 42
         assert "iter=12" in item.text(3)
         assert panel.current_sensor_label.text() == "Current Sensor: cam1"
-
-    def test_failure_summary_shows_only_when_needed(self, qtbot):
-        panel = CalibrationPanel()
-        qtbot.addWidget(panel)
-
-        assert panel.failure_summary.isHidden() is True
-
-        panel.set_failure_summary("Runtime issue")
-        assert panel.failure_summary.isHidden() is False
-        assert panel.failure_summary.toPlainText() == "Runtime issue"
-
-        panel.clear_failure_summary()
-        assert panel.failure_summary.isHidden() is True

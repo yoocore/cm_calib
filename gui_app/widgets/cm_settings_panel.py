@@ -75,7 +75,6 @@ class CmSettingsPanel(QGroupBox):
     def __init__(self, parent: QWidget | None = None):
         super().__init__("CM Settings", parent)
         self.setStyleSheet(_PANEL_STYLE)
-        self.setMinimumWidth(560)
 
         self.project_root_edit = QLineEdit()
         self.project_root_edit.setPlaceholderText("e.g. C:/CM_Projects/CMO141_Calibration")

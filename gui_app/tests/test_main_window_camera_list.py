@@ -49,7 +49,8 @@ class TestMainWindowCameraList:
         assert inner_splitter.count() == 2
         assert window.cm_settings_panel.parentWidget() is inner_splitter
         assert window.calibration_panel.parentWidget() is inner_splitter
-        assert inner_splitter.sizes()[0] >= inner_splitter.sizes()[1] + 100
+        assert inner_splitter.sizes()[0] > inner_splitter.sizes()[1]
+        assert outer_splitter.sizes()[1] >= inner_splitter.sizes()[0] + 150
         assert not hasattr(window.cm_settings_panel, "sensor_list")
 
     def test_camera_list_stays_empty_without_testrun(self, qtbot, tmp_path):

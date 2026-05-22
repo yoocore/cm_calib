@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QDoubleSpinBox,
     QTabWidget,
-    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -47,16 +46,6 @@ _PANEL_STYLE = (
     "subcontrol-origin: margin;"
     "left: 12px;"
     "padding: 0 6px;"
-    "color: #0f172a;"
-    "}"
-)
-
-_SUMMARY_STYLE = (
-    "QTextEdit {"
-    "background-color: #f8fafc;"
-    "border: 1px solid #cbd5e1;"
-    "border-radius: 8px;"
-    "padding: 8px;"
     "color: #0f172a;"
     "}"
 )
@@ -242,15 +231,6 @@ class CalibrationPanel(QGroupBox):
         self.phase_label.setWordWrap(True)
         self.phase_label.hide()
 
-        self.failure_summary = QTextEdit()
-        self.failure_summary.setReadOnly(True)
-        self.failure_summary.setPlaceholderText(
-            "Status, prepare results, and errors appear here."
-        )
-        self.failure_summary.setMinimumHeight(88)
-        self.failure_summary.setStyleSheet(_SUMMARY_STYLE)
-        self.failure_summary.hide()
-
         self.prepare_button = QPushButton("CM Prepare")
         self.prepare_button.clicked.connect(self.prepare_clicked.emit)
         self.prepare_button.setStyleSheet(_SECONDARY_BUTTON_STYLE)
@@ -343,28 +323,20 @@ class CalibrationPanel(QGroupBox):
         jitter_row.addWidget(self.jitter_spin, 1)
         rounds_inner.addLayout(jitter_row)
 
-        self.status_group = _SectionGroup("Runtime Status")
-        status_layout = QVBoxLayout(self.status_group)
-        status_layout.setContentsMargins(10, 6, 10, 10)
-        status_layout.setSpacing(10)
-
-        status_row = QHBoxLayout()
-        status_row.addWidget(QLabel("Status"))
-        status_row.addWidget(self.status_label)
-        status_row.addStretch(1)
-        status_layout.addLayout(status_row)
-        status_layout.addWidget(self.phase_label)
-
         estimate_row = QHBoxLayout()
         estimate_row.addWidget(QLabel("Estimated Time"))
         estimate_row.addWidget(self.estimate_label, 1)
-        status_layout.addLayout(estimate_row)
-        status_layout.addWidget(self.failure_summary)
+        rounds_inner.addLayout(estimate_row)
 
         self.control_group = _SectionGroup("Run Controls")
         control_layout = QVBoxLayout(self.control_group)
         control_layout.setContentsMargins(10, 6, 10, 10)
         control_layout.setSpacing(10)
+
+        status_row = QHBoxLayout()
+        status_row.addWidget(QLabel("Status"))
+        status_row.addWidget(self.status_label)
+        status_row.addStretch(1)
 
         cm_row = QWidget(self.control_group)
         cm_layout = QHBoxLayout(cm_row)
@@ -381,10 +353,11 @@ class CalibrationPanel(QGroupBox):
 
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
-        layout.addWidget(self.status_group)
         layout.addWidget(self.strategy_group)
-        control_layout.addWidget(cm_row)
+        control_layout.addLayout(status_row)
+        control_layout.addWidget(self.phase_label)
         control_layout.addWidget(self.status_query_button)
+        control_layout.addWidget(cm_row)
         control_layout.addWidget(button_row)
         layout.addWidget(self.control_group)
 
@@ -480,13 +453,10 @@ class CalibrationPanel(QGroupBox):
         self.phase_label.setVisible(bool(phase_text))
 
     def set_failure_summary(self, text: str | None) -> None:
-        summary_text = (text or "").strip()
-        self.failure_summary.setPlainText(summary_text)
-        self.failure_summary.setVisible(bool(summary_text))
+        _ = text
 
     def clear_failure_summary(self) -> None:
-        self.failure_summary.clear()
-        self.failure_summary.hide()
+        return
 
     def set_inputs_locked(self, locked: bool) -> None:
         self.campaign_rounds_spin.setEnabled(not locked)
@@ -499,6 +469,14 @@ class CalibrationPanel(QGroupBox):
         self.strategy_tabs.setEnabled(not locked)
         self.prepare_button.setEnabled(not locked)
         self.cm_version_combo.setEnabled(not locked)
+
+    def sizeHint(self) -> QSize:
+        hint = super().sizeHint()
+        return QSize(min(hint.width(), 360), hint.height())
+
+    def minimumSizeHint(self) -> QSize:
+        hint = super().minimumSizeHint()
+        return QSize(min(hint.width(), 360), hint.height())
 
     @staticmethod
     def _format_duration(total_seconds: int) -> str:

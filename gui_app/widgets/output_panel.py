@@ -282,6 +282,25 @@ class OutputPanel(QGroupBox):
             "border: 1px solid #334155;"
             "font-family: Consolas, 'Courier New', monospace;"
             "}"
+            "QScrollBar:vertical {"
+            "background: #0b1220;"
+            "width: 10px;"
+            "margin: 0;"
+            "}"
+            "QScrollBar::handle:vertical {"
+            "background: #475569;"
+            "min-height: 20px;"
+            "border-radius: 5px;"
+            "}"
+            "QScrollBar::handle:vertical:hover {"
+            "background: #64748b;"
+            "}"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {"
+            "height: 0px;"
+            "}"
+            "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {"
+            "background: none;"
+            "}"
         )
 
         self.result_tree = QTreeWidget(self)
@@ -301,6 +320,27 @@ class OutputPanel(QGroupBox):
         self.results_scroll = QScrollArea(self)
         self.results_scroll.setWidgetResizable(True)
         self.results_scroll.setWidget(self.results_container)
+        self.results_scroll.setStyleSheet(
+            "QScrollBar:vertical {"
+            "background: #0f172a;"
+            "width: 10px;"
+            "margin: 0;"
+            "}"
+            "QScrollBar::handle:vertical {"
+            "background: #475569;"
+            "min-height: 20px;"
+            "border-radius: 5px;"
+            "}"
+            "QScrollBar::handle:vertical:hover {"
+            "background: #64748b;"
+            "}"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {"
+            "height: 0px;"
+            "}"
+            "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {"
+            "background: none;"
+            "}"
+        )
 
         top_row = QWidget(self)
         top_layout = QHBoxLayout(top_row)

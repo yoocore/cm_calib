@@ -455,3 +455,58 @@ class TestBuildResultPayload:
         assert result["best_image"] == str(historical_img)
         assert result["best_score_image"] == str(historical_img.with_name("historical_score.png"))
         assert result["best_overlay_image"] == str(historical_img.with_name("historical_overlay.png"))
+
+    def test_write_progress_result_uses_historical_snapshot_for_in_progress_artifacts(self, tmp_path):
+        cfg = _make_minimal_cfg(tmp_path)
+        with patch.object(CameraCalibrator, "_materialize_custom_maker_templates"):
+            with patch.object(CameraCalibrator, "_load_custom_templates", return_value={}):
+                calib = CameraCalibrator(cfg)
+
+        historical_values = {"pos_x": 0.0}
+        current_values = {"pos_x": 1.0}
+        historical_detail = _make_total_detail(59.0, board_id="historical_board")
+        current_detail = _make_total_detail(69.0, board_id="current_board")
+        historical_img = tmp_path / "historical.png"
+        current_img = tmp_path / "current.png"
+        calib._historical_best_score = 59.0
+        calib._historical_best_snapshot = {
+            "score": 59.0,
+            "values": historical_values.copy(),
+            "total_detail": historical_detail,
+            "img_path": historical_img,
+        }
+
+        score_calls = []
+        overlay_calls = []
+
+        def _fake_score_image(img_path, total_detail, values=None):
+            score_calls.append((img_path, total_detail, values.copy() if values else None))
+            return img_path.with_name(f"{img_path.stem}_score.png")
+
+        def _fake_overlay_image(img_path):
+            overlay_calls.append(img_path)
+            return img_path.with_name(f"{img_path.stem}_overlay.png")
+
+        with patch.object(calib, "_ensure_best_score_image", side_effect=_fake_score_image):
+            with patch.object(calib, "_ensure_best_overlay_image", side_effect=_fake_overlay_image):
+                with patch.object(calib, "_acceptance_payload", return_value={"passed": True, "mode": "test"}):
+                    with patch.object(calib, "_build_calibration_summary", return_value={}):
+                        calib._write_progress_result(
+                            best_score=69.0,
+                            best_values=current_values,
+                            best_total_detail=current_detail,
+                            best_img=current_img,
+                            stop_reason="running",
+                            history=[{"iter": 0}],
+                            in_progress=True,
+                        )
+
+        result = json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
+        assert score_calls == [(historical_img, historical_detail, historical_values)]
+        assert overlay_calls == [historical_img]
+        assert result["in_progress"] is True
+        assert result["best_score"] == 59.0
+        assert result["best_values"] == historical_values
+        assert result["best_image"] == str(historical_img)
+        assert result["best_score_image"] == str(historical_img.with_name("historical_score.png"))
+        assert result["best_overlay_image"] == str(historical_img.with_name("historical_overlay.png"))

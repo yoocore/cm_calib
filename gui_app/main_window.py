@@ -40,6 +40,7 @@ class MainWindow(QMainWindow):
         self._camera_elapsed_final: dict[str, float] = {}
         self._camera_progress_status: dict[str, str] = {}
         self._camera_progress_detail: dict[str, str] = {}
+        self._camera_task_best_progress: dict[str, dict[str, object]] = {}
         self.state = ApplicationState()
         self.config_service = ConfigService(self.project_root)
         self.precheck_service = PrecheckService(self.project_root)
@@ -204,6 +205,7 @@ class MainWindow(QMainWindow):
         self._camera_elapsed_final = {}
         self._camera_progress_status = {camera_name: "pending" for camera_name in cameras}
         self._camera_progress_detail = {}
+        self._camera_task_best_progress = {}
         self._rebuild_sensor_progress_plan()
         self._refresh_calibration_progress()
 
@@ -814,12 +816,14 @@ class MainWindow(QMainWindow):
         elif event_name == "camera_run_started":
             camera_name = str(payload.get("camera") or "")
             self._set_camera_progress_state(camera_name, "running")
+            self._camera_task_best_progress.pop(camera_name, None)
             self._append_status_summary_line(f"{camera_name}: 标定开始。")
             self.output_panel.update_camera_result(CameraResult(camera=camera_name, status="running"))
         elif event_name == "camera_run_progress":
             camera_name = str(payload.get("camera") or "")
             progress = payload.get("progress") if isinstance(payload.get("progress"), dict) else {}
-            best_score = self._as_float(progress.get("best_score"))
+            global_best = self._merge_camera_task_best_progress(camera_name, progress)
+            best_score = self._as_float(global_best.get("best_score"))
             iter_index = self._as_int(progress.get("current_iter_index"))
             progress_detail = None
             if iter_index is not None:
@@ -839,14 +843,14 @@ class MainWindow(QMainWindow):
                     camera=camera_name,
                     status="running",
                     live_log=self._as_text(progress.get("live_log")),
-                    best_score=self._as_float(progress.get("best_score")),
+                    best_score=best_score,
                     current_iter_score=self._as_float(progress.get("current_iter_score")),
                     current_iter_index=self._as_int(progress.get("current_iter_index")),
                     current_iter_image=self._as_text(progress.get("current_iter_image")),
                     result_json=self._as_text(progress.get("result_json")),
-                    best_image=self._as_text(progress.get("best_image")),
-                    best_score_image=self._as_text(progress.get("best_score_image")),
-                    best_overlay_image=self._as_text(progress.get("best_overlay_image")),
+                    best_image=self._as_text(global_best.get("best_image")),
+                    best_score_image=self._as_text(global_best.get("best_score_image")),
+                    best_overlay_image=self._as_text(global_best.get("best_overlay_image")),
                 )
             )
         elif event_name == "camera_run_finished":
@@ -927,6 +931,30 @@ class MainWindow(QMainWindow):
             return None
         text = str(value).strip()
         return text or None
+
+    def _merge_camera_task_best_progress(self, camera_name: str, progress: dict) -> dict[str, object]:
+        merged = dict(progress)
+        current_score = self._as_float(progress.get("best_score"))
+        previous = self._camera_task_best_progress.get(camera_name)
+        previous_score = self._as_float(previous.get("best_score")) if previous else None
+        use_current = previous is None
+        if not use_current and current_score is not None:
+            if previous_score is None or current_score < previous_score:
+                use_current = True
+            elif previous_score is not None and abs(current_score - previous_score) <= 1e-12:
+                use_current = False
+        if use_current:
+            selected = dict(progress)
+        else:
+            selected = dict(previous or {})
+            for key in ("best_score_image", "best_overlay_image", "best_image", "result_json", "live_log"):
+                if not self._as_text(selected.get(key)) and self._as_text(progress.get(key)):
+                    selected[key] = progress.get(key)
+        if current_score is not None and self._as_float(selected.get("best_score")) is None:
+            selected["best_score"] = current_score
+        self._camera_task_best_progress[camera_name] = selected
+        merged.update(selected)
+        return merged
 
     @Slot(str)
     def _on_runtime_line(self, line: str) -> None:

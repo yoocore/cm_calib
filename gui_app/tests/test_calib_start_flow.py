@@ -5,6 +5,12 @@ from unittest.mock import PropertyMock
 
 from gui_app.main_window import MainWindow
 from gui_app.models.state import AppStatus, CalibrationLaunchConfig
+from gui_app.widgets.output_panel import (
+    BEST_IMAGE_ROLE,
+    BEST_OVERLAY_IMAGE_ROLE,
+    BEST_SCORE_IMAGE_ROLE,
+    CURRENT_ITER_IMAGE_ROLE,
+)
 
 
 class TestCalibStartFlow:
@@ -313,6 +319,116 @@ class TestCalibStartFlow:
         progress_bar = main_window.sensor_progress_panel.sensor_progress_tree.itemWidget(item, 2)
         assert item.text(1) == "running"
         assert progress_bar.value() >= 0
+
+    def test_camera_run_progress_keeps_task_level_global_best(self, main_window: MainWindow, mocker):
+        """运行中多次 progress 时，best 相关展示应保持整次任务全局最优"""
+        mocker.patch("gui_app.main_window.QMessageBox")
+        from pathlib import Path
+
+        main_window.calibration_panel.cm_version_combo.clear()
+        main_window.calibration_panel.cm_version_combo.addItem("test", Path("D:/cm/win64-test"))
+        main_window._build_launch_config()
+        main_window._on_process_started()
+        main_window._on_orchestration_event({"event": "task_started", "output_dir": str(main_window.project_root / "out")})
+        main_window._on_orchestration_event({"event": "camera_run_started", "camera": "cam1"})
+
+        main_window._on_orchestration_event(
+            {
+                "event": "camera_run_progress",
+                "camera": "cam1",
+                "progress": {
+                    "best_score": 59.0,
+                    "best_image": r"C:\best_a.png",
+                    "best_score_image": r"C:\best_a_score.png",
+                    "best_overlay_image": r"C:\best_a_overlay.png",
+                    "current_iter_score": 59.0,
+                    "current_iter_index": 1,
+                    "current_iter_image": r"C:\iter_1.png",
+                },
+            }
+        )
+        main_window._on_orchestration_event(
+            {
+                "event": "camera_run_progress",
+                "camera": "cam1",
+                "progress": {
+                    "best_score": 69.0,
+                    "best_image": r"C:\best_b.png",
+                    "best_score_image": r"C:\best_b_score.png",
+                    "best_overlay_image": r"C:\best_b_overlay.png",
+                    "current_iter_score": 69.0,
+                    "current_iter_index": 7,
+                    "current_iter_image": r"C:\iter_7.png",
+                },
+            }
+        )
+
+        item = main_window.output_panel.result_tree.topLevelItem(0)
+        assert item is not None
+        assert item.text(0) == "cam1"
+        assert item.text(2) == "59.000000"
+        assert item.data(0, BEST_IMAGE_ROLE) == r"C:\best_a.png"
+        assert item.data(0, BEST_SCORE_IMAGE_ROLE) == r"C:\best_a_score.png"
+        assert item.data(0, BEST_OVERLAY_IMAGE_ROLE) == r"C:\best_a_overlay.png"
+        assert item.data(0, CURRENT_ITER_IMAGE_ROLE) == r"C:\iter_7.png"
+        assert item.text(3) == "69.000000"
+
+        card = main_window.output_panel._result_cards["cam1"]
+        assert card.best_score_value.text() == "59.000000"
+        assert card.score_preview._artifact_path == r"C:\best_a_score.png"
+        assert card.overlay_preview._artifact_path == r"C:\best_a_overlay.png"
+        assert card.open_best_button.isEnabled() is True
+
+    def test_camera_run_progress_merges_equal_score_artifacts(self, main_window: MainWindow, mocker):
+        """同分 progress 应允许补齐先前缺失的 best artifact"""
+        mocker.patch("gui_app.main_window.QMessageBox")
+        from pathlib import Path
+
+        main_window.calibration_panel.cm_version_combo.clear()
+        main_window.calibration_panel.cm_version_combo.addItem("test", Path("D:/cm/win64-test"))
+        main_window._build_launch_config()
+        main_window._on_process_started()
+        main_window._on_orchestration_event({"event": "task_started", "output_dir": str(main_window.project_root / "out")})
+        main_window._on_orchestration_event({"event": "camera_run_started", "camera": "cam1"})
+
+        main_window._on_orchestration_event(
+            {
+                "event": "camera_run_progress",
+                "camera": "cam1",
+                "progress": {
+                    "best_score": 59.0,
+                    "best_image": r"C:\best_a.png",
+                    "best_overlay_image": r"C:\best_a_overlay.png",
+                    "current_iter_score": 59.0,
+                    "current_iter_index": 1,
+                    "current_iter_image": r"C:\iter_1.png",
+                },
+            }
+        )
+        main_window._on_orchestration_event(
+            {
+                "event": "camera_run_progress",
+                "camera": "cam1",
+                "progress": {
+                    "best_score": 59.0,
+                    "best_image": r"C:\best_a.png",
+                    "best_score_image": r"C:\best_a_score.png",
+                    "best_overlay_image": r"C:\best_a_overlay.png",
+                    "current_iter_score": 58.5,
+                    "current_iter_index": 2,
+                    "current_iter_image": r"C:\iter_2.png",
+                },
+            }
+        )
+
+        item = main_window.output_panel.result_tree.topLevelItem(0)
+        assert item is not None
+        assert item.text(2) == "59.000000"
+        assert item.data(0, BEST_SCORE_IMAGE_ROLE) == r"C:\best_a_score.png"
+
+        card = main_window.output_panel._result_cards["cam1"]
+        assert card.score_preview._artifact_path == r"C:\best_a_score.png"
+        assert card.overlay_preview._artifact_path == r"C:\best_a_overlay.png"
 
     def test_stop_calibration_during_preparing(self, main_window: MainWindow):
         """在 PREPARING 阶段点击 Stop 应停止 runtime_service"""

@@ -10058,13 +10058,11 @@ class CameraCalibrator:
             best_total_detail=best_total_detail,
             best_img=best_img,
         )
-        best_score_image = None
-        if not in_progress:
-            best_score_image = self._ensure_best_score_image(
-                best_img,
-                best_total_detail,
-                values=best_values,
-            )
+        best_score_image = self._ensure_best_score_image(
+            best_img,
+            best_total_detail,
+            values=best_values,
+        )
         best_overlay_image = self._ensure_best_overlay_image(best_img)
         result = self._build_result_payload(
             best_score=best_score,

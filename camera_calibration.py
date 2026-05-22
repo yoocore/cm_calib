@@ -10026,6 +10026,7 @@ class CameraCalibrator:
                     "output_dir": result.get("output_dir"),
                     "result_json": str(self.output_dir / "result.json"),
                     "in_progress": bool(result.get("in_progress", False)),
+                    "live_log": str(self.live_log_path) if self.live_log_path else None,
                     "best_score": result.get("best_score"),
                     "best_image": result.get("best_image"),
                     "best_score_image": result.get("best_score_image"),

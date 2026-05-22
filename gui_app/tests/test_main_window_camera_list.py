@@ -35,6 +35,8 @@ class TestMainWindowCameraList:
 
         window = MainWindow(project_root)
         qtbot.addWidget(window)
+        window.show()
+        qtbot.waitExposed(window)
 
         from PySide6.QtWidgets import QSplitter
         central_container = window.centralWidget()
@@ -47,6 +49,7 @@ class TestMainWindowCameraList:
         assert inner_splitter.count() == 2
         assert window.cm_settings_panel.parentWidget() is inner_splitter
         assert window.calibration_panel.parentWidget() is inner_splitter
+        assert inner_splitter.sizes()[0] > inner_splitter.sizes()[1]
         assert not hasattr(window.cm_settings_panel, "sensor_list")
 
     def test_camera_list_stays_empty_without_testrun(self, qtbot, tmp_path):

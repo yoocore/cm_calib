@@ -34,6 +34,23 @@ _SECTION_GROUP_STYLE = (
     "}"
 )
 
+_PANEL_STYLE = (
+    "QGroupBox {"
+    "border: 1px solid #cbd5e1;"
+    "border-radius: 12px;"
+    "margin-top: 12px;"
+    "padding: 14px;"
+    "background-color: #ffffff;"
+    "font-weight: 700;"
+    "}"
+    "QGroupBox::title {"
+    "subcontrol-origin: margin;"
+    "left: 12px;"
+    "padding: 0 6px;"
+    "color: #0f172a;"
+    "}"
+)
+
 _SUMMARY_STYLE = (
     "QTextEdit {"
     "background-color: #f8fafc;"
@@ -178,6 +195,7 @@ class CalibrationPanel(QGroupBox):
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__("Calibration", parent)
+        self.setStyleSheet(_PANEL_STYLE)
 
         self.campaign_rounds_spin = QSpinBox()
         self.campaign_rounds_spin.setRange(1, 999)

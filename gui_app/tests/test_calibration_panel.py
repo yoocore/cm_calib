@@ -42,6 +42,16 @@ class TestCalibrationPanel:
         assert layout.itemAt(2).widget() is panel.control_group
         assert panel.start_button.isDefault() is True
 
+    def test_outer_title_is_stronger_than_inner_sections(self, qtbot):
+        panel = CalibrationPanel()
+        qtbot.addWidget(panel)
+
+        panel_style = panel.styleSheet()
+        section_style = panel.strategy_group.styleSheet()
+
+        assert "font-weight: 700" in panel_style
+        assert "font-weight: 600" in section_style
+
     def test_status_badge_default_idle(self, qtbot):
         panel = CalibrationPanel()
         qtbot.addWidget(panel)
@@ -82,6 +92,13 @@ class TestCmSettingsPanel:
         assert panel.camera_group.title() == "Camera Selection"
         assert panel.results_group.title() == "Check Results"
 
+    def test_outer_title_is_stronger_than_inner_sections(self, qtbot):
+        panel = CmSettingsPanel()
+        qtbot.addWidget(panel)
+
+        assert "font-weight: 700" in panel.styleSheet()
+        assert "font-weight: 600" in panel.project_group.styleSheet()
+
     def test_update_precheck_results_shows_checkmarks(self, qtbot):
         panel = CmSettingsPanel()
         qtbot.addWidget(panel)
@@ -115,13 +132,20 @@ class TestCmSettingsPanel:
 
 
 class TestSensorProgressPanel:
-    def test_uses_english_progress_sections(self, qtbot):
+    def test_uses_single_progress_box_with_english_title(self, qtbot):
         panel = SensorProgressPanel()
         qtbot.addWidget(panel)
 
         assert panel.title() == "Sensor Progress"
-        assert panel.summary_group.title() == "Overall Progress"
-        assert panel.detail_group.title() == "Sensor Details"
+        layout = panel.layout()
+        assert layout.count() == 4
+        assert layout.itemAt(0).widget() is panel.current_sensor_label
+        assert layout.itemAt(1).widget() is panel.overall_progress_bar
+        assert layout.itemAt(2).widget() is panel.overall_progress_detail_label
+        assert layout.itemAt(3).widget() is panel.sensor_progress_tree
+        assert not hasattr(panel, "summary_group")
+        assert not hasattr(panel, "detail_group")
+        assert "font-weight: 700" in panel.styleSheet()
 
     def test_sensor_progress_plan_and_runtime_update(self, qtbot):
         panel = SensorProgressPanel()

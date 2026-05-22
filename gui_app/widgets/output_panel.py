@@ -45,6 +45,23 @@ _LOG_SOURCE_COLORS = {
     "system": "#b0bec5",
 }
 
+_PANEL_STYLE = (
+    "QGroupBox {"
+    "border: 1px solid #cbd5e1;"
+    "border-radius: 12px;"
+    "margin-top: 12px;"
+    "padding: 14px;"
+    "background-color: #ffffff;"
+    "font-weight: 700;"
+    "}"
+    "QGroupBox::title {"
+    "subcontrol-origin: margin;"
+    "left: 12px;"
+    "padding: 0 6px;"
+    "color: #0f172a;"
+    "}"
+)
+
 
 def _format_score(value: float | None) -> str:
     return "-" if value is None else f"{value:.6f}"
@@ -300,6 +317,7 @@ class CameraResultCard(QGroupBox):
 class OutputPanel(QGroupBox):
     def __init__(self, parent: QWidget | None = None):
         super().__init__("Output", parent)
+        self.setStyleSheet(_PANEL_STYLE)
         self.output_dir_label = QLabel("-")
         self.open_output_button = QPushButton("Open Output")
         self.open_output_button.setEnabled(False)

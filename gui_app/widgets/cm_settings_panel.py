@@ -41,6 +41,23 @@ _SECTION_GROUP_STYLE = (
     "}"
 )
 
+_PANEL_STYLE = (
+    "QGroupBox {"
+    "border: 1px solid #cbd5e1;"
+    "border-radius: 12px;"
+    "margin-top: 12px;"
+    "padding: 14px;"
+    "background-color: #ffffff;"
+    "font-weight: 700;"
+    "}"
+    "QGroupBox::title {"
+    "subcontrol-origin: margin;"
+    "left: 12px;"
+    "padding: 0 6px;"
+    "color: #0f172a;"
+    "}"
+)
+
 
 class _SectionGroup(QGroupBox):
     def __init__(self, title: str, parent: QWidget | None = None):
@@ -57,6 +74,7 @@ class CmSettingsPanel(QGroupBox):
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__("CM Settings", parent)
+        self.setStyleSheet(_PANEL_STYLE)
 
         self.project_root_edit = QLineEdit()
         self.project_root_edit.setPlaceholderText("e.g. C:/CM_Projects/CMO141_Calibration")

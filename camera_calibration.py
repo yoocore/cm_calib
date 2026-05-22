@@ -9999,14 +9999,16 @@ class CameraCalibrator:
         history: List[dict],
         in_progress: bool,
     ) -> None:
-        best_score_image = self._ensure_best_score_image(
-            best_img,
-            best_total_detail,
-            values=best_values,
-        )
-        best_overlay_image = None if in_progress else self._ensure_best_overlay_image(best_img)
+        best_score_image = None
+        if not in_progress:
+            best_score_image = self._ensure_best_score_image(
+                best_img,
+                best_total_detail,
+                values=best_values,
+            )
+        best_overlay_image = self._ensure_best_overlay_image(best_img)
         result = self._build_result_payload(
-            best_score=best_score,
+            best_score=getattr(self, '_historical_best_score', best_score),
             best_values=best_values,
             best_total_detail=best_total_detail,
             best_img=best_img,
@@ -10631,6 +10633,7 @@ class CameraCalibrator:
         best_total_detail, best_img = self.evaluate("initial", baseline_metrics=None)
         self._raise_if_initial_board_failures(best_total_detail)
         best_score = best_total_detail.total_score
+        self._historical_best_score = best_score
         best_baseline = self._as_baseline_metrics(best_total_detail)
         best_values = {p.name: p.value for p in self.params}
         stop_reason = "max_iters_reached"
@@ -10905,6 +10908,7 @@ class CameraCalibrator:
 
                 if accepted_params_in_pass:
                     best_score = joint_score
+                    self._historical_best_score = min(self._historical_best_score, joint_score)
                     best_total_detail = joint_total_detail
                     best_baseline = joint_baseline
                     best_img = joint_img
@@ -10941,6 +10945,7 @@ class CameraCalibrator:
                     f"Failed to apply fallback values for {fallback_name}",
                 )
                 best_score = float(fallback_move["score"])
+                self._historical_best_score = min(self._historical_best_score, float(fallback_move["score"]))
                 best_total_detail = fallback_move["total_detail"]  # type: ignore[assignment]
                 best_baseline = fallback_move["baseline"]  # type: ignore[assignment]
                 best_img = fallback_move["img_path"]  # type: ignore[assignment]
@@ -10984,7 +10989,7 @@ class CameraCalibrator:
                 break
 
         result = self._build_result_payload(
-            best_score=best_score,
+            best_score=self._historical_best_score,
             best_values=best_values,
             best_total_detail=best_total_detail,
             best_img=best_img,

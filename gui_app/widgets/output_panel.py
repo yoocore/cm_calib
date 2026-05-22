@@ -186,7 +186,7 @@ class CameraResultCard(QGroupBox):
         info_layout = QGridLayout()
         info_layout.addWidget(QLabel("Status"), 0, 0)
         info_layout.addWidget(self.status_value, 0, 1)
-        info_layout.addWidget(QLabel("Best Score"), 1, 0)
+        info_layout.addWidget(QLabel("Running Best"), 1, 0)
         info_layout.addWidget(self.best_score_value, 1, 1)
         info_layout.addWidget(QLabel("Current Iter"), 2, 0)
         info_layout.addWidget(self.current_iter_value, 2, 1)
@@ -244,14 +244,12 @@ class CameraResultCard(QGroupBox):
             self.score_preview.set_artifact(result.best_image)
         if result.best_overlay_image is not None:
             self.overlay_preview.set_artifact(result.best_overlay_image)
-        elif result.best_image is not None:
-            self.overlay_preview.set_artifact(result.best_image)
         self.open_log_button.setEnabled(bool(result.live_log))
         self.open_result_button.setEnabled(bool(result.result_json))
         self.open_current_button.setEnabled(bool(result.current_iter_image or result.best_image))
         self.open_best_button.setEnabled(bool(result.best_image))
         self.open_score_button.setEnabled(bool(result.best_score_image or result.best_image))
-        self.open_overlay_button.setEnabled(bool(result.best_overlay_image or result.best_image))
+        self.open_overlay_button.setEnabled(bool(result.best_overlay_image))
 
     def mousePressEvent(self, event) -> None:
         self.selected.emit(self.camera_name)

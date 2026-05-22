@@ -61,68 +61,19 @@
 
 所以这一阶段本质上是验证闭环，不是最终工程形态。
 
-### 3.1 参数写入控制面的三次迭代
+### 3.1 参数写入控制面的三代迭代
 
-这轮开发里，真正探索时间最长的一段，其实不是优化器，而是“到底怎么把参数稳定写进 IPG-MOVIE”。
+这轮开发里，真正探索时间最长的一段，其实不是优化器，而是"到底怎么把参数稳定写进 IPG-MOVIE"。
 
-回头看，这条链路一共经历了三代。
+回头看，这条链路一共经历了三代：
 
-#### 第一代：桌面光标点击
+1. **第一代：桌面光标点击** — 保存 `click_x`/`click_y` 坐标，换算成屏幕绝对坐标后鼠标点击、粘贴、回车。实现门槛最低，但对窗口位置/缩放/焦点极端敏感，且持续占用鼠标和前台焦点，机器变成"标定专机"。
+2. **第二代：窗口控件定位** — 用 pywinauto 枚举 Edit 控件，通过 `field_index`/`auto_id`/`title` 定位。比第一代进步，但仍是在"从外面操作 UI"，`field_index` 依赖控件顺序属于脆弱定位，焦点占用问题仍未解决。
+3. **第三代：Script Control DDE** — 发现 IPG-MOVIE 暴露 Tk widget 树，参数对应 `.camera.presetFrame.evptx` 等具体 widget 路径，写参动作为 Tcl 的 `delete`/`insert`/`invoke`。最终切到 DDE 通道，命令直接送入执行，彻底解决焦点占用。
 
-最早的做法，是把 Settings 窗口当作普通桌面界面处理。
+**经验教训**：桌面自动化只能用于验证方向；能走到应用内部接口就不要再停留在桌面事件层；焦点占用是隐形成本，会把机器变成"标定专机"。
 
-参数配置里直接保存 click_x、click_y 这类相对坐标，脚本运行时把它们换算成屏幕绝对坐标，再移动鼠标、点击、粘贴、回车。连 Script Control 最早也不是直接调 DDE，而是先尝试点击它的控制台输入区域，再把命令贴进去执行。
-
-这一代方法的优点只有一个：
-
-实现门槛最低，能最快把第一条闭环拉起来。
-
-但它的问题也最集中：
-
-1. 对窗口尺寸、位置、缩放、焦点极端敏感。
-2. 鼠标一旦被用户碰到，或者窗口被遮挡、移动，脚本就可能写错位置。
-3. 即使在同一台机器上，控件布局轻微变化也会导致 click_x、click_y 失效。
-
-这一代最大的工程代价，其实不只是“容易失败”，而是它会持续占用鼠标、光标和前台焦点。
-
-这意味着电脑在标定过程中几乎只能专心跑标定，稍微做一点别的办公操作，都可能打断写参链路。换句话说，当时这台机器虽然能自动跑一些步骤，但本质上还是“标定专机”，不适合和正常办公共存。
-
-换句话说，这一代控制面是“靠桌面事件碰运气”，只能用来快速证实方向，不适合变成长期主链。
-
-#### 第二代：从桌面点，收敛到窗口控件
-
-在纯坐标点击太脆之后，下一步不是立刻跳到 DDE，而是先把控制精度从“屏幕像素”提升到“窗口控件”。
-
-这一阶段的核心思路是：
-
-1. 先用 pywinauto 枚举 Camera Settings 里的 Edit 控件。
-2. 通过 field_index、auto_id、title 等 locator 去找目标输入框。
-3. 如果自动定位失败，再退回 click_x、click_y 作为兜底。
-
-这一代比第一代前进了一大步，因为它开始利用窗口内部结构，而不再完全依赖桌面坐标。这段历史痕迹在早期配置和原型代码里都很明显，例如曾经长期保留过 field_index、click_x、click_y 这类字段，后来随着主链完全切到 Script Control 才被清理掉。
-
-但这条路也没有彻底解决问题，因为它仍然有几个先天限制：
-
-1. field_index 依赖控件顺序，属于脆弱定位方式。
-2. 不同 backend 下能拿到的控件信息并不一致，自动定位经常需要 fallback。
-3. 本质上它仍然是在“从外面操作 UI”，只是从桌面坐标变成了窗口控件句柄，稳定性虽然提升，但还没有进入真正可编程的控制面。
-
-更重要的是，这一代虽然比纯鼠标点击前进了一步，但仍然会明显占用前台焦点，很多时候还会牵动光标位置。用户在脚本运行期间依旧不太敢随意切窗口、打字或做其他操作，因为这些日常动作仍可能干扰标定过程。
-
-#### 第三代：识别 Tk widget，再切到 Script Control
-
-真正的转折点，是后来发现 IPG-MOVIE 这套界面背后并不是只能靠鼠标点，它实际暴露着一套可通过 Tcl/Script Control 操作的 Tk widget 树。
-
-尝试通过标准的Tk命令去操作IPG-MOIVE的路径经过尝试无法走通。但是一次偶然的灵光一现，想起是否可以通过Script Control UI来控制IPG-MOIVE的组件，问题的关键点就变成了如何找到IPG-MOIVE的组件入口。经过不断地逆向，终于探索出了一条可行的路径。
-
-
-1. 参数不再对应“屏幕上的某个点”，而是对应 `.camera.presetFrame.evptx`、`.camera.presetFrame.evpty`、`.camera.cammoddlg.fov.e` 这类具体 widget 路径。
-2. 写参动作不再是鼠标点击和键盘输入，而是 Tcl 里的 delete、insert、invoke。
-3. 不再只是“写进去试试看”，而是可以顺手从 read widget 里读回值做校验。
-
-这一代的意义非常大，因为它把系统从“桌面自动化”推进到了“应用内部控件自动化”。从这里开始，脚本才真正拥有了一个能做验证、能做失败检测、能做读回确认的可靠控制面。
-
-但这里要特别区分清楚：Script Control 本身解决的首先是“能不能稳定、可编程地操作内部 widget”，并不是立刻解决“焦点占用”。在 Script Control 阶段，命令入口本身仍然经历过点击控制台、粘贴命令、回车执行这类路径，因此写参虽然比桌面点更可控，但前台焦点问题并没有彻底消失。
+> 完整演进历史见：[`historical/parameter-writing-evolution.md`](historical/parameter-writing-evolution.md)
 
 标定之旅以这样的状态运行起来了。
 
@@ -167,35 +118,18 @@
 
 这里其实还经历过一段单独的抓图侧探索，而且花的时间一点也不少。
 
-一开始抓图靠的是前台窗口截图，优点是简单直接，缺点也同样直接：
+一开始抓图靠的是前台窗口截图，优点是简单直接，缺点是同样直接：只要 IPG-MOVIE 没在前台，截图结果就不可靠；窗口被遮挡、最小化、切走焦点，抓图就可能失真甚至失效。
 
-1. 只要 IPG-MOVIE 没在前台，截图结果就不可靠。
-2. 一旦窗口被遮挡、最小化、切走焦点，抓图就可能失真甚至失效。
-3. 它和写参侧一样，会把整台机器拖回“不能乱碰”的状态。
+抓图链路不是凭空想到 DDE/FBO 的，而是通过一轮轮探针逼出来的：先探 GL 上下文，再探 `gl readpixels` 调用方式，再探 `readbuffer front/back`，再探 `bindframebuffer_read` 和 FBO 状态，最后验证 offscreen update 行为。这本质上是一条"从能不能读，到读哪一层缓冲区，再到怎样把读出来的内容变成稳定 PNG"的逆向路径。
 
-所以当写参侧已经通过 DDE 摆脱前台焦点之后，新的瓶颈就非常清楚了：不是参数写不进去，而是图像获取还停留在“看桌面”的层级。
+关键结论：
+1. 单纯依赖默认前后缓冲区去读，仍然容易和窗口显示状态绑定
+2. 真正稳定的方式是显式创建 capture FBO
+3. 完整链路：离屏更新 → `gl bindframebuffer_read` + `gl readpixels` → photo 对象 → PNG
 
-抓图链路后面不是凭空想到 DDE/FBO 的，而是通过一轮轮探针逼出来的。那段时间围绕 IPG-MOVIE 做了很多 Tcl/GL 试验，核心是在回答几个问题：
+这一步补齐之后，写参侧和抓图侧才第一次同时进入"去前台化"状态。此前 DDE 只解决了 Script Control 的问题；直到 FBO 抓图也跑通，整套闭环才真正摆脱了对前台窗口截图的依赖。
 
-1. IPG-MOVIE 当前 Tcl 环境里到底有哪些 gl/FBO 相关命令可用。
-2. 默认渲染缓冲区能不能直接通过 readbuffer/readpixels 读出来。
-3. `gl readpixels` 的实际参数形式是什么，读出来的内容能不能稳定写成 PNG。
-4. 是否存在可以不依赖前台窗口显示状态的 offscreen 路径。
-
-这也是为什么后面会留下那么多 probe 痕迹：先探 GL 上下文，再探 `gl readpixels` 的调用方式，再探 `readbuffer front/back`，再探 `bindframebuffer_read` 和 FBO 状态，最后再去验证 offscreen update、wrap update、focus 相关行为。它本质上是一条“从能不能读，到读哪一层缓冲区，再到怎样把读出来的内容变成稳定 PNG”的逆向路径。
-
-这轮探索最后得到的结论也很关键：
-
-1. 单纯依赖默认前后缓冲区去读，仍然容易和窗口显示状态绑定在一起。
-2. 真正稳定的方式，不是继续围绕前台窗口截图打补丁，而是显式创建 capture FBO。
-3. 先让 IPG-MOVIE 在离屏路径里完成更新，再通过 `gl bindframebuffer_read` + `gl readpixels` 把图像读到 photo 对象，最后写成 PNG，这条链路才真正可控。
-
-也就是说，抓图侧真正的收敛路线更准确地说是：
-
-前台窗口截图 -> DDE 下的 GL/缓冲区探针 -> 确认 `readpixels`/`bindframebuffer_read`/FBO 可用 -> 最终落到 IPG-MOVIE DDE/FBO 离屏抓图。
-
-这一步补齐之后，写参侧和抓图侧才第一次同时进入“去前台化”状态。此前 DDE 只解决了 Script Control 的问题；直到 FBO 抓图也跑通，整套闭环才真正摆脱了对前台窗口截图的依赖。
-
+> 完整探索历程见：[`historical/capture-path-evolution.md`](historical/capture-path-evolution.md)
 这一阶段做了两个决定，直接改写了主链。要强调的是，这两个决定并不是一开始就拍脑袋得出的，而是在经历了“桌面点击 -> 控件定位 -> Tk widget/Script Control”这一串试探之后，才确认下来的：
 
 1. 参数写入不再依赖通用 UI 自动化，改为走 Script Control DDE。
@@ -346,11 +280,140 @@ configure_python_environment 最初指向了系统 Python，而系统 Python 里
 
 ---
 
-## 9. 这一路走过的坑，以及最后怎么跨过去
+## 8. 第八阶段：PySide6 GUI 控制台开发
+
+主链稳定、多相机编排器跑通后，下一步自然诉求就是"能不能不用命令行，用一个可视化控制台来管理整个标定流程"。
+
+### 8.1 动机
+
+1. 命令行入口对多相机场景不够友好：选 camera、看进度、查结果都需要在终端里翻日志。
+2. 运行态准备（CM Prepare）和标定启停是两个独立步骤，用户需要一个地方看到当前状态并决定下一步操作。
+3. 实时预览和结果对比在终端里几乎无法实现。
+4. 最终交付目标是 portable EXE，GUI 是面向非技术用户的唯一可行形态。
+
+### 8.2 技术选型
+
+- 框架：PySide6（Qt6 的 Python 绑定）
+- 线程模型：QThread + QSignal 用于后台任务与 UI 通信
+- 日志：Python logging 通过自定义 handler 转发到 QTextEdit
+- 图像预览：QLabel + QPixmap，支持双击打开大图
+
+### 8.3 架构设计
+
+GUI 采用三栏布局 + 底部进度条：
+
+| 区域 | 组件 | 职责 |
+|---|---|---|
+| 左栏 | CmSettingsPanel | Project Dir、TestRun、Vehicle、camera 多选、Check Inputs、Generate Configs、Check Results |
+| 中栏 | CalibrationPanel | 策略切换、Campaign Rounds、CM 版本、CM Prepare / Calib Start / Calib Stop 按钮、状态徽章 |
+| 右栏 | OutputPanel | 实时日志、结果树、按相机分块的三列预览卡片 |
+| 底部 | SensorProgressPanel | 传感器进度树、总体进度条、当前传感器标签 |
+
+状态机设计：`IDLE` → `READY` → `PREPARING` → `RUNNING` → `FINISHED` / `FAILED`
+
+### 8.4 核心实现
+
+- `gui_app/app.py`：入口，创建 QApplication 和 MainWindow
+- `gui_app/main_window.py`：主窗口，管理状态机、信号路由、orchestrator 生命周期
+- `gui_app/widgets/`：各面板组件
+- `gui_app/models/state.py`：数据类（CameraResult、CalibrationLaunchConfig、AppStatus）
+- `gui_app/services/calibration_service.py`：子进程封装，转发编排器事件
+
+### 8.5 测试策略
+
+- 65 个前端单元测试覆盖：状态机、日志分类、面板交互、信号路由
+- 测试框架：pytest + pytest-qt
+- 所有 commit 必须通过全部测试
+
+---
+
+## 9. 第九阶段：近期改进与优化
+
+在 GUI 基本框架跑通后，陆续修复了一批边界问题和体验问题。
+
+### 9.1 布局重构：三栏设计
+
+- 从单栏/双栏改为三栏布局（CM Settings / Calibration / Output）
+- Sensor Progress 横跨左栏+中栏底部
+- 使用 QSplitter 实现可拖拽分隔
+
+### 9.2 策略切换：QStackedWidget 替代 QTabWidget
+
+- QTabWidget 在 Windows 原生风格下有不可控的 pane padding
+- 改用 QButtonGroup + QStackedWidget 实现策略切换
+- 每种策略有独立的 spinbox 实例，互不干扰
+
+### 9.3 预览图片 None-guard 修复
+
+- 问题：状态-only 的 CameraResult 会清空已存在的预览图
+- 修复：`CameraResultCard.update_result` 对 preview 字段使用 None-guard，只在有值时更新
+
+### 9.4 当前迭代预览列
+
+- 在结果卡片中增加"Current Iter"列，与"Best Score"、"Best Overlay"并列
+- 使用 `CURRENT_ITER_IMAGE_ROLE` 区分当前迭代图和最优图
+- 每轮迭代实时更新，用户可以看到当前尝试的效果
+
+### 9.5 Movie Quit 策略反转
+
+- 问题：bootstrap 阶段无条件调用 `Movie::Quit *`，会杀掉 GPUSensor 管理的 Movie
+- 修复：只在没有 GPUSensor 进程时才调用 `Movie::Quit *`
+- 没有 GPUSensor 时，bootstrap 后自动启动新的 GUI Movie
+
+### 9.6 GPUSensor Fallback Kill
+
+- `stop_movie_stack_via_movie_quit` 的 fallback 路径也 taskkill GPUSensor movie 进程
+- 确保所有 Movie 相关进程都能被正确清理
+
+### 9.7 日志级别修正
+
+- `[ERROR]` 只用于真正的程序失败（traceback、exception、fatal、standalone ` critical `）
+- 其他情况使用 `[WARNING]` 或 `[INFO]`
+- 修复 `"critical_degrade=False"` 被误判为 ERROR 的问题（改为 word-boundary 匹配 `" critical "`）
+- ORCHESTRATION JSON 从 Output 日志中过滤（已通过结构化信号处理）
+
+### 9.8 progress_json 传播修复
+
+- 问题：内部 `CameraCalibrator` 实例没有设置 `calib.print_progress_json = True`
+- 修复：在构造后显式设置，确保 `CALIBRATION_PROGRESS_JSON:` 行被正确输出
+
+### 9.9 `_last_eval_image` 追踪
+
+- 在 `evaluate()` 中记录 `_last_eval_image`
+- 每个 progress JSON 包含 `current_iter_image` 字段
+- GUI 用此字段更新 Current Iter 预览
+
+### 9.10 宽高比探针修复
+
+- 问题：`_get_movie_dde_view_size` 从 View dict 读取尺寸，返回的是 stale 值
+- 修复：改为从 GL widget 读取（`$wpath.gl0 cget -width/height`）
+- 解决了 right_rear 相机的宽高比误判问题
+
+### 9.11 load_movie_view_size_from_real_image
+
+- 直接从 reference image 文件读取尺寸
+- 不再将 view size 写入 camera config
+- 保持 config 的纯净性
+
+### 9.12 Auto-Prepare 智能流程
+
+- 问题：当 active sensor 不匹配时，用户需要手动点 CM Prepare 再点 Calib Start
+- 修复：`_start_calibration` 检测到 mismatch 时自动触发 CM Prepare
+- 完成后通过 `_pending_launch` 自动开始标定，无需用户二次点击
+- Phase 标签显示"正在切换 Active Sensor..."提供视觉反馈
+
+### 9.13 死代码 `_pending_launch` 激活
+
+- `_pending_launch` 之前从未被赋非 None 值，是死代码
+- `_on_runtime_summary` 现在在 prepare 完成且 `status=ready` 时自动启动标定
+
+---
+
+## 10. 这一路走过的坑，以及最后怎么跨过去
 
 下面把整个过程里最关键的坑点和解决方式压缩成一个工程清单。
 
-### 9.1 误以为官方 API 足够完整
+### 10.1 误以为官方 API 足够完整
 
 现象：
 
@@ -364,7 +427,7 @@ configure_python_environment 最初指向了系统 Python，而系统 Python 里
 
 先做 API 能力盘点，确认缺口后及时切路线，不继续围绕缺失能力做无效封装。
 
-### 9.2 修改 InfoFile 和跑 TestRun 的链路太慢，也不够实时
+### 10.2 修改 InfoFile 和跑 TestRun 的链路太慢，也不够实时
 
 现象：
 
@@ -372,9 +435,9 @@ configure_python_environment 最初指向了系统 Python，而系统 Python 里
 
 解决：
 
-把主链从“改 InfoFile 再重跑”转到“实时 Script Control 写参”。
+把主链从"改 InfoFile 再重跑"转到"实时 Script Control 写参"。
 
-### 9.3 RPA 原型能跑，但稳定性太差
+### 10.3 RPA 原型能跑，但稳定性太差
 
 现象：
 
@@ -384,7 +447,7 @@ configure_python_environment 最初指向了系统 Python，而系统 Python 里
 
 RPA 只用来证明闭环可行，正式实现收敛到 DDE 控制和 FBO 抓图。
 
-### 9.4 通用特征匹配不能代表标定误差
+### 10.4 通用特征匹配不能代表标定误差
 
 现象：
 
@@ -394,7 +457,7 @@ ORB/RANSAC 能给出分数，但很难直接说明相机几何是否真的对齐
 
 切到多板、多 ROI、显式几何误差聚合的评估方式，用标定板问题定义标定目标。
 
-### 9.5 抓图路径里残留了历史兼容参数
+### 10.5 抓图路径里残留了历史兼容参数
 
 现象：
 
@@ -404,7 +467,7 @@ movie_content_crop 仍然存在，但当前抓图主链已经不依赖它。
 
 从实现、配置、文档里一起删掉，避免后续误导。
 
-### 9.6 直接调 optimize 时日志消失
+### 10.6 直接调 optimize 时日志消失
 
 现象：
 
@@ -418,7 +481,7 @@ CLI 有 run.log，直接 API 调用却没有。
 
 把 live log 初始化下沉，让 direct optimize 也能生成 run.log 和 continue_resume.log。
 
-### 9.7 输出目录里临时文件太多，影响阅读
+### 10.7 输出目录里临时文件太多，影响阅读
 
 现象：
 
@@ -428,7 +491,7 @@ CLI 有 run.log，直接 API 调用却没有。
 
 把它们明确界定为探针和捕获临时物，成功路径自动清理，只把必要产物留下。
 
-### 9.8 结果邮箱文件的语义容易被误读
+### 10.8 结果邮箱文件的语义容易被误读
 
 现象：
 
@@ -438,7 +501,7 @@ script_control_camera_apply_result.txt 看起来像结果归档，实际上只�
 
 在实现和说明中明确它是 mailbox，不是版本化结果文件。
 
-### 9.9 Lens 页面初始化是隐性依赖
+### 10.9 Lens 页面初始化是隐性依赖
 
 现象：
 
@@ -446,9 +509,9 @@ script_control_camera_apply_result.txt 看起来像结果归档，实际上只�
 
 解决：
 
-把“首次手动打开 lens 页面”升格成正式前置条件，写入文档与运行说明。
+把"首次手动打开 lens 页面"升格成正式前置条件，写入文档与运行说明。
 
-### 9.10 Python 解释器选错，会把整条链路直接打断
+### 10.10 Python 解释器选错，会把整条链路直接打断
 
 现象：
 
@@ -464,7 +527,7 @@ script_control_camera_apply_result.txt 看起来像结果归档，实际上只�
 
 ---
 
-## 10. 当前已经落地的主链
+## 11. 当前已经落地的主链
 
 截至当前，项目已经从“探索性原型”收敛到一条可持续维护的主链：
 
@@ -486,7 +549,7 @@ script_control_camera_apply_result.txt 看起来像结果归档，实际上只�
 
 ---
 
-## 11. 这一轮开发最值得保留的方法论
+## 12. 这一轮开发最值得保留的方法论
 
 回头看，这轮工作里最有价值的，不只是留下了一版代码，而是形成了几条后面继续做类似项目时仍然适用的方法。
 
@@ -512,16 +575,19 @@ RPA 原型虽然不是终点，但它帮助我们快速证明了闭环本身成�
 
 ---
 
-## 12. 当前阶段总结
+## 13. 当前阶段总结
 
 到目前为止，这个项目已经走完了一条非常典型但也很扎实的工程路线：
 
-1. 从“设想中的全自动 API 链路”起步。
+1. 从"设想中的全自动 API 链路"起步。
 2. 在 API 不足处退到半自动 RPA 原型。
 3. 在原型阶段确认闭环可行。
 4. 再把评估目标从通用图像匹配切回标定板几何误差。
 5. 最终收敛到以 Script Control DDE 和 IPG-MOVIE DDE/FBO 为核心的正式实现。
+6. 开发多相机编排器，支持顺序执行多个 camera 标定。
+7. 构建 PySide6 GUI 控制台，实现可视化状态管理、实时预览和结果展示。
+8. 持续优化 GUI 体验：三栏布局、策略切换、auto-prepare 智能流程、日志级别修正、预览 None-guard 等。
 
-这一路最大的收获，不是某一个参数最终调到了多少，而是我们已经把“哪些路不值得继续走”“哪条路是当前最稳的主链”这件事，跑清楚了。
+这一路最大的收获，不是某一个参数最终调到了多少，而是我们已经把"哪些路不值得继续走""哪条路是当前最稳的主链"这件事，跑清楚了。
 
 后续继续优化 rear_tv，或者扩展到其他 camera，基本都可以在这条已经收敛的主链上继续推进，而不需要再回到早期那种高不确定性的探索状态。

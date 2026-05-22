@@ -33,14 +33,17 @@
 5. 脚本基于多板检测计算联合误差分数。
 6. 脚本迭代更新参数直至收敛或终止。
 7. 输出完整日志、截图和结果文件。
+8. 多相机编排器顺序执行多个 camera 标定。
+9. CarMaker 运行态控制（status/prepare 模式）。
+10. PySide6 GUI 控制台（三栏布局 + 底部进度）。
+11. Auto-Prepare 智能流程（sensor 不匹配时自动切换）。
 
 ### 2.2 本阶段不实现
 
-1. 自动启动 CarMaker 或 TestRun。
-2. 自动切换 IPGMovie 到 Camera 视角。
-3. 自动修改非实时参数，例如 scaling。
-4. 多窗口、多实例并发优化。
-5. 分布式运行。
+1. 多相机并行标定（当前为顺序执行）。
+2. 自动修改非实时参数，例如 scaling。
+3. 分布式运行。
+4. ChArUco/Aruco 检测器（已在设计文档中描述，脚本里尚未实现）。
 
 ---
 
@@ -212,13 +215,17 @@
 
 ## 4.6 MovieCapture
 
+> **注**：当前实际实现使用 IPG-MOVIE DDE/FBO 离屏抓图路径，不再依赖窗口句柄截图。
+> 本规格保留作为接口设计参考，实际抓图逻辑见 `camera_calibration.py` 中的 FBO 相关实现。
+
 ### 职责
-- 按 IPGMovie 窗口矩形进行截图
+- 通过 IPG-MOVIE DDE/FBO 进行离屏抓图
 - 保存截图到输出目录
 - 记录截图元信息
 
 ### 输入
-- movie_window_handle
+- dde_service: str
+- dde_topic: str
 - tag: str
 - output_dir: str
 
@@ -273,10 +280,11 @@
 ### 本阶段优先实现
 - CheckerboardDetector，用于命名棋盘格板（如 B1-B4、S1-S5）
 - GroundMakerDetector，用于地面标记区域（如 G1_left、G1_center、G1_right）
-- CharucoDetector，用于 ChArUco 角点板
-- ArucoBoardDetector，用于 ArUco marker 角点板
+- CustomMakerDetector，用于自定义标记板（template_match 方式）
 
 ### 后续扩展
+- CharucoDetector，用于 ChArUco 角点板
+- ArucoBoardDetector，用于 ArUco marker 角点板
 - 其它基于特征点或轮廓的专用 detector
 
 ---
@@ -738,19 +746,26 @@
 
 建议按以下顺序实施：
 
-1. 先完成配置 schema 与 Script Control 运行桥接层
-2. 再完成 CheckerboardDetector 与 GroundMakerDetector
-3. 再完成单板评分器与多板聚合器
-4. 再将现有优化循环改造成模块化 Optimizer
-5. 最后补齐 RunRecorder、状态机和异常恢复
+1. ~~先完成配置 schema 与 Script Control 运行桥接层~~（已完成）
+2. ~~再完成 CheckerboardDetector 与 GroundMakerDetector~~（已完成）
+3. ~~再完成单板评分器与多板聚合器~~（已完成）
+4. ~~再将现有优化循环改造成模块化 Optimizer~~（已完成）
+5. ~~最后补齐 RunRecorder、状态机和异常恢复~~（已完成）
+6. ~~多相机编排器~~（已完成）
+7. ~~CarMaker 运行态控制~~（已完成）
+8. ~~PySide6 GUI 控制台~~（已完成）
 
-这样可以在最短路径上形成一个“标定板可跑通版本”，再逐步补强稳健性。
+当前状态：核心功能已全部实现，后续优化方向包括：
+- 多相机并行标定
+- ChArUco/Aruco 检测器实现
+- 自动视角控制（减少人工准备步骤）
+- 自动任务编排与报告输出
 
 ---
 
 ## 14. 对下一步拆解的输入
 
-若继续向更细实现拆解，建议下一步输出三份子文档：
-1. 棋盘格检测与评分详细规格
-2. RPA 控件映射与交互详细规格
-3. 优化器算法与参数调优详细规格
+核心模块已实现完毕。若继续扩展，建议关注以下方向：
+1. 多相机并行标定架构
+2. ChArUco/Aruco 检测器实现规格
+3. 自动视角控制（Tcl 命令集成）规格

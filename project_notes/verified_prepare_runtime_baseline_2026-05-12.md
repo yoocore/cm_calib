@@ -167,6 +167,7 @@ update idletasks
 1. view size 运行时直接从目标配置里的 `real_image` 读取。
 2. `camera.<sensor>.json` 不再保留 `movie_view_width` 和 `movie_view_height`。
 3. 对 rear_tv 的当前实测结果是 `1920 x 1536`。
+4. **运行时探针**（`_get_movie_dde_view_size`）必须从 GL widget 读取尺寸（`$wpath.gl0 cget -width/height`），而不是从 View dict（`$View($vno) Width`）读取。View dict 可能返回 stale 值，导致宽高比误判（right_rear 相机曾因此出现 false positive）。
 
 ### 5.4 Camera Settings 打开
 
@@ -222,6 +223,7 @@ update idletasks
 2. classification code = `ok`
 3. `movie_camera_probe = CAMERA_RSI-SENSOR Vhcl.rear_tv`
 4. `movie_view_probe = 1920 x 1536`
+5. view size 探针已从 GL widget 读取（`$wpath.gl0 cget`），不再依赖 View dict
 
 ## 7. 当前冻结验收结果
 

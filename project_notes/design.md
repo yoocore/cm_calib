@@ -535,26 +535,41 @@ total_score_detail 至少包含：
 
 ## 13. 后续演进路线
 
-### 阶段 1（当前）
+### 阶段 1（已完成）
 
 半自动闭环稳定落地：
 - 人工预置
 - 脚本自动优化
+- Script Control DDE 参数写入
+- IPG-MOVIE DDE/FBO 离屏抓图
 
-### 阶段 2
+### 阶段 2（已完成）
 
 增强稳健性与效率：
 - 多板 ROI 配置化
 - GroundMaker + 棋盘格双检测器支持
 - 多帧多板加权评分
 - 参数约束与联动策略
+- 多相机编排器（calibration_orchestrator.py）
+- CarMaker 运行态控制（cmapi_testrun_control.py）
 
-### 阶段 3
+### 阶段 3（已完成）
+
+GUI 控制台与自动化：
+- PySide6 GUI 控制台（三栏布局 + 底部进度）
+- 状态机管理（IDLE → READY → PREPARING → RUNNING → FINISHED/FAILED）
+- 策略切换（Multi-Start / Explore+Refine）
+- 实时预览与结果展示（Current Iter / Best Score / Best Overlay）
+- Auto-Prepare 智能流程（sensor 不匹配时自动切换）
+- Portable EXE 打包交付
+
+### 阶段 4（规划中）
 
 逐步接近全自动：
-- 利用可用 Tcl 命令进行部分视角控制
-- 减少人工准备步骤
-- 引入任务编排与报告输出
+- 利用可用 Tcl 命令进行完整视角控制
+- 减少/消除人工准备步骤
+- 自动任务编排与报告输出
+- 多相机并行标定（当前为顺序执行）
 
 ---
 
@@ -562,6 +577,9 @@ total_score_detail 至少包含：
 
 当前已落地脚本与文档：
 - 主脚本见 [Data/Script/CameraCalibration/camera_calibration.py](Data/Script/CameraCalibration/camera_calibration.py)
+- 多相机编排器见 [Data/Script/CameraCalibration/calibration_orchestrator.py](Data/Script/CameraCalibration/calibration_orchestrator.py)
+- CarMaker 运行态控制见 [Data/Script/CameraCalibration/cmapi_testrun_control.py](Data/Script/CameraCalibration/cmapi_testrun_control.py)
+- GUI 控制台见 [Data/Script/CameraCalibration/gui_app/](Data/Script/CameraCalibration/gui_app/)
 - 当前 rear_tv 配置见 [Data/Script/CameraCalibration/configs/camera.rear_tv.json](Data/Script/CameraCalibration/configs/camera.rear_tv.json)
 - 单一活动 Script Control 命令脚本见 [Data/Script/CameraCalibration/script_control_apply.tcl](Data/Script/CameraCalibration/script_control_apply.tcl)
 - 使用说明见 [Data/Script/CameraCalibration/README.md](Data/Script/CameraCalibration/README.md)
@@ -571,11 +589,18 @@ total_score_detail 至少包含：
 - 当前主链已收敛为纯 DDE/FBO：参数写入通过 Script Control DDE 发送到 IPG-MOVIE，抓图通过 FBO + gl readpixels 完成，不再依赖 IPGMovie 窗口连接或前台激活。
 - 当前参数链仍依赖 `.camera` 与 `.camera.cammoddlg` widget 树；首次运行前需要手动打开一次 lens 页面，让对应控件完成初始化。
 - 在 lens 页面完成一次初始化后，Script Control、Camera Settings 和 IPGMovie 窗口可保持最小化，短链路 smoke 已验证参数读写和 FBO 抓图可用。
-- 本文档定义的是下一阶段应收敛的“多板联合标定板方案”目标设计。
-- 后续实现阶段应优先将评估模块重构为多检测器路由、单板评分与总分聚合三层结构。
+- 多相机编排器支持顺序执行多个 camera 标定，自动处理 sensor 切换和运行态准备。
+- GUI 控制台提供可视化操作界面，支持状态管理、实时预览、结果展示和 auto-prepare 智能流程。
+- Auto-Prepare 流程：当 active sensor 不匹配时，自动触发 CM Prepare 切换 sensor，完成后自动开始标定。
 
 本设计文档对应文件：
 - [Data/Script/CameraCalibration/project_notes/design.md](Data/Script/CameraCalibration/project_notes/design.md)
 
 实现规格拆解文档：
 - [Data/Script/CameraCalibration/project_notes/spec.md](Data/Script/CameraCalibration/project_notes/spec.md)
+
+GUI 设计蓝图：
+- [Data/Script/CameraCalibration/project_notes/gui-control-blueprint.md](Data/Script/CameraCalibration/project_notes/gui-control-blueprint.md)
+
+开发过程纪要：
+- [Data/Script/CameraCalibration/project_notes/development_process.md](Data/Script/CameraCalibration/project_notes/development_process.md)

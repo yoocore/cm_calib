@@ -333,7 +333,7 @@
     ],
     "parameters": {
         "pos_x": {
-            "initial": 3.1693,
+            "initial": 3.2588000297546387,
             "step": 0.002,
             "min_offset": -0.02,
             "max_offset": 0.02,
@@ -341,7 +341,7 @@
             "decimals": 4
         },
         "pos_y": {
-            "initial": 1.0222,
+            "initial": 1.0191999673843384,
             "step": 0.001,
             "min_offset": -0.01,
             "max_offset": 0.01,
@@ -349,7 +349,7 @@
             "decimals": 4
         },
         "pos_z": {
-            "initial": 1.083,
+            "initial": 1.063599944114685,
             "step": 0.001,
             "min_offset": -0.012,
             "max_offset": 0.012,
@@ -357,7 +357,7 @@
             "decimals": 4
         },
         "yaw": {
-            "initial": 88.9567,
+            "initial": 88.26260045763557,
             "step": 0.015,
             "min_offset": -0.35,
             "max_offset": 0.35,
@@ -365,7 +365,7 @@
             "decimals": 4
         },
         "pitch": {
-            "initial": 24.8985,
+            "initial": 24.68499863287968,
             "step": 0.03,
             "min_offset": -0.6,
             "max_offset": 0.6,
@@ -373,7 +373,7 @@
             "decimals": 4
         },
         "roll": {
-            "initial": 0.5928,
+            "initial": -0.21099999143463655,
             "step": 0.01,
             "min_offset": -0.2,
             "max_offset": 0.2,
@@ -381,7 +381,7 @@
             "decimals": 4
         },
         "lens_fov": {
-            "initial": 192.1,
+            "initial": 195.0,
             "step": 0.2,
             "min_offset": -2.0,
             "max_offset": 2.0,

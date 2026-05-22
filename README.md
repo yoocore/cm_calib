@@ -13,7 +13,10 @@
   - 迭代搜索，直到得分达到可接受水平
 
 文件说明
-- camera_calibration.py：主脚本
+- camera_calibration.py：主脚本，单相机标定核心实现
+- calibration_orchestrator.py：多相机编排器，负责顺序执行多个 camera 标定、运行态切换与结果汇总
+- cmapi_testrun_control.py：CarMaker 运行态控制（status/prepare 模式），负责 TestRun 启停、sensor 切换、Movie 管理
+- gui_app/：PySide6 GUI 控制台，负责运行态探测、CM Prepare、多相机标定启停与结果展示
 - verify_runtime_chain_baseline.py：已验证运行链的冻结参考脚本，作为回归对照、参考文档和新链路模板，不作为主运行链唯一入口
 - configs/camera.<camera>.json：每个摄像头维护一份运行输入配置，例如 configs/camera.rear_tv.json
 - configs/bootstrap.template.json：独立的 bootstrap 模板输入配置，用于在第一个摄像头还没有现成 camera config 时生成新配置；文件里尽量只保留项目相关的板原型和少量覆盖项
@@ -54,6 +57,70 @@ portable GUI 交付原则
 - CarMaker 与 IPG-MOVIE 的 DDE 必须可用
 - lens 页面至少初始化过一次后，Script Control、Camera Settings、IPGMovie 窗口在参数写入和 FBO 抓图烟测期间可以保持最小化
 
+---
+
+## GUI 控制台使用
+
+### 启动
+
+```
+python gui_app/app.py
+```
+
+或直接运行打包后的 EXE。
+
+### 界面布局
+
+GUI 采用三栏布局：
+
+| 栏 | 内容 |
+|---|---|
+| **左栏（CM Settings）** | Project Dir、TestRun 选择、Vehicle 解析、Camera 多选列表、Check Inputs、Generate Configs、Check Results |
+| **中栏（Calibration）** | 策略切换（Multi-Start / Explore+Refine）、Campaign Rounds、CM 版本选择、CM Prepare / Calib Start / Calib Stop 按钮、状态徽章、失败摘要 |
+| **右栏（Output）** | 实时日志、按相机分块的结果展示（Current Iter / Best Score / Best Overlay 三列预览）、结果树 |
+| **底部（Sensor Progress）** | 传感器进度树、总体进度条、当前传感器标签（横跨左栏+中栏底部） |
+
+### 标准工作流
+
+1. **选择 Project Dir 和 TestRun** → 左栏自动解析 Vehicle 和可用 camera 列表
+2. **勾选要标定的 camera** → 左栏 camera 列表支持多选
+3. **Check Inputs** → 验证每个 camera 的配置文件、real_image、boards 等前置条件
+4. **CM Prepare** → 准备运行态（激活 sensor、同步 TestRun、启动 CarMaker/IPG-Movie、打开 Camera Settings、初始化 lens 页面、健康检查）
+5. **Calib Start** → 启动多相机标定任务
+6. **观察进度** → 底部 Sensor Progress 显示各相机状态，右栏 Output 实时展示每轮迭代分数和预览图
+7. **查看结果** → 右栏每个相机卡片展示 Current Iter / Best Score / Best Overlay，可双击打开大图
+
+### Auto-Prepare 智能流程
+
+当用户点击 "Calib Start" 时，系统会自动检测运行态：
+
+| 场景 | 行为 |
+|---|---|
+| Runtime 未就绪 | 弹窗提示用户先点 CM Prepare |
+| Runtime 健康但 active sensor 不对 | **自动触发 CM Prepare** 切换 sensor，完成后自动开始标定，无需用户二次点击 |
+| Runtime 健康且 active sensor 匹配 | 直接启动标定，跳过 Prepare |
+
+自动 Prepare 期间，Phase 标签显示"正在切换 Active Sensor..."，Output 面板打印 `[INFO] Active sensor 不匹配: 当前=[B], 需要=A。自动触发 CM Prepare。`。
+
+### 策略选择
+
+中栏策略切换按钮提供两种模式：
+
+| 模式 | 说明 |
+|---|---|
+| **Multi-Start** | 多起点并行探索，适合寻找全局最优 |
+| **Explore+Refine** | 先短跑探索找到最优起点，再从该起点长跑收束 |
+
+每种模式有独立的参数输入框（互不干扰），切换策略时保留各自的默认值。
+
+### 状态机
+
+GUI 内部维护显式状态机：
+
+`IDLE` → `READY` → `PREPARING` → `RUNNING` → `FINISHED` / `FAILED`
+
+按钮启停与状态绑定，避免无效操作。
+
 快速开始
 1. 编辑对应摄像头的配置文件，例如 configs/camera.rear_tv.json。
 2. 创建或刷新本地虚拟环境，并根据 project_notes/requirements.txt 安装依赖。
@@ -70,6 +137,24 @@ portable GUI 交付原则
 10. 可选：如果想先短跑探索，再从最优起点做长跑收束，可以执行一体化 campaign：
   python camera_calibration.py --config configs/camera.rear_tv.json --explore-then-refine --multi-start-count 4 --multi-start-iters 24 --refine-iters 180
 11. 成功完成的优化会自动把 best_values 回写到配置中的 initial 字段，作为下一次运行的初始值。
+
+### 多相机编排（CLI）
+
+```
+python calibration_orchestrator.py \
+  --project-root C:/path/to/project \
+  --testrun vctc_ngxpro \
+  --cameras right_rear left_tv \
+  --config-dir configs/ \
+  --output-dir SimOutput/camera_orchestration/
+```
+
+编排器会：
+1. 按顺序处理每个 camera
+2. 为每个 camera 激活对应的 Vehicle sensor
+3. 执行 CM Prepare（首次相机跳过复用已准备的运行态）
+4. 调用 camera_calibration.py 完成单相机标定
+5. 汇总所有相机结果，生成 task-level summary
 
 可选行为说明
 - 始终显式传入 --config，例如 --config configs/camera.rear_tv.json。

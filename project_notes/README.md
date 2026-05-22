@@ -18,11 +18,15 @@
 6. `gui-control-blueprint.md`：本地 GUI 控制层蓝图
 7. `ipgmovie-health-normal-2026-05-09.md`：2026-05-09 的健康基线快照
 8. `strategy-adaptation.md`：优化策略演化与当前约束总结
-9. `development_process.md`：项目演化过程记录
-10. `design.md`：设计文档
-11. `spec.md`：实现规格
+9. `development_process.md`：项目演化过程记录（含 GUI 开发与近期改进）
+10. `design.md`：设计文档（含 GUI 实现对应关系）
+11. `spec.md`：实现规格（含实现状态标记）
 12. `ipgmovie_control_workflow.md`：IPG-MOVIE 控制主文档
 13. `requirements.txt`：当前维护的 Python 依赖清单
+
+历史归档（过时方案但含探索经验）：
+14. `historical/parameter-writing-evolution.md`：参数写入控制面的三代迭代历史（桌面点击 → 控件定位 → Script Control DDE）
+15. `historical/capture-path-evolution.md`：抓图路径从窗口截图到 DDE/FBO 的探索历程
 
 说明：
 

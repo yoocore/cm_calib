@@ -396,7 +396,7 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            self.output_panel.log_view.clear()
+            self.output_panel.append_log("─" * 60, source="system")
             self._set_status_summary("Calib Start 已触发，正在执行预检与运行态校验。")
             cm_install = self.calibration_panel.cm_install_path
             if cm_install is None:

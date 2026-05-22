@@ -1817,6 +1817,8 @@ def ensure_movie_camera_selected(
     capture_dir.mkdir(parents=True, exist_ok=True)
     capture_path = capture_dir / "selected_sensor_render.png"
     select_body_lines = [
+        'set _before_camera_state [expr {[winfo exists .camera] ? [wm state .camera] : "missing"}]',
+        'set _before_lens_state [expr {[winfo exists .camera.cammoddlg] ? [wm state .camera.cammoddlg] : "missing"}]',
         'if {![info exists View(ev.view)]} {error "missing View(ev.view)"}',
         'set vno $View(ev.view)',
         'Camera::ShowSettingsDlg',
@@ -1831,6 +1833,9 @@ def ensure_movie_camera_selected(
         'update',
         'update idletasks',
         *_movie_background_tcl_commands(include_root=True),
+        'if {$_before_camera_state eq "iconic" && [winfo exists .camera]} { wm iconify .camera }',
+        'if {$_before_lens_state eq "iconic" && [winfo exists .camera.cammoddlg]} { wm iconify .camera.cammoddlg }',
+        'unset _before_camera_state _before_lens_state',
     ]
     result = run_check_attempt(
         name=probe_name,

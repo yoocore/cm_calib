@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QProcess, Signal
+from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, Signal
 
 from portable_runtime import build_python_command
 
@@ -44,6 +44,9 @@ class ProcessService(QObject):
         self._process.setWorkingDirectory(str(working_directory))
         self._process.setProgram(program)
         self._process.setArguments(argv)
+        env = self._process.processEnvironment()
+        env.insert("PYTHONUNBUFFERED", "1")
+        self._process.setProcessEnvironment(env)
         self._process.start()
 
     def stop(self) -> None:

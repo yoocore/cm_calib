@@ -84,7 +84,7 @@ def _classify_log_level(message: str) -> str:
     text = message.casefold()
     if not text:
         return "info"
-    if any(token in text for token in ("traceback", " exception", "fatal")):
+    if any(token in text for token in ("traceback", " exception", "runtimeerror", "fatal")):
         return "error"
     if " critical " in text or text.startswith("critical ") or text.endswith(" critical"):
         return "error"

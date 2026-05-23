@@ -335,13 +335,12 @@ class CalibrationPanel(QGroupBox):
 
         status_row = QHBoxLayout()
         status_row.addWidget(QLabel("Status"))
-        status_row.addWidget(self.status_label)
-        status_row.addStretch(1)
+        status_row.addWidget(self.status_label, 1)
 
         cm_row = QWidget(self.control_group)
         cm_layout = QHBoxLayout(cm_row)
         cm_layout.setContentsMargins(0, 0, 0, 0)
-        cm_layout.addWidget(QLabel("CM Version:"))
+        cm_layout.addWidget(QLabel("CarMaker"))
         cm_layout.addWidget(self.cm_version_combo, 1)
         cm_layout.addWidget(self.prepare_button)
 

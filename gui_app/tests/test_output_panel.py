@@ -52,6 +52,7 @@ class TestOutputPanel:
         assert _classify_log_level("everything completed and ready") == "success"
         assert _classify_log_level("warning: timed out while probing") == "warning"
         assert _classify_log_level("Traceback: RuntimeError") == "error"
+        assert _classify_log_level("RuntimeError: IPG-MOVIE Camera Settings dialog") == "error"
         assert _classify_log_level("plain diagnostic line") == "info"
 
     def test_append_log_adds_timestamp_source_and_level(self, qtbot):

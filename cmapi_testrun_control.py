@@ -2006,14 +2006,9 @@ def ensure_movie_camera_dialogs_normal(
                 '    update',
                 '    update idletasks',
                 '}',
-                'if {[winfo exists .camera]} {',
-                '    wm deiconify .camera',
-                '}',
                 "update",
                 "update idletasks",
-                'if {[winfo exists .camera.cammoddlg]} {',
-                '    wm deiconify .camera.cammoddlg',
-                '} elseif {[winfo exists .camera.fmore.bcammod]} {',
+                'if {![winfo exists .camera.cammoddlg] && [winfo exists .camera.fmore.bcammod]} {',
                 '    .camera.fmore.bcammod invoke',
                 '}',
                 "update",
@@ -2032,7 +2027,7 @@ def ensure_movie_camera_dialogs_normal(
     )
     if not result.get("ok"):
         raise RuntimeError(
-            "Failed to deiconify IPG-MOVIE Camera Settings/Lens Parameters: "
+            "Failed to ensure IPG-MOVIE Camera Settings/Lens Parameters: "
             f"{result.get('kind')}: {result.get('detail')}"
         )
 
@@ -2041,9 +2036,9 @@ def ensure_movie_camera_dialogs_normal(
         raise RuntimeError("IPG-MOVIE Camera Settings dialog is missing after deiconify probe")
     if payload.get("lens_exists") != "1":
         raise RuntimeError("IPG-MOVIE Camera Lens Parameters dialog is missing after deiconify probe")
-    if payload.get("camera_state") not in ("normal", "iconic"):
+    if payload.get("camera_state") not in ("normal", "iconic", "withdrawn"):
         raise RuntimeError(f"IPG-MOVIE Camera Settings dialog is not in normal or iconic state: {payload.get('camera_state')}")
-    if payload.get("lens_state") not in ("normal", "iconic"):
+    if payload.get("lens_state") not in ("normal", "iconic", "withdrawn"):
         raise RuntimeError(f"IPG-MOVIE Camera Lens Parameters dialog is not in normal or iconic state: {payload.get('lens_state')}")
 
     payload["mode"] = "camera_dialogs_normal"

@@ -21,7 +21,7 @@ _SECTION_GROUP_STYLE = (
     "border: 1px solid #d0d7de;"
     "border-radius: 10px;"
     "margin-top: 10px;"
-    "padding: 12px;"
+    "padding: 8px;"
     "background-color: #ffffff;"
     "font-weight: 600;"
     "}"
@@ -471,7 +471,7 @@ class CalibrationPanel(QGroupBox):
 
     def sizeHint(self) -> QSize:
         hint = super().sizeHint()
-        return QSize(min(hint.width(), 360), hint.height())
+        return QSize(min(hint.width(), 380), hint.height())
 
     def minimumSizeHint(self) -> QSize:
         hint = super().minimumSizeHint()

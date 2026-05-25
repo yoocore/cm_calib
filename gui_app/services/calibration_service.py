@@ -41,6 +41,8 @@ class CalibrationService(QObject):
         return project_root / "Data" / "Script" / "CameraCalibration"
 
     def start(self, launch: CalibrationLaunchConfig) -> None:
+        if self.is_running:
+            self.stop()
         calibration_root = self._resolve_calibration_root(launch.project_root)
         script_path = calibration_root / "calibration_orchestrator.py"
         arguments = [

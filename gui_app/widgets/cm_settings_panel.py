@@ -29,7 +29,7 @@ _SECTION_GROUP_STYLE = (
     "border: 1px solid #d0d7de;"
     "border-radius: 10px;"
     "margin-top: 10px;"
-    "padding: 12px;"
+    "padding: 4px;"
     "background-color: #ffffff;"
     "font-weight: 600;"
     "}"
@@ -46,7 +46,7 @@ _PANEL_STYLE = (
     "border: 1px solid #cbd5e1;"
     "border-radius: 12px;"
     "margin-top: 12px;"
-    "padding: 14px;"
+    "padding: 10px;"
     "background-color: #ffffff;"
     "font-weight: 700;"
     "}"
@@ -91,6 +91,7 @@ class CmSettingsPanel(QGroupBox):
         self.camera_list.setDragEnabled(True)
         self.camera_list.setAcceptDrops(True)
         self.camera_list.setDropIndicatorShown(True)
+        self.camera_list.setToolTip("拖拽调整相机顺序")
 
         self.precheck_button = QPushButton("Check Inputs")
         self.generate_config_button = QPushButton("Generate Configs")
@@ -144,26 +145,24 @@ class CmSettingsPanel(QGroupBox):
 
         self.project_group = _SectionGroup("Project Inputs", self)
         project_layout = QVBoxLayout(self.project_group)
-        project_layout.setContentsMargins(10, 6, 10, 10)
+        project_layout.setContentsMargins(6, 2, 6, 4)
         project_layout.addLayout(form)
 
         self.camera_group = _SectionGroup("Camera Selection", self)
         camera_layout = QVBoxLayout(self.camera_group)
-        camera_layout.setContentsMargins(10, 6, 10, 10)
-        camera_layout.setSpacing(8)
-        self.camera_list.setMinimumHeight(150)
-        camera_layout.addWidget(self.camera_list, 1)
-        camera_layout.addWidget(precheck_row)
+        camera_layout.setContentsMargins(6, 2, 6, 4)
+        camera_layout.setSpacing(4)
 
         self.results_group = _SectionGroup("Check Results", self)
         results_layout = QVBoxLayout(self.results_group)
-        results_layout.setContentsMargins(10, 6, 10, 10)
-        results_layout.setSpacing(8)
+        results_layout.setContentsMargins(6, 2, 6, 4)
+        results_layout.setSpacing(4)
         self.precheck_tree.setMinimumHeight(140)
         results_layout.addWidget(self.precheck_tree, 1)
 
         layout = QVBoxLayout(self)
-        layout.setSpacing(10)
+        layout.setContentsMargins(8, 4, 8, 6)
+        layout.setSpacing(6)
         layout.addWidget(self.project_group)
         layout.addWidget(self.camera_group, 1)
         layout.addWidget(self.results_group, 1)
@@ -201,7 +200,8 @@ class CmSettingsPanel(QGroupBox):
     def set_cameras(self, cameras: list[str]) -> None:
         self.camera_list.clear()
         for camera_name in cameras:
-            item = QListWidgetItem(camera_name)
+            item = QListWidgetItem(f"⋮⋮ {camera_name}")
+            item.setData(Qt.UserRole, camera_name)
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(Qt.Unchecked)
             self.camera_list.addItem(item)
@@ -212,7 +212,8 @@ class CmSettingsPanel(QGroupBox):
         for index in range(self.camera_list.count()):
             item = self.camera_list.item(index)
             if item.checkState() == Qt.Checked:
-                selected.append(item.text())
+                data = item.data(Qt.UserRole)
+                selected.append(str(data) if data is not None else item.text())
         return selected
 
     def update_precheck_results(self, results: list[dict]) -> None:

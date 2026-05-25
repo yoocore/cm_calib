@@ -366,7 +366,7 @@ class TestCalibStartFlow:
         assert main_window.sensor_progress_panel.current_sensor_label.text() == "Current Sensor: cam1"
         assert main_window.sensor_progress_panel.sensor_progress_tree.topLevelItemCount() == 1
         item = main_window.sensor_progress_panel.sensor_progress_tree.topLevelItem(0)
-        progress_bar = main_window.sensor_progress_panel.sensor_progress_tree.itemWidget(item, 2)
+        progress_bar = main_window.sensor_progress_panel.sensor_progress_tree.itemWidget(item, 4)
         assert item.text(1) == "running"
         assert progress_bar.value() >= 0
 

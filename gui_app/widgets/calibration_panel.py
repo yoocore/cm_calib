@@ -21,7 +21,7 @@ _SECTION_GROUP_STYLE = (
     "border: 1px solid #d0d7de;"
     "border-radius: 10px;"
     "margin-top: 10px;"
-    "padding: 8px;"
+    "padding: 4px;"
     "background-color: #ffffff;"
     "font-weight: 600;"
     "}"
@@ -38,7 +38,7 @@ _PANEL_STYLE = (
     "border: 1px solid #cbd5e1;"
     "border-radius: 12px;"
     "margin-top: 12px;"
-    "padding: 14px;"
+    "padding: 10px;"
     "background-color: #ffffff;"
     "font-weight: 700;"
     "}"
@@ -83,14 +83,15 @@ _SECONDARY_BUTTON_STYLE = (
 
 _TERTIARY_BUTTON_STYLE = (
     "QPushButton {"
-    "background-color: #ffffff;"
-    "color: #475569;"
-    "border: 1px solid #cbd5e1;"
+    "background-color: #eef2ff;"
+    "color: #1e3a8a;"
+    "border: 1px solid #a5b4fc;"
     "border-radius: 8px;"
     "padding: 8px 14px;"
-    "font-weight: 500;"
+    "font-weight: 600;"
     "}"
     "QPushButton:disabled {"
+    "background-color: #f8fafc;"
     "color: #94a3b8;"
     "border-color: #e2e8f0;"
     "}"
@@ -226,7 +227,6 @@ class CalibrationPanel(QGroupBox):
         self.status_label.setMinimumHeight(34)
         self.status_label.setMinimumWidth(120)
 
-        self.estimate_label = QLabel("~ 0s")
         self.phase_label = QLabel("")
         self.phase_label.setWordWrap(True)
         self.phase_label.hide()
@@ -323,15 +323,10 @@ class CalibrationPanel(QGroupBox):
         jitter_row.addWidget(self.jitter_spin, 1)
         rounds_inner.addLayout(jitter_row)
 
-        estimate_row = QHBoxLayout()
-        estimate_row.addWidget(QLabel("Estimated Time"))
-        estimate_row.addWidget(self.estimate_label, 1)
-        rounds_inner.addLayout(estimate_row)
-
         self.control_group = _SectionGroup("Run Controls")
         control_layout = QVBoxLayout(self.control_group)
-        control_layout.setContentsMargins(10, 6, 10, 10)
-        control_layout.setSpacing(10)
+        control_layout.setContentsMargins(6, 2, 6, 4)
+        control_layout.setSpacing(3)
 
         status_row = QHBoxLayout()
         status_row.addWidget(QLabel("Status"))
@@ -351,12 +346,13 @@ class CalibrationPanel(QGroupBox):
         button_layout.addWidget(self.stop_button)
 
         layout = QVBoxLayout(self)
-        layout.setSpacing(10)
+        layout.setContentsMargins(8, 4, 8, 6)
+        layout.setSpacing(6)
         layout.addWidget(self.strategy_group)
+        control_layout.addWidget(cm_row)
         control_layout.addLayout(status_row)
         control_layout.addWidget(self.phase_label)
         control_layout.addWidget(self.status_query_button)
-        control_layout.addWidget(cm_row)
         control_layout.addWidget(button_row)
         layout.addWidget(self.control_group)
 
@@ -386,7 +382,6 @@ class CalibrationPanel(QGroupBox):
         )
 
         self.set_status("idle")
-        self._update_estimated_time()
 
     @property
     def explore_then_refine(self) -> bool:
@@ -400,17 +395,7 @@ class CalibrationPanel(QGroupBox):
         return None
 
     def _on_estimated_time_changed(self) -> None:
-        self._update_estimated_time()
         self.estimated_time_changed.emit()
-
-    def _update_estimated_time(self) -> None:
-        per_camera = self.estimated_per_camera_seconds()
-        if per_camera <= 0:
-            self.estimate_label.setText("~ 0s")
-        else:
-            self.estimate_label.setText(
-                f"~ {self._format_duration(per_camera)} / camera"
-            )
 
     def estimated_per_camera_seconds(self) -> int:
         campaign_rounds = int(self.campaign_rounds_spin.value())
@@ -426,6 +411,18 @@ class CalibrationPanel(QGroupBox):
             base = max(0, start_count) * max(10, multi_iters // 2)
         per_round = max(45, int(round(base * 3.5 + jitter_val * 8.0)))
         return max(1, campaign_rounds * per_round)
+
+    def total_iterations_per_camera(self) -> int:
+        campaign_rounds = int(self.campaign_rounds_spin.value())
+        if self.explore_then_refine:
+            start_count = max(0, int(self._er_count_spin.value()))
+            explore_iters = int(self._er_iters_spin.value()) or 30
+            refine_iters = int(self._er_refine_iters_spin.value()) or 80
+            return max(1, campaign_rounds * (start_count * explore_iters + refine_iters))
+        else:
+            start_count = max(0, int(self.multi_start_count_spin.value()))
+            multi_iters = int(self.multi_start_iters_spin.value()) or 30
+            return max(1, campaign_rounds * start_count * multi_iters)
 
     def set_status(self, text: str | None) -> None:
         status_text = (text or "").strip() or "idle"

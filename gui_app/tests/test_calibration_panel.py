@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QLabel, QHBoxLayout, QVBoxLayout
+from PySide6.QtWidgets import QLabel, QWidget, QHBoxLayout, QVBoxLayout
 
 from gui_app.widgets.calibration_panel import CalibrationPanel
 from gui_app.widgets.cm_settings_panel import CmSettingsPanel
@@ -49,21 +49,23 @@ class TestCalibrationPanel:
 
         strategy_layout = panel.strategy_group.layout()
         assert isinstance(strategy_layout, QVBoxLayout)
-        estimate_row = strategy_layout.itemAt(strategy_layout.count() - 1).layout()
-        assert isinstance(estimate_row, QHBoxLayout)
-        assert estimate_row.itemAt(0).widget().text() == "Estimated Time"
-        assert estimate_row.itemAt(1).widget() is panel.estimate_label
+        jitter_row = strategy_layout.itemAt(strategy_layout.count() - 1).layout()
+        assert isinstance(jitter_row, QHBoxLayout)
+        assert jitter_row.itemAt(0).widget().text() == "Jitter"
+        assert jitter_row.itemAt(1).widget() is panel.jitter_spin
 
         control_layout = panel.control_group.layout()
         assert isinstance(control_layout, QVBoxLayout)
-        status_row = control_layout.itemAt(0).layout()
+        cm_row = control_layout.itemAt(0).widget()
+        assert isinstance(cm_row, QWidget)
+        status_row = control_layout.itemAt(1).layout()
         assert isinstance(status_row, QHBoxLayout)
         assert status_row.itemAt(0).widget().text() == "Status"
         assert status_row.itemAt(1).widget() is panel.status_label
-        phase_row = control_layout.itemAt(1).widget()
+        phase_row = control_layout.itemAt(2).widget()
         assert isinstance(phase_row, QLabel)
         assert phase_row is panel.phase_label
-        assert control_layout.itemAt(2).widget() is panel.status_query_button
+        assert control_layout.itemAt(3).widget() is panel.status_query_button
 
     def test_outer_title_is_stronger_than_inner_sections(self, qtbot):
         panel = CalibrationPanel()
@@ -96,10 +98,12 @@ class TestCalibrationPanel:
         assert "#c62828" in failed_stylesheet
         assert failed_stylesheet != ready_stylesheet
 
-    def test_estimated_time_shows_per_camera(self, qtbot):
+    def test_total_iterations_per_camera(self, qtbot):
         panel = CalibrationPanel()
         qtbot.addWidget(panel)
-        assert "/ camera" in panel.estimate_label.text()
+        total = panel.total_iterations_per_camera()
+        assert total > 0
+        assert isinstance(total, int)
 
 
 class TestCmSettingsPanel:
@@ -161,11 +165,14 @@ class TestSensorProgressPanel:
 
         assert panel.title() == "Sensor Progress"
         layout = panel.layout()
-        assert layout.count() == 4
-        assert layout.itemAt(0).widget() is panel.current_sensor_label
+        assert layout.count() == 3
+        sensor_row = layout.itemAt(0).layout()
+        assert sensor_row is not None
+        assert sensor_row.itemAt(0).widget() is panel.current_sensor_label
+        assert sensor_row.itemAt(1).widget() is panel.overall_progress_detail_label
         assert layout.itemAt(1).widget() is panel.overall_progress_bar
-        assert layout.itemAt(2).widget() is panel.overall_progress_detail_label
-        assert layout.itemAt(3).widget() is panel.sensor_progress_tree
+        assert layout.itemAt(2).widget() is panel.sensor_progress_tree
+        assert panel.sensor_progress_tree.columnCount() == 7
         assert not hasattr(panel, "summary_group")
         assert not hasattr(panel, "detail_group")
         assert "font-weight: 700" in panel.styleSheet()
@@ -176,8 +183,6 @@ class TestSensorProgressPanel:
 
         panel.reset_sensor_progress(
             cameras=["cam1", "cam2"],
-            estimated_per_camera=200,
-            estimated_total=400,
         )
 
         assert panel.sensor_progress_tree.topLevelItemCount() == 2
@@ -187,8 +192,10 @@ class TestSensorProgressPanel:
             status="running",
             progress_percent=42,
             elapsed_seconds=84,
-            estimated_seconds=200,
             detail="iter=12",
+            iter_text="E1:12",
+            current_score_text="1421.5000",
+            best_score_text="1377.2500",
         )
         panel.set_overall_progress(
             current_camera="cam1",
@@ -196,12 +203,13 @@ class TestSensorProgressPanel:
             total_count=2,
             progress_percent=21,
             elapsed_seconds=84,
-            estimated_total_seconds=400,
         )
 
         item = panel.sensor_progress_tree.topLevelItem(0)
-        progress_bar = panel.sensor_progress_tree.itemWidget(item, 2)
+        progress_bar = panel.sensor_progress_tree.itemWidget(item, 4)
         assert item.text(1) == "running"
         assert progress_bar.value() == 42
-        assert "iter=12" in item.text(3)
+        assert item.text(2) == "E1:12"
+        assert item.text(5) == "1421.5000"
+        assert item.text(6) == "1377.2500"
         assert panel.current_sensor_label.text() == "Current Sensor: cam1"

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
+
 from gui_app.main_window import MainWindow
 
 
@@ -74,4 +76,4 @@ class TestMainWindowCameraList:
         window._on_testrun_changed("vctc_ngxpro")
 
         assert window.cm_settings_panel.camera_list.count() == 1
-        assert window.cm_settings_panel.camera_list.item(0).text() == "cam1"
+        assert window.cm_settings_panel.camera_list.item(0).data(Qt.UserRole) == "cam1"

@@ -123,8 +123,8 @@ class ArtifactPreviewLabel(QLabel):
         self._empty_text = empty_text
         self._artifact_path: str | None = None
         self.setAlignment(Qt.AlignCenter)
-        self.setMinimumSize(180, 120)
         self.setWordWrap(True)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         self.setStyleSheet("border: 1px solid #666; padding: 4px;")
 
     def set_artifact(self, artifact_path: str | None) -> None:
@@ -323,7 +323,7 @@ class OutputPanel(QGroupBox):
         self.open_output_button = QPushButton("Open Output")
         self.open_output_button.setEnabled(False)
         self.log_path_label = QLabel("-")
-        self.log_path_label.setWordWrap(True)
+        self.log_path_label.setWordWrap(False)
         self.open_log_button = QPushButton("Open Log")
         self.open_log_button.setEnabled(False)
         self.log_view = QTextEdit()
@@ -578,6 +578,7 @@ class OutputPanel(QGroupBox):
         live_log = self._item_data(current_item, LIVE_LOG_ROLE) if current_item is not None else None
         log_path = live_log or self._task_log_path
         self.log_path_label.setText(log_path or "-")
+        self.log_path_label.setToolTip(log_path or "")
         self.open_log_button.setEnabled(bool(log_path))
 
     def _open_log_file(self) -> None:

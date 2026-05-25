@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import QGroupBox, QLabel, QProgressBar, QTreeWidget, QTreeWidgetItem, QVBoxLayout
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QGroupBox, QHBoxLayout, QLabel, QProgressBar, QTreeWidget, QTreeWidgetItem, QVBoxLayout
 
 _PANEL_STYLE = (
     "QGroupBox {"
@@ -30,40 +31,40 @@ class SensorProgressPanel(QGroupBox):
         self.overall_progress_bar.setValue(0)
         self.overall_progress_detail_label = QLabel("0 / 0 | 0s / ~0s")
         self.sensor_progress_tree = QTreeWidget()
-        self.sensor_progress_tree.setColumnCount(4)
+        self.sensor_progress_tree.setColumnCount(7)
         self.sensor_progress_tree.setHeaderLabels(
-            ["Sensor", "Status", "Progress", "Elapsed / Est."]
+            ["Sensor", "Status", "Iteration", "Elapsed", "Progress", "Current", "Best"]
         )
         self.sensor_progress_tree.header().setStretchLastSection(True)
-        self._sensor_progress_items: dict[str, QTreeWidgetItem] = {}
+        self.sensor_progress_tree.header().setDefaultAlignment(Qt.AlignLeft)
         self.sensor_progress_tree.setIndentation(0)
+        self._sensor_progress_items: dict[str, QTreeWidgetItem] = {}
         self._sensor_progress_bars: dict[str, QProgressBar] = {}
 
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
-        layout.addWidget(self.current_sensor_label)
+        sensor_row = QHBoxLayout()
+        sensor_row.addWidget(self.current_sensor_label, 1)
+        sensor_row.addWidget(self.overall_progress_detail_label)
+        layout.addLayout(sensor_row)
         layout.addWidget(self.overall_progress_bar)
-        layout.addWidget(self.overall_progress_detail_label)
         layout.addWidget(self.sensor_progress_tree, 1)
 
     def reset_sensor_progress(
         self,
         cameras: list[str],
-        estimated_per_camera: int,
-        estimated_total: int,
     ) -> None:
         self.sensor_progress_tree.clear()
         self._sensor_progress_items.clear()
         self._sensor_progress_bars.clear()
         for camera_name in cameras:
-            self._ensure_sensor_progress_item(camera_name, estimated_per_camera)
+            self._ensure_sensor_progress_item(camera_name)
         self.set_overall_progress(
             current_camera=None,
             completed_count=0,
             total_count=len(cameras),
             progress_percent=0,
             elapsed_seconds=0,
-            estimated_total_seconds=estimated_total,
         )
 
     def set_sensor_progress(
@@ -73,19 +74,24 @@ class SensorProgressPanel(QGroupBox):
         status: str,
         progress_percent: int,
         elapsed_seconds: int,
-        estimated_seconds: int,
         detail: str | None = None,
+        iter_text: str | None = None,
+        current_score_text: str | None = None,
+        best_score_text: str | None = None,
     ) -> None:
-        item = self._ensure_sensor_progress_item(camera_name, estimated_seconds)
+        item = self._ensure_sensor_progress_item(camera_name)
         display_status = "fail" if status == "failed" else status
-        item.setText(1, display_status)
+        if display_status != item.text(1):
+            item.setText(1, display_status)
         progress_bar = self._sensor_progress_bars[camera_name]
         progress_bar.setValue(max(0, min(100, int(progress_percent))))
-        duration_text = f"{self._format_duration(elapsed_seconds)} / ~{self._format_duration(estimated_seconds)}"
-        if detail:
-            duration_text += f" | {detail}"
-        item.setText(3, duration_text)
-        item.setToolTip(3, duration_text)
+        item.setText(3, self._format_duration(elapsed_seconds))
+        if iter_text is not None:
+            item.setText(2, iter_text)
+        if current_score_text is not None:
+            item.setText(5, current_score_text)
+        if best_score_text is not None:
+            item.setText(6, best_score_text)
 
     def set_overall_progress(
         self,
@@ -95,30 +101,33 @@ class SensorProgressPanel(QGroupBox):
         total_count: int,
         progress_percent: int,
         elapsed_seconds: int,
-        estimated_total_seconds: int,
     ) -> None:
         self.current_sensor_label.setText(
             f"Current Sensor: {current_camera or '-'}"
         )
         self.overall_progress_bar.setValue(max(0, min(100, int(progress_percent))))
         self.overall_progress_detail_label.setText(
-            f"{completed_count} / {total_count} | {self._format_duration(elapsed_seconds)} / ~{self._format_duration(estimated_total_seconds)}"
+            f"{completed_count} / {total_count} | {self._format_duration(elapsed_seconds)}"
         )
 
     def _ensure_sensor_progress_item(
-        self, camera_name: str, estimated_seconds: int
+        self, camera_name: str
     ) -> QTreeWidgetItem:
         item = self._sensor_progress_items.get(camera_name)
         if item is not None:
             return item
         item = QTreeWidgetItem(self.sensor_progress_tree)
         item.setText(0, camera_name)
+        item.setTextAlignment(0, Qt.AlignLeft | Qt.AlignVCenter)
         item.setText(1, "pending")
-        item.setText(3, f"0s / ~{self._format_duration(estimated_seconds)}")
+        item.setText(2, "")
+        item.setText(3, "0s")
+        item.setText(5, "")
+        item.setText(6, "")
         progress_bar = QProgressBar(self.sensor_progress_tree)
         progress_bar.setRange(0, 100)
         progress_bar.setValue(0)
-        self.sensor_progress_tree.setItemWidget(item, 2, progress_bar)
+        self.sensor_progress_tree.setItemWidget(item, 4, progress_bar)
         self._sensor_progress_items[camera_name] = item
         self._sensor_progress_bars[camera_name] = progress_bar
         return item

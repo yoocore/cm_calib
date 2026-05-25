@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import runpy
 import sys
 from pathlib import Path
@@ -35,6 +36,7 @@ def _dispatch_embedded_command() -> bool:
 
 
 def main() -> int:
+    os.environ["QT_LOGGING_RULES"] = "qt.qpa.screen=false"
     _patch_strenum()
     ensure_calibration_root_on_sys_path()
     apply_cmapi_to_current_process()

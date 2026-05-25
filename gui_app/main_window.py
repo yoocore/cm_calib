@@ -34,14 +34,22 @@ class MainWindow(QMainWindow):
         self._prepare_trace_emitted: set[str] = set()
         self._status_summary_lines: deque[str] = deque(maxlen=10)
         self._health_check_active = False
+        self._health_verification_pending = False
         self._calibration_recent_lines: deque[str] = deque(maxlen=20)
         self._calibration_task_started_at: float | None = None
         self._camera_started_at: dict[str, float] = {}
         self._camera_elapsed_final: dict[str, float] = {}
         self._camera_progress_status: dict[str, str] = {}
         self._camera_progress_detail: dict[str, str] = {}
+        self._camera_progress_iter_text: dict[str, str] = {}
+        self._camera_progress_current_score: dict[str, str] = {}
+        self._camera_progress_best_score: dict[str, str] = {}
+        self._camera_progress_current_iter: dict[str, int] = {}
+        self._camera_progress_total_iters: dict[str, int] = {}
         self._camera_task_best_progress: dict[str, dict[str, object]] = {}
         self._camera_last_progress: dict[str, dict[str, object]] = {}
+        self._camera_last_phase: dict[str, str] = {}
+        self._camera_progress_accrued_base: dict[str, int] = {}
         self.state = ApplicationState()
         self.config_service = ConfigService(self.project_root)
         self.precheck_service = PrecheckService(self.project_root)
@@ -92,6 +100,10 @@ class MainWindow(QMainWindow):
         self._health_timer = QTimer(self)
         self._health_timer.setInterval(3000)
         self._health_timer.timeout.connect(self._check_runtime_health)
+        self._ready_pending = False
+        self._health_check_timeout = QTimer(self)
+        self._health_check_timeout.setSingleShot(True)
+        self._health_check_timeout.timeout.connect(self._on_health_check_timeout)
         self._wire_signals()
         self._refresh_camera_list()
         self._apply_status(AppStatus.IDLE)
@@ -207,8 +219,15 @@ class MainWindow(QMainWindow):
         self._camera_elapsed_final = {}
         self._camera_progress_status = {camera_name: "pending" for camera_name in cameras}
         self._camera_progress_detail = {}
+        self._camera_progress_iter_text = {}
+        self._camera_progress_current_score = {}
+        self._camera_progress_best_score = {}
+        self._camera_progress_current_iter = {}
+        self._camera_progress_total_iters = {}
         self._camera_task_best_progress = {}
         self._camera_last_progress = {}
+        self._camera_last_phase = {}
+        self._camera_progress_accrued_base = {}
         self._rebuild_sensor_progress_plan()
         self._refresh_calibration_progress()
 
@@ -219,9 +238,7 @@ class MainWindow(QMainWindow):
 
     def _rebuild_sensor_progress_plan(self) -> None:
         cameras = self.cm_settings_panel.selected_cameras()
-        estimated_per_camera = self.calibration_panel.estimated_per_camera_seconds() if cameras else 0
-        estimated_total = estimated_per_camera * len(cameras) if cameras else 0
-        self.sensor_progress_panel.reset_sensor_progress(cameras, estimated_per_camera, estimated_total)
+        self.sensor_progress_panel.reset_sensor_progress(cameras)
 
     def _set_camera_progress_state(
         self,
@@ -241,7 +258,7 @@ class MainWindow(QMainWindow):
             self._camera_progress_detail[camera_key] = detail
         elif camera_key in self._camera_progress_detail:
             self._camera_progress_detail.pop(camera_key, None)
-        if finalize:
+        if finalize and camera_key not in self._camera_elapsed_final:
             started_at = self._camera_started_at.get(camera_key)
             if started_at is not None:
                 self._camera_elapsed_final[camera_key] = max(0.0, time.monotonic() - started_at)
@@ -259,10 +276,9 @@ class MainWindow(QMainWindow):
             self._rebuild_sensor_progress_plan()
             return
 
-        estimated_per_camera = self.calibration_panel.estimated_per_camera_seconds()
-        estimated_total = estimated_per_camera * len(cameras)
         now = time.monotonic()
-        overall_credit = 0.0
+        total_iter_current = 0
+        total_iter_max = 0
         completed_count = 0
         running_camera: str | None = None
         preparing_camera: str | None = None
@@ -277,19 +293,21 @@ class MainWindow(QMainWindow):
             elapsed_seconds = int(round(elapsed or 0.0))
             detail = self._camera_progress_detail.get(camera_name)
 
+            current_iter = self._camera_progress_current_iter.get(camera_name, 0) or 0
+            total_iters = self._camera_progress_total_iters.get(camera_name, 0) or 0
+
             if status == "finished":
                 progress_percent = 100
                 completed_count += 1
-                overall_credit += float(estimated_per_camera)
-                if elapsed is None:
-                    elapsed_seconds = estimated_per_camera
+                total_iter_current += total_iters if total_iters > 0 else 0
+                total_iter_max += total_iters if total_iters > 0 else 0
             elif status in {"preparing", "ready", "running"}:
-                effective_elapsed = min(float(elapsed or 0.0), float(estimated_per_camera))
-                overall_credit += effective_elapsed
-                if estimated_per_camera > 0:
-                    progress_percent = int(min(95, max(1 if effective_elapsed > 0 else 0, round((effective_elapsed / float(estimated_per_camera)) * 100))))
+                if total_iters > 0:
+                    progress_percent = int(min(99, max(0, round((current_iter / total_iters) * 100))))
                 else:
                     progress_percent = 0
+                total_iter_current += current_iter
+                total_iter_max += total_iters
                 if status == "running" and running_camera is None:
                     running_camera = camera_name
                 elif status == "preparing" and preparing_camera is None:
@@ -297,12 +315,12 @@ class MainWindow(QMainWindow):
                 elif status == "ready" and ready_camera is None:
                     ready_camera = camera_name
             elif status in {"failed", "stopped"}:
-                effective_elapsed = min(float(elapsed or 0.0), float(estimated_per_camera))
-                overall_credit += effective_elapsed
-                if estimated_per_camera > 0:
-                    progress_percent = int(min(99, round((effective_elapsed / float(estimated_per_camera)) * 100)))
+                if total_iters > 0:
+                    progress_percent = int(min(99, max(0, round((current_iter / total_iters) * 100))))
                 else:
                     progress_percent = 0
+                total_iter_current += current_iter
+                total_iter_max += total_iters
             else:
                 progress_percent = 0
 
@@ -311,22 +329,25 @@ class MainWindow(QMainWindow):
                 status=status,
                 progress_percent=progress_percent,
                 elapsed_seconds=elapsed_seconds,
-                estimated_seconds=estimated_per_camera,
                 detail=detail,
+                iter_text=self._camera_progress_iter_text.get(camera_name),
+                current_score_text=self._camera_progress_current_score.get(camera_name),
+                best_score_text=self._camera_progress_best_score.get(camera_name),
             )
 
         if self._calibration_task_started_at is not None:
             elapsed_total_seconds = int(round(max(0.0, now - self._calibration_task_started_at)))
         else:
             elapsed_total_seconds = int(round(sum(self._camera_elapsed_final.values())))
-        progress_percent = int(round((overall_credit / float(estimated_total)) * 100)) if estimated_total > 0 else 0
+        overall_percent = int(round((total_iter_current / total_iter_max) * 100)) if total_iter_max > 0 else 0
+        if any(self._camera_progress_status.get(c) not in {"finished"} for c in cameras):
+            overall_percent = min(99, overall_percent)
         self.sensor_progress_panel.set_overall_progress(
             current_camera=running_camera or preparing_camera or ready_camera,
             completed_count=completed_count,
             total_count=len(cameras),
-            progress_percent=min(100, max(0, progress_percent)),
+            progress_percent=min(100, max(0, overall_percent)),
             elapsed_seconds=elapsed_total_seconds,
-            estimated_total_seconds=estimated_total,
         )
 
     def _on_project_root_changed(self, path_text: str) -> None:
@@ -412,6 +433,12 @@ class MainWindow(QMainWindow):
             self.calibration_service.set_cm_install(cm_install)
             if not self._is_runtime_ready_for_direct_start(launch):
                 if self._is_runtime_almost_ready(launch):
+                    if self.runtime_service.is_running:
+                        self.output_panel.append_log(
+                            "runtime_service is busy (health probe?); stopping probe and proceeding...",
+                            source="system",
+                        )
+                        self.runtime_service.stop()
                     self._auto_prepare_and_start(launch)
                     return
                 summary_text = self._build_start_requires_prepare_summary(launch)
@@ -421,8 +448,36 @@ class MainWindow(QMainWindow):
             launch.skip_prepare_for_first_camera = True
             self.output_panel.append_log("Calib Start will reuse the existing prepared runtime for the first camera", source="runtime")
             self._append_status_summary_line("Calib Start will reuse the current prepared runtime.")
+            if self.calibration_service.is_running:
+                self.output_panel.append_log(
+                    f"calibration_service already running (qprocess state={self.calibration_service.process_service._process.state().name}); stopping first",
+                    source="system",
+                )
+                self.calibration_service.stop()
             self.calibration_service.start(launch)
         except Exception as exc:
+            if "already running" in str(exc).lower():
+                from PySide6.QtCore import QProcess
+                try:
+                    c_state = self.calibration_service.process_service._process.state().name
+                except Exception:
+                    c_state = "N/A"
+                try:
+                    r_state = self.runtime_service.process_service._process.state().name
+                except Exception:
+                    r_state = "N/A"
+                diag = (
+                    f"_start_calibration diagnostic: calibration.start() failed with 'already running'. "
+                    f"calib.is_running={self.calibration_service.is_running} calib._process.state={c_state} "
+                    f"runtime.is_running={self.runtime_service.is_running} runtime._process.state={r_state}"
+                )
+                self.output_panel.append_log(diag, source="system")
+                try:
+                    log_path = Path(self.project_root) / "SimOutput" / "camera_orchestration" / "start_diag.log"
+                    log_path.parent.mkdir(parents=True, exist_ok=True)
+                    log_path.write_text(diag + "\n")
+                except Exception:
+                    pass
             self._set_status_summary(str(exc))
             QMessageBox.critical(self, "Start Failed", str(exc))
 
@@ -539,8 +594,8 @@ class MainWindow(QMainWindow):
             self._set_status_summary(str(exc))
             QMessageBox.critical(self, "Status Query Failed", str(exc))
 
-    def _check_runtime_health(self) -> None:
-        if self.state.status != AppStatus.READY:
+    def _check_runtime_health(self, force: bool = False) -> None:
+        if not force and self.state.status != AppStatus.READY:
             return
         if self._health_check_active or self.runtime_service.is_running:
             return
@@ -573,13 +628,14 @@ class MainWindow(QMainWindow):
             self._health_timer.stop()
             if not self.runtime_service.is_running:
                 self._health_check_active = False
+                self._health_verification_pending = False
         if status in {AppStatus.FINISHED, AppStatus.FAILED, AppStatus.STOPPED}:
             self._calibration_task_started_at = None
             self._refresh_calibration_progress()
 
     def _runtime_status_probe_can_update_status(self) -> bool:
         if self.state.status == AppStatus.PREPARING:
-            return False
+            return self._health_check_active
         if self.state.status == AppStatus.RUNNING:
             return False
         if self.calibration_service.is_running:
@@ -598,7 +654,7 @@ class MainWindow(QMainWindow):
             and self.state.status in {AppStatus.FINISHED, AppStatus.FAILED, AppStatus.STOPPED, AppStatus.PASSIVE}
         )
 
-        self.calibration_panel.start_button.setEnabled(can_start and not runtime_busy and not calibration_running)
+        self.calibration_panel.start_button.setEnabled(can_start and not runtime_busy and not calibration_running and not self.calibration_service.is_running and not self._health_verification_pending and not self._ready_pending)
         self.calibration_panel.stop_button.setEnabled(calibration_running or preparing)
         controls_enabled = not runtime_busy and not calibration_running and not preparing
         self.cm_settings_panel.precheck_button.setEnabled(controls_enabled)
@@ -646,6 +702,10 @@ class MainWindow(QMainWindow):
     def _on_runtime_process_failed(self, error_text: str) -> None:
         was_health_check = self._health_check_active
         self._health_check_active = False
+        self._health_verification_pending = False
+        if self._ready_pending:
+            self._ready_pending = False
+            self._health_check_timeout.stop()
         self._pending_launch = None
         self.calibration_panel.set_failure_summary(self._build_failure_summary("Runtime process error", [error_text, *self._runtime_recent_lines]))
         if self._runtime_mode == "prepare":
@@ -679,10 +739,25 @@ class MainWindow(QMainWindow):
         else:
             self._sync_control_states()
 
+    @Slot()
+    def _on_health_check_timeout(self) -> None:
+        if not self._ready_pending:
+            return
+        self._ready_pending = False
+        self._health_check_active = False
+        self.runtime_service.stop()
+        self._append_status_summary_line("Health check timed out. Setting runtime status to ready.")
+        self._apply_status(AppStatus.READY)
+
     @Slot(int)
     def _on_runtime_process_finished(self, exit_code: int) -> None:
         was_health_check = self._health_check_active
         self._health_check_active = False
+        if self._ready_pending:
+            self._ready_pending = False
+            self._health_check_timeout.stop()
+            self._apply_status(AppStatus.READY)
+            return
         if self._runtime_mode == "prepare":
             if self._pending_launch is None and exit_code != 0:
                 self.calibration_panel.set_failure_summary(
@@ -713,13 +788,16 @@ class MainWindow(QMainWindow):
             else:
                 if self.state.status == AppStatus.PREPARING:
                     self._append_status_summary_line("CM Prepare process finished.")
-                    self._apply_status(AppStatus.PASSIVE)
                 else:
                     self._sync_control_states()
         else:
             if was_health_check and exit_code != 0:
                 self._append_status_summary_line("Runtime polling process ended unexpectedly.")
             self._sync_control_states()
+        if self._health_verification_pending and was_health_check:
+            self._health_verification_pending = False
+        if self._health_verification_pending and not was_health_check:
+            self._check_runtime_health(force=True)
         self._reset_prepare_trace_state()
         self._runtime_mode = None
 
@@ -751,7 +829,12 @@ class MainWindow(QMainWindow):
                     self._apply_status(AppStatus.FAILED)
                     QMessageBox.critical(self, "Calibration Start Failed", str(exc))
                 return
-            self._apply_status(AppStatus.READY if status == "ready" else AppStatus.PASSIVE)
+            if status == "ready":
+                self._health_verification_pending = True
+                if not self._health_check_active:
+                    self._check_runtime_health(force=True)
+            else:
+                self._apply_status(AppStatus.PASSIVE)
         elif mode == "status":
             if self._pending_launch is not None:
                 launch = self._pending_launch
@@ -775,7 +858,14 @@ class MainWindow(QMainWindow):
                     summary_line += f" | {status_reason}"
                 if self._runtime_status_probe_can_update_status():
                     self._append_status_summary_line(summary_line)
-                    self._apply_status(AppStatus.READY if status == "ready" else AppStatus.PASSIVE)
+                    if status == "ready":
+                        self._health_verification_pending = False
+                        self._set_status_summary("Runtime ready.")
+                        self.calibration_panel.set_phase_label("")
+                        self._ready_pending = True
+                        self._health_check_timeout.start(120_000)
+                    else:
+                        self._apply_status(AppStatus.PASSIVE)
                 else:
                     self._append_status_summary_line(
                         f"{summary_line} | keeping current Status={self.state.status.value}"
@@ -830,14 +920,62 @@ class MainWindow(QMainWindow):
             global_best = self._merge_camera_task_best_progress(camera_name, progress)
             best_score = self._as_float(global_best.get("best_score"))
             iter_index = self._as_int(progress.get("current_iter_index"))
-            progress_detail = None
-            if iter_index is not None:
-                progress_detail = f"iter={iter_index}"
-                if best_score is not None:
-                    progress_detail += f", best={best_score:.4f}"
-            elif best_score is not None:
-                progress_detail = f"best={best_score:.4f}"
-            self._set_camera_progress_state(camera_name, "running", detail=progress_detail)
+            current_score = self._as_float(progress.get("current_iter_score"))
+            calib_phase = str(progress.get("calib_phase") or "")
+            calib_dir_index = self._as_int(progress.get("calib_dir_index"))
+            calib_total_dirs = self._as_int(progress.get("calib_total_dirs"))
+            calib_max_iters = self._as_int(progress.get("calib_max_iters"))
+            calib_round_index = self._as_int(progress.get("calib_round_index"))
+            calib_round_count = self._as_int(progress.get("calib_round_count"))
+            calib_overall_total_iters = self._as_int(progress.get("calib_overall_total_iters"))
+            round_prefix = f"Rd:{calib_round_index} " if calib_round_index and calib_round_index > 0 else ""
+
+            last_phase = self._camera_last_phase.get(camera_name)
+            if calib_overall_total_iters and calib_round_count:
+                pass
+            elif last_phase and last_phase != calib_phase:
+                prev_total = self._camera_progress_total_iters.get(camera_name, 0)
+                base = self._camera_progress_accrued_base.get(camera_name, 0)
+                self._camera_progress_accrued_base[camera_name] = base + prev_total
+                self._camera_progress_current_iter[camera_name] = 0
+                self._camera_progress_total_iters[camera_name] = 0
+            self._camera_last_phase[camera_name] = calib_phase
+
+            if calib_phase == "explore":
+                dir_label = f"{calib_dir_index + 1}" if calib_dir_index is not None else "?"
+                iter_label = f"{iter_index}" if iter_index is not None else ""
+                self._camera_progress_iter_text[camera_name] = f"{round_prefix}E:D{dir_label} I{iter_label}"
+                if calib_overall_total_iters and calib_round_count:
+                    per_round = calib_overall_total_iters // calib_round_count
+                    round_offset = (calib_round_index - 1) * per_round
+                    current = round_offset + (calib_dir_index or 0) * (calib_max_iters or 0) + (iter_index or 0)
+                    self._camera_progress_current_iter[camera_name] = current
+                    self._camera_progress_total_iters[camera_name] = calib_overall_total_iters
+                elif calib_dir_index is not None and calib_total_dirs and calib_max_iters:
+                    accrued = self._camera_progress_accrued_base.get(camera_name, 0)
+                    phase_total = int(calib_total_dirs) * int(calib_max_iters)
+                    current = int(calib_dir_index) * int(calib_max_iters) + (iter_index or 0)
+                    self._camera_progress_current_iter[camera_name] = accrued + current
+                    self._camera_progress_total_iters[camera_name] = accrued + phase_total
+            elif calib_phase == "refine":
+                iter_label = f"{iter_index}" if iter_index is not None else ""
+                self._camera_progress_iter_text[camera_name] = f"{round_prefix}R:I{iter_label}"
+                if calib_overall_total_iters and calib_round_count:
+                    per_round = calib_overall_total_iters // calib_round_count
+                    round_offset = (calib_round_index - 1) * per_round
+                    explore_part = per_round - (calib_max_iters or 0)
+                    current = round_offset + explore_part + (iter_index or 0)
+                    self._camera_progress_current_iter[camera_name] = current
+                    self._camera_progress_total_iters[camera_name] = calib_overall_total_iters
+                elif calib_max_iters:
+                    accrued = self._camera_progress_accrued_base.get(camera_name, 0)
+                    self._camera_progress_current_iter[camera_name] = accrued + (iter_index or 0)
+                    self._camera_progress_total_iters[camera_name] = accrued + int(calib_max_iters)
+            if current_score is not None:
+                self._camera_progress_current_score[camera_name] = f"{current_score:.4f}"
+            if best_score is not None:
+                self._camera_progress_best_score[camera_name] = f"{best_score:.4f}"
+            self._set_camera_progress_state(camera_name, "running")
             progress_line = f"{camera_name}: iter={iter_index or '?'}"
             if best_score is not None:
                 progress_line += f" best={best_score:.6f}"
@@ -862,20 +1000,21 @@ class MainWindow(QMainWindow):
             camera_name = str(payload.get("camera") or "")
             self._set_camera_progress_state(camera_name, "finished", finalize=True)
             self._append_status_summary_line(f"{camera_name}: calibration finished.")
+            best_progress = self._camera_task_best_progress.get(camera_name, {})
             last_progress = self._camera_last_progress.get(camera_name, {})
             self.output_panel.update_camera_result(
                 CameraResult(
                     camera=camera_name,
                     status="finished",
-                    live_log=self._as_text(last_progress.get("live_log")),
-                    best_score=self._as_float(last_progress.get("best_score")),
+                    live_log=self._as_text(best_progress.get("live_log")),
+                    best_score=self._as_float(best_progress.get("best_score")),
                     current_iter_score=self._as_float(last_progress.get("current_iter_score")),
                     current_iter_index=self._as_int(last_progress.get("current_iter_index")),
                     current_iter_image=self._as_text(last_progress.get("current_iter_image")),
-                    result_json=self._as_text(last_progress.get("result_json")),
-                    best_image=self._as_text(last_progress.get("best_image")),
-                    best_score_image=self._as_text(last_progress.get("best_score_image")),
-                    best_overlay_image=self._as_text(last_progress.get("best_overlay_image")),
+                    result_json=self._as_text(best_progress.get("result_json")),
+                    best_image=self._as_text(best_progress.get("best_image")),
+                    best_score_image=self._as_text(best_progress.get("best_score_image")),
+                    best_overlay_image=self._as_text(best_progress.get("best_overlay_image")),
                 )
             )
         elif event_name == "task_failed":
@@ -931,6 +1070,9 @@ class MainWindow(QMainWindow):
                 finalize=final_status in {"finished", "failed", "stopped"},
             )
             self.output_panel.update_camera_result(result)
+            iter_score = self._as_float(calibration.get("current_iter_score"))
+            if iter_score is not None:
+                self._camera_progress_current_score[camera_name] = f"{iter_score:.4f}"
         self._refresh_calibration_progress()
 
     @staticmethod

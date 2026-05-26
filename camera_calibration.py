@@ -3578,12 +3578,24 @@ def _apply_initial_values_to_cfg(cfg: dict, values: Dict[str, float]) -> List[st
     for name, value in values.items():
         if name not in parameters:
             continue
-        parameters[name]["initial"] = float(value)
+        clamped = _clamp_to_parameter_bounds(parameters[name], float(value))
+        raw_value = float(value)
+        if abs(clamped - raw_value) > 1e-9:
+            print(f"Warning: clamping {name}={raw_value} to {clamped} (out of range)")
+        parameters[name]["initial"] = clamped
         updated_names.append(name)
 
     if not updated_names:
         raise ValueError("No matching parameters found in config")
     return updated_names
+
+
+def _clamp_to_parameter_bounds(param_cfg: dict, value: float) -> float:
+    min_value, max_value = _resolve_parameter_bounds(param_cfg)
+    decimals = int(param_cfg.get("decimals", 4))
+    min_value = round(min_value, decimals)
+    max_value = round(max_value, decimals)
+    return max(min_value, min(max_value, round(value, decimals)))
 
 
 def _quantize_float(value: float, decimals: int) -> float:
@@ -3621,13 +3633,7 @@ def _build_explicit_parameter_config(param_cfg: dict, initial_value: float) -> d
     decimals = int(param_cfg.get("decimals", 4))
     min_value = round(min_value, decimals)
     max_value = round(max_value, decimals)
-    quantized_initial = _quantize_float(initial_value, decimals)
-    _EPS = 1e-9
-    if quantized_initial < min_value - _EPS or quantized_initial > max_value + _EPS:
-        raise ValueError(
-            f"initial value {quantized_initial} is outside range [{min_value}, {max_value}]"
-        )
-    quantized_initial = max(min_value, min(max_value, quantized_initial))
+    quantized_initial = _clamp_to_parameter_bounds(param_cfg, initial_value)
 
     explicit_param_cfg = copy.deepcopy(param_cfg)
     explicit_param_cfg["initial"] = quantized_initial
@@ -4392,6 +4398,16 @@ def _resolve_round_seed_anchor(
             for name, value in history_values.items()
             if isinstance(value, (int, float))
         }
+        parameters = cfg.get("parameters", {})
+        for name in list(anchor_values.keys()):
+            param_cfg = parameters.get(name)
+            if param_cfg is None:
+                continue
+            raw = anchor_values[name]
+            clamped = _clamp_to_parameter_bounds(param_cfg, raw)
+            if abs(clamped - raw) > 1e-9:
+                print(f"Warning: clamping history {name}={raw} to {clamped} (out of current config range)")
+            anchor_values[name] = clamped
         anchor_source = "history_best"
 
     try:

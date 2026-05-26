@@ -15,8 +15,8 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QScrollArea,
-    QTextEdit,
     QSizePolicy,
+    QTextEdit,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -125,6 +125,7 @@ class ArtifactPreviewLabel(QLabel):
         self._artifact_path: str | None = None
         self.setAlignment(Qt.AlignCenter)
         self.setWordWrap(True)
+        self.setMinimumSize(180, 120)
         self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         self.setStyleSheet("border: 1px solid #666; padding: 4px;")
 
@@ -189,6 +190,7 @@ class CameraResultCard(QGroupBox):
         self.camera_name = camera_name
 
         self.status_value = QLabel("pending")
+        self.init_score_value = QLabel("-")
         self.best_score_value = QLabel("-")
         self.current_iter_value = QLabel("-")
         self.iter_preview = ArtifactPreviewLabel("")
@@ -201,24 +203,27 @@ class CameraResultCard(QGroupBox):
         self.open_score_button = QPushButton("Score")
         self.open_overlay_button = QPushButton("Overlay")
 
-        info_layout = QGridLayout()
-        info_layout.addWidget(QLabel("Status"), 0, 0)
-        info_layout.addWidget(self.status_value, 0, 1)
-        info_layout.addWidget(QLabel("Running Best"), 1, 0)
-        info_layout.addWidget(self.best_score_value, 1, 1)
-        info_layout.addWidget(QLabel("Current Iter"), 2, 0)
-        info_layout.addWidget(self.current_iter_value, 2, 1)
+        info_layout = QHBoxLayout()
+        info_layout.setContentsMargins(0, 0, 0, 0)
+        info_layout.addWidget(self.status_value)
+        info_layout.addWidget(QLabel(" | Init:"))
+        info_layout.addWidget(self.init_score_value)
+        info_layout.addWidget(QLabel("| Best:"))
+        info_layout.addWidget(self.best_score_value)
+        info_layout.addWidget(QLabel("| Current:"))
+        info_layout.addWidget(self.current_iter_value)
+        info_layout.addStretch(1)
 
         self._iter_group = self._make_preview_group("Current Iter", self.iter_preview)
         self._score_group = self._make_preview_group("Best Score", self.score_preview)
         self._overlay_group = self._make_preview_group("Best Overlay", self.overlay_preview)
 
         previews = QWidget(self)
-        previews_layout = QHBoxLayout(previews)
-        previews_layout.setContentsMargins(0, 0, 0, 0)
-        previews_layout.addWidget(self._iter_group, 1)
-        previews_layout.addWidget(self._score_group, 1)
-        previews_layout.addWidget(self._overlay_group, 1)
+        self._previews_layout = QHBoxLayout(previews)
+        self._previews_layout.setContentsMargins(0, 0, 0, 0)
+        self._previews_layout.addWidget(self._iter_group)
+        self._previews_layout.addWidget(self._score_group)
+        self._previews_layout.addWidget(self._overlay_group)
 
         actions = QWidget(self)
         actions_layout = QHBoxLayout(actions)
@@ -284,6 +289,7 @@ class CameraResultCard(QGroupBox):
 
     def update_result(self, result: CameraResult) -> None:
         self.status_value.setText("fail" if result.status == "failed" else result.status)
+        self.init_score_value.setText(_format_score(result.init_score))
         self.best_score_value.setText(_format_score(result.best_score))
         self.current_iter_value.setText(_format_score(result.current_iter_score))
         if result.current_iter_image is not None:
@@ -298,12 +304,26 @@ class CameraResultCard(QGroupBox):
             self.overlay_preview.set_artifact(result.best_overlay_image)
         else:
             self.overlay_preview.set_artifact(None)
+        self._update_preview_stretch()
+
         self.open_log_button.setEnabled(bool(result.live_log))
         self.open_result_button.setEnabled(bool(result.result_json))
         self.open_current_button.setEnabled(bool(result.current_iter_image or result.best_image))
         self.open_best_button.setEnabled(bool(result.best_image))
         self.open_score_button.setEnabled(bool(result.best_score_image))
         self.open_overlay_button.setEnabled(bool(result.best_overlay_image))
+
+    def _update_preview_stretch(self) -> None:
+        from PySide6.QtGui import QImage
+
+        for i, label in enumerate([self.iter_preview, self.score_preview, self.overlay_preview]):
+            stretch = 1
+            path = label._artifact_path
+            if path:
+                img = QImage(path)
+                if not img.isNull() and img.height() > 0:
+                    stretch = max(1, int(round(img.width() / img.height() * 10)))
+            self._previews_layout.setStretch(i, stretch)
 
     def mousePressEvent(self, event) -> None:
         self.selected.emit(self.camera_name)
@@ -464,7 +484,7 @@ class OutputPanel(QGroupBox):
 
         if self.result_tree.currentItem() is None:
             self._select_camera(result.camera)
-        elif self.result_tree.currentItem() is item or result.status in {"running", "finished", "failed"}:
+        elif self.result_tree.currentItem() is item or result.status in {"running", "preparing", "ready", "finished", "failed"}:
             self._select_camera(result.camera)
 
     def resolve_item_artifact(self, item: QTreeWidgetItem, column: int) -> str | None:

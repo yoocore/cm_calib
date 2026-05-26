@@ -6,6 +6,7 @@ import signal
 import subprocess
 import sys
 import uuid
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -398,11 +399,13 @@ def _run_single_camera_process(
     )
     _ACTIVE_CHILD = process
     summary_payload: Optional[dict[str, Any]] = None
+    recent_lines: deque[str] = deque(maxlen=15)
 
     assert process.stdout is not None
     for line in process.stdout:
         text = line.rstrip("\r\n")
         print(f"[{camera_name}] {text}", flush=True)
+        recent_lines.append(text)
         if text.startswith(CALIBRATION_SUMMARY_PREFIX):
             _, _, raw_json = text.partition(":")
             raw_json = raw_json.strip()
@@ -425,7 +428,11 @@ def _run_single_camera_process(
     if _STOP_REQUESTED:
         raise KeyboardInterrupt("Stop requested during calibration task")
     if return_code != 0:
-        raise RuntimeError(f"camera_calibration.py exited with code {return_code} for camera {camera_name}")
+        tail = "\n".join(recent_lines)
+        raise RuntimeError(
+            f"camera_calibration.py exited with code {return_code} for camera {camera_name}.\n{tail}\n"
+            f"See run.log in the camera output directory for the full log."
+        )
     if summary_payload is None:
         raise RuntimeError(f"Missing {CALIBRATION_SUMMARY_PREFIX} line for camera {camera_name}")
 

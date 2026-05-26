@@ -1959,12 +1959,28 @@ def _read_latest_result_path(marker_path: Path, fallback_output_dir: Path) -> Pa
     return _find_latest_result_path(fallback_output_dir)
 
 
+def _compute_board_signature(boards: Any) -> Optional[frozenset]:
+    if not isinstance(boards, list) or not boards:
+        return None
+    entries = []
+    for board in boards:
+        if not isinstance(board, dict):
+            return None
+        bid = board.get("board_id")
+        btype = board.get("board_type")
+        if not bid or not btype:
+            return None
+        entries.append((str(bid), str(btype)))
+    return frozenset(entries)
+
+
 def _load_history_best_run_for_config(
     config_path: Path,
     camera_name: Optional[str] = None,
 ) -> Optional[dict]:
     cfg_payload = _load_json_if_exists(config_path)
     required_score_scope = _resolve_score_scope_from_cfg(cfg_payload)
+    cfg_board_signature = _compute_board_signature(cfg_payload.get("boards")) if isinstance(cfg_payload, dict) else None
     config_camera_name = _camera_name_from_config_path(config_path)
     history_camera_name = _canonical_camera_group_name(config_camera_name)
     if not history_camera_name and camera_name:
@@ -1988,6 +2004,10 @@ def _load_history_best_run_for_config(
             if required_score_scope is not None:
                 digest_score_scope = _resolve_score_scope_from_payload(digest)
                 if digest_score_scope != required_score_scope:
+                    continue
+            if cfg_board_signature is not None:
+                result_signature = _compute_board_signature(payload.get("boards"))
+                if result_signature is None or result_signature != cfg_board_signature:
                     continue
             if best_run is None or float(digest.get("final_score", float("inf"))) < float(
                 best_run.get("final_score", float("inf"))

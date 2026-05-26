@@ -2192,25 +2192,32 @@ def _write_initial_values_to_config_if_best(
 ) -> bool:
     history_best_run = _load_history_best_run_for_config(config_path, camera_name)
     history_best_score: Optional[float] = None
-    history_best_result_json: Optional[str] = None
     if isinstance(history_best_run, dict):
         try:
             history_best_score = float(history_best_run.get("final_score"))
         except Exception:
             history_best_score = None
-        raw_result_json = history_best_run.get("result_json")
-        if isinstance(raw_result_json, str) and raw_result_json.strip():
-            history_best_result_json = raw_result_json
 
     if history_best_score is not None and float(best_score) > history_best_score + tolerance:
-        print(
-            "Skipped config initial update: "
-            f"path={config_path}, current_best={float(best_score):.6f}, "
-            f"history_best={history_best_score:.6f}, "
-            f"history_result={history_best_result_json or 'n/a'}"
+        history_values = (
+            history_best_run.get("final_values") if isinstance(history_best_run, dict) else None
         )
-        return False
+        if isinstance(history_values, dict) and history_values:
+            print(
+                "Config update: using history best "
+                f"path={config_path}, history_score={history_best_score:.6f}, "
+                f"current_score={float(best_score):.6f}"
+            )
+            _write_initial_values_to_config(
+                config_path,
+                {k: float(v) for k, v in history_values.items() if isinstance(v, (int, float))},
+            )
+            return True
 
+    print(
+        "Config update: using current best "
+        f"path={config_path}, score={float(best_score):.6f}"
+    )
     _write_initial_values_to_config(config_path, values)
     return True
 

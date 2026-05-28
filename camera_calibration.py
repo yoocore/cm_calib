@@ -3583,14 +3583,22 @@ def _format_scalar_value_map(values: Dict[str, float]) -> str:
     return ", ".join(ordered)
 
 
+_DEFAULT_BOUNDS_MULTIPLIER = 30.0
+
+
 def _resolve_parameter_bounds(param_cfg: dict) -> Tuple[float, float]:
     initial_value = float(param_cfg["initial"])
     if "min_offset" in param_cfg or "max_offset" in param_cfg:
         min_value = initial_value + float(param_cfg.get("min_offset", 0.0))
         max_value = initial_value + float(param_cfg.get("max_offset", 0.0))
-    else:
+    elif "min" in param_cfg and "max" in param_cfg:
         min_value = float(param_cfg["min"])
         max_value = float(param_cfg["max"])
+    else:
+        step = float(param_cfg.get("step", 0.001))
+        half_range = step * _DEFAULT_BOUNDS_MULTIPLIER
+        min_value = initial_value - half_range
+        max_value = initial_value + half_range
     return min_value, max_value
 
 
@@ -6442,9 +6450,14 @@ class CameraCalibrator:
                 max_offset = float(p.get("max_offset", 0.0))
                 min_value = initial_value + min_offset
                 max_value = initial_value + max_offset
-            else:
+            elif "min" in p and "max" in p:
                 min_value = float(p["min"])
                 max_value = float(p["max"])
+            else:
+                step = float(p.get("step", 0.001))
+                half_range = step * _DEFAULT_BOUNDS_MULTIPLIER
+                min_value = initial_value - half_range
+                max_value = initial_value + half_range
             if min_value > max_value:
                 raise ValueError(
                     f"Parameter {name} has invalid range: min ({min_value}) > max ({max_value})"

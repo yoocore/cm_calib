@@ -2105,6 +2105,135 @@ def _camera_name_matches_vehicle_sensor(camera_name: str, sensor_name: str) -> b
     return token_pos == len(camera_tokens)
 
 
+def _read_sensor_values_from_vehicle(
+    vehicle_path: Path,
+    camera_name: str,
+    sensor_name_override: Optional[str] = None,
+) -> Optional[Dict[str, float]]:
+    if not vehicle_path.exists():
+        print(f"Vehicle file not found: {vehicle_path}")
+        return None
+
+    text = vehicle_path.read_text(encoding="utf-8")
+    lines = text.splitlines()
+
+    sensor_name_by_index: Dict[str, str] = {}
+    ref_param_by_sensor_index: Dict[str, str] = {}
+    pos_by_sensor_index: Dict[str, str] = {}
+    rot_by_sensor_index: Dict[str, str] = {}
+
+    for line in lines:
+        stripped = line.rstrip("\r\n")
+        match = _VEHICLE_SENSOR_NAME_RE.match(stripped)
+        if match is not None:
+            sensor_name_by_index[match.group("index")] = match.group("value").strip()
+            continue
+        match = _VEHICLE_SENSOR_REF_PARAM_RE.match(stripped)
+        if match is not None:
+            ref_value = match.group("value").strip()
+            if ref_value:
+                ref_param_by_sensor_index[match.group("index")] = ref_value
+            continue
+        match = _VEHICLE_SENSOR_POS_RE.match(stripped)
+        if match is not None:
+            pos_by_sensor_index[match.group("index")] = match.group("value").strip()
+            continue
+        match = _VEHICLE_SENSOR_ROT_RE.match(stripped)
+        if match is not None:
+            rot_by_sensor_index[match.group("index")] = match.group("value").strip()
+            continue
+
+    target_name = sensor_name_override or camera_name
+    sensor_index: Optional[str] = None
+    for idx, name in sensor_name_by_index.items():
+        if _camera_name_matches_vehicle_sensor(target_name, name):
+            sensor_index = idx
+            break
+
+    if sensor_index is None:
+        print(f"Sensor '{target_name}' not found in vehicle file {vehicle_path}")
+        return None
+
+    ref_param_index = ref_param_by_sensor_index.get(sensor_index)
+    if not ref_param_index:
+        print(f"Sensor.{sensor_index} has no Ref.Param in {vehicle_path}")
+        return None
+
+    pos_text = pos_by_sensor_index.get(sensor_index, "")
+    pos_parts = pos_text.split()
+    if len(pos_parts) < 3:
+        print(f"Sensor.{sensor_index}.pos has fewer than 3 values: {pos_text!r}")
+        return None
+
+    rot_text = rot_by_sensor_index.get(sensor_index, "")
+    rot_parts = rot_text.split()
+    if len(rot_parts) < 3:
+        print(f"Sensor.{sensor_index}.rot has fewer than 3 values: {rot_text!r}")
+        return None
+
+    param_values: Dict[str, str] = {}
+    for line in lines:
+        stripped = line.rstrip("\r\n")
+        match = _VEHICLE_SENSOR_PARAM_VALUE_RE.match(stripped)
+        if match is not None and match.group("index") == ref_param_index:
+            param_values[match.group("field")] = match.group("value").strip()
+
+    def _parse_float(text: str) -> Optional[float]:
+        try:
+            return float(text)
+        except (ValueError, TypeError):
+            return None
+
+    result: Dict[str, float] = {}
+    result["pos_x"] = _parse_float(pos_parts[0])
+    result["pos_y"] = _parse_float(pos_parts[1])
+    result["pos_z"] = _parse_float(pos_parts[2])
+    result["roll"] = _parse_float(rot_parts[0])
+    result["pitch"] = _parse_float(rot_parts[1])
+    result["yaw"] = _parse_float(rot_parts[2])
+
+    fov_text = param_values.get("FoV", "")
+    fov_value = _parse_float(fov_text)
+    if fov_value is not None:
+        result["lens_fov"] = fov_value
+
+    scale_text = param_values.get("ImageScaling", "")
+    scale_value = _parse_float(scale_text)
+    if scale_value is not None:
+        result["lens_scale"] = scale_value
+
+    ppo_text = param_values.get("PrincipalPntOffset", "")
+    ppo_parts = ppo_text.split()
+    if len(ppo_parts) >= 2:
+        ppo_x = _parse_float(ppo_parts[0])
+        ppo_y = _parse_float(ppo_parts[1])
+        if ppo_x is not None:
+            result["lens_offset_x"] = ppo_x
+        if ppo_y is not None:
+            result["lens_offset_y"] = ppo_y
+
+    result = {k: v for k, v in result.items() if v is not None}
+
+    if not result:
+        print(f"No valid values extracted for sensor '{target_name}' from {vehicle_path}")
+        return None
+
+    print(f"Read {len(result)} values from vehicle file for sensor '{target_name}': "
+          + ", ".join(f"{k}={v}" for k, v in result.items()))
+    return result
+
+
+def _read_vehicle_initial_values_via_dde(camera_name: str) -> Optional[Dict[str, float]]:
+    runtime_context = _probe_runtime_vehicle_context()
+    if runtime_context is None:
+        return None
+    vehicle_path = runtime_context.get("vehicle_path")
+    if not vehicle_path:
+        return None
+    sensor_name = runtime_context.get("sensor_name")
+    return _read_sensor_values_from_vehicle(Path(vehicle_path), camera_name, sensor_name)
+
+
 def _parse_runtime_vehicle_probe_detail(detail: str) -> Dict[str, str]:
     parsed: Dict[str, str] = {}
     for raw_line in str(detail).splitlines():

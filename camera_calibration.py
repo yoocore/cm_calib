@@ -2032,6 +2032,99 @@ def _load_history_best_run_for_config(
     return None
 
 
+def _load_history_best_run_any_boards(
+    config_path: Path,
+    camera_name: Optional[str] = None,
+) -> Optional[dict]:
+    cfg_payload = _load_json_if_exists(config_path)
+    required_score_scope = _resolve_score_scope_from_cfg(cfg_payload)
+    config_camera_name = _camera_name_from_config_path(config_path)
+    history_camera_name = _canonical_camera_group_name(config_camera_name)
+    if not history_camera_name and camera_name:
+        history_camera_name = _canonical_camera_group_name(camera_name)
+    if not history_camera_name:
+        return None
+    history_dirs = _iter_camera_history_dirs(history_camera_name)
+    best_entry: Optional[dict] = None
+    best_score: Optional[float] = None
+    for history_dir in history_dirs:
+        for result_path in sorted(history_dir.rglob("result.json")):
+            payload = _load_json_if_exists(result_path)
+            if not isinstance(payload, dict):
+                continue
+            digest = _build_run_digest_from_result_payload(
+                payload,
+                result_path,
+                include_in_progress=True,
+            )
+            if digest is None:
+                continue
+            if required_score_scope is not None:
+                digest_score_scope = _resolve_score_scope_from_payload(digest)
+                if digest_score_scope != required_score_scope:
+                    continue
+            final_score = digest.get("final_score")
+            if final_score is None:
+                continue
+            try:
+                final_score = float(final_score)
+            except (TypeError, ValueError):
+                continue
+            if best_score is not None and final_score >= best_score:
+                continue
+            best_score = final_score
+            best_entry = digest
+    if isinstance(best_entry, dict):
+        print(f"[history_any_boards] FOUND: score={best_entry.get('final_score')}, src={best_entry.get('result_path')}")
+        return dict(best_entry)
+    return None
+
+
+def _evaluate_seed_candidate(
+    config_path: Path,
+    cfg: dict,
+    candidate_values: Dict[str, float],
+    camera_name: str,
+) -> Optional[float]:
+    try:
+        temp_cfg = _cfg_with_initial_values(copy.deepcopy(cfg), candidate_values)
+        calib = CameraCalibrator(temp_cfg, config_path=config_path)
+        score = calib._apply_initial_value_map_with_retry()
+        return float(score)
+    except Exception as exc:
+        print(f"[seed_eval] Failed to evaluate candidate: {exc}")
+        return None
+
+
+def _compare_and_pick_better_seed(
+    config_path: Path,
+    cfg: dict,
+    camera_name: str,
+    matched_values: Dict[str, float],
+    matched_score: Optional[float],
+    any_board_values: Dict[str, float],
+    any_board_score: Optional[float],
+) -> Tuple[Dict[str, float], Optional[float], str]:
+    print(f"[seed_compare] Evaluating matched candidate (history score={matched_score})...")
+    score_a = _evaluate_seed_candidate(config_path, cfg, matched_values, camera_name)
+    print(f"[seed_compare] Evaluating any-board candidate (history score={any_board_score})...")
+    score_b = _evaluate_seed_candidate(config_path, cfg, any_board_values, camera_name)
+
+    if score_a is None and score_b is None:
+        return matched_values, matched_score, "matched"
+    if score_a is None:
+        return any_board_values, any_board_score, "any_board"
+    if score_b is None:
+        return matched_values, matched_score, "matched"
+
+    if score_b < score_a:
+        print(f"[seed_compare] any-board candidate wins: {score_b:.1f} < {score_a:.1f}")
+        return any_board_values, any_board_score, "any_board"
+    else:
+        print(f"[seed_compare] matched candidate wins: {score_a:.1f} <= {score_b:.1f}")
+        return matched_values, matched_score, "matched"
+
+
 def _write_initial_values_to_config(config_path: Path, values: Dict[str, float]) -> None:
     with open(config_path, "r", encoding="utf-8-sig") as f:
         cfg = json.load(f)
@@ -4893,7 +4986,30 @@ def _run_plain_optimize_rounds(
         cfg,
         round_seed_policy,
     )
-    if round_seed_policy["enabled"]:
+    any_board_run = _load_history_best_run_any_boards(config_path, camera_name)
+    if isinstance(any_board_run, dict) and anchor_source == "history_best":
+        any_board_values_raw = any_board_run.get("final_values", {})
+        any_board_values = {
+            name: float(value)
+            for name, value in any_board_values_raw.items()
+            if isinstance(value, (int, float))
+        }
+        parameters = cfg.get("parameters", {})
+        for name in list(any_board_values.keys()):
+            param_cfg = parameters.get(name)
+            if param_cfg is not None:
+                any_board_values[name] = _clamp_to_parameter_bounds(param_cfg, any_board_values[name])
+        any_board_score_val = None
+        try:
+            any_board_score_val = float(any_board_run.get("final_score"))
+        except Exception:
+            pass
+        anchor_values, anchor_score, anchor_source = _compare_and_pick_better_seed(
+            config_path, cfg, camera_name,
+            anchor_values, anchor_score,
+            any_board_values, any_board_score_val,
+        )
+    if round_seed_policy["enabled"] or round_seed_policy.get("prefer_history_best", True):
         active_cfg = _cfg_with_initial_values(active_cfg, anchor_values)
         verify_params = active_cfg.get("parameters", {})
         anchor_mismatches = []
@@ -5031,7 +5147,30 @@ def _run_multi_start_rounds(
         cfg,
         round_seed_policy,
     )
-    if round_seed_policy["enabled"]:
+    any_board_run = _load_history_best_run_any_boards(config_path, camera_name)
+    if isinstance(any_board_run, dict) and anchor_source == "history_best":
+        any_board_values_raw = any_board_run.get("final_values", {})
+        any_board_values = {
+            name: float(value)
+            for name, value in any_board_values_raw.items()
+            if isinstance(value, (int, float))
+        }
+        parameters = cfg.get("parameters", {})
+        for name in list(any_board_values.keys()):
+            param_cfg = parameters.get(name)
+            if param_cfg is not None:
+                any_board_values[name] = _clamp_to_parameter_bounds(param_cfg, any_board_values[name])
+        any_board_score_val = None
+        try:
+            any_board_score_val = float(any_board_run.get("final_score"))
+        except Exception:
+            pass
+        anchor_values, anchor_score, anchor_source = _compare_and_pick_better_seed(
+            config_path, cfg, camera_name,
+            anchor_values, anchor_score,
+            any_board_values, any_board_score_val,
+        )
+    if round_seed_policy["enabled"] or round_seed_policy.get("prefer_history_best", True):
         active_cfg = _cfg_with_initial_values(active_cfg, anchor_values)
         verify_params = active_cfg.get("parameters", {})
         anchor_mismatches = []
@@ -5183,7 +5322,30 @@ def _run_explore_then_refine_rounds(
         cfg,
         round_seed_policy,
     )
-    if round_seed_policy["enabled"]:
+    any_board_run = _load_history_best_run_any_boards(config_path, camera_name)
+    if isinstance(any_board_run, dict) and anchor_source == "history_best":
+        any_board_values_raw = any_board_run.get("final_values", {})
+        any_board_values = {
+            name: float(value)
+            for name, value in any_board_values_raw.items()
+            if isinstance(value, (int, float))
+        }
+        parameters = cfg.get("parameters", {})
+        for name in list(any_board_values.keys()):
+            param_cfg = parameters.get(name)
+            if param_cfg is not None:
+                any_board_values[name] = _clamp_to_parameter_bounds(param_cfg, any_board_values[name])
+        any_board_score_val = None
+        try:
+            any_board_score_val = float(any_board_run.get("final_score"))
+        except Exception:
+            pass
+        anchor_values, anchor_score, anchor_source = _compare_and_pick_better_seed(
+            config_path, cfg, camera_name,
+            anchor_values, anchor_score,
+            any_board_values, any_board_score_val,
+        )
+    if round_seed_policy["enabled"] or round_seed_policy.get("prefer_history_best", True):
         active_cfg = _cfg_with_initial_values(active_cfg, anchor_values)
         verify_params = active_cfg.get("parameters", {})
         anchor_mismatches = []

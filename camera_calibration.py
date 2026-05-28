@@ -2041,10 +2041,25 @@ def _write_initial_values_to_config(config_path: Path, values: Dict[str, float])
     with open(config_path, "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=4)
 
-    print(
-        "Updated config initial values: "
-        f"path={config_path}, names={', '.join(sorted(updated_names))}"
-    )
+    with open(config_path, "r", encoding="utf-8-sig") as f:
+        verify_cfg = json.load(f)
+    verify_params = verify_cfg.get("parameters", {})
+    mismatches = []
+    for name in updated_names:
+        expected = _clamp_to_parameter_bounds(cfg["parameters"][name], float(values[name]))
+        actual = float(verify_params.get(name, {}).get("initial", float("nan")))
+        if abs(actual - expected) > 1e-9:
+            mismatches.append(f"{name}: expected={expected}, actual={actual}")
+    if mismatches:
+        print(
+            f"CONFIG READBACK MISMATCH: path={config_path}, "
+            f"mismatches={mismatches}"
+        )
+    else:
+        print(
+            "Updated config initial values: "
+            f"path={config_path}, names={', '.join(sorted(updated_names))}, readback=OK"
+        )
 
 
 def _write_initial_values_to_config_if_best(
@@ -2546,13 +2561,54 @@ def _write_best_values_to_vehicle_config(
     if changed_fields:
         vehicle_path.write_text("".join(lines), encoding="utf-8")
 
-    print(
-        "Vehicle writeback: "
-        f"path={vehicle_path}, sensor={sensor_name}, ref_param={ref_param_index}, "
-        f"best_score={float(best_score):.6f}, "
-        f"backup={'created' if backup_created else 'reused'}:{backup_path}, "
-        f"changes={', '.join(changed_fields) if changed_fields else '-'}"
-    )
+        verify_text = vehicle_path.read_text(encoding="utf-8")
+        verify_mismatches = []
+        for field in changed_fields:
+            if field == f"Sensor.{sensor_index}.pos":
+                expected = " ".join(_format_vehicle_float(float(values[name])) for name in ("pos_x", "pos_y", "pos_z"))
+                for vline in verify_text.splitlines():
+                    m = _VEHICLE_SENSOR_POS_RE.match(vline.rstrip())
+                    if m and m.group("index") == sensor_index:
+                        if m.group("value").strip() != expected:
+                            verify_mismatches.append(f"pos: expected={expected}, actual={m.group('value').strip()}")
+                        break
+            elif field == f"Sensor.{sensor_index}.rot":
+                expected = " ".join(_format_vehicle_float(float(values[name])) for name in ("roll", "pitch", "yaw"))
+                for vline in verify_text.splitlines():
+                    m = _VEHICLE_SENSOR_ROT_RE.match(vline.rstrip())
+                    if m and m.group("index") == sensor_index:
+                        if m.group("value").strip() != expected:
+                            verify_mismatches.append(f"rot: expected={expected}, actual={m.group('value').strip()}")
+                        break
+            elif field.startswith(f"Sensor.Param.{ref_param_index}.FoV"):
+                expected = _format_vehicle_float(float(values.get("lens_fov", 0)))
+                for vline in verify_text.splitlines():
+                    m = _VEHICLE_SENSOR_PARAM_VALUE_RE.match(vline.rstrip())
+                    if m and m.group("index") == ref_param_index and m.group("field") == "FoV":
+                        if m.group("value").strip() != expected:
+                            verify_mismatches.append(f"FoV: expected={expected}, actual={m.group('value').strip()}")
+                        break
+        if verify_mismatches:
+            print(
+                f"VEHICLE READBACK MISMATCH: path={vehicle_path}, sensor={sensor_name}, "
+                f"mismatches={verify_mismatches}"
+            )
+        else:
+            print(
+                "Vehicle writeback: "
+                f"path={vehicle_path}, sensor={sensor_name}, ref_param={ref_param_index}, "
+                f"best_score={float(best_score):.6f}, "
+                f"backup={'created' if backup_created else 'reused'}:{backup_path}, "
+                f"changes={', '.join(changed_fields)}, readback=OK"
+            )
+    else:
+        print(
+            "Vehicle writeback: "
+            f"path={vehicle_path}, sensor={sensor_name}, ref_param={ref_param_index}, "
+            f"best_score={float(best_score):.6f}, "
+            f"backup={'created' if backup_created else 'reused'}:{backup_path}, "
+            f"changes=-"
+        )
     return {
         "vehicle_path": str(vehicle_path),
         "vehicle_backup_path": str(backup_path),
@@ -4801,6 +4857,22 @@ def _run_plain_optimize_rounds(
     )
     if round_seed_policy["enabled"]:
         active_cfg = _cfg_with_initial_values(active_cfg, anchor_values)
+        verify_params = active_cfg.get("parameters", {})
+        anchor_mismatches = []
+        for name, expected in anchor_values.items():
+            actual = float(verify_params.get(name, {}).get("initial", float("nan")))
+            if abs(actual - expected) > 1e-9:
+                anchor_mismatches.append(f"{name}: expected={expected}, actual={actual}")
+        if anchor_mismatches:
+            print(
+                f"ANCHOR APPLY MISMATCH: camera={camera_name}, source={anchor_source}, "
+                f"score={anchor_score}, mismatches={anchor_mismatches}"
+            )
+        else:
+            print(
+                f"Anchor applied: camera={camera_name}, source={anchor_source}, "
+                f"score={anchor_score}, values={_format_scalar_value_map(anchor_values)}, verify=OK"
+            )
     round_summaries: List[dict] = []
     best_round: Optional[dict] = None
     escape_stagnation_rounds = 0
@@ -4923,6 +4995,22 @@ def _run_multi_start_rounds(
     )
     if round_seed_policy["enabled"]:
         active_cfg = _cfg_with_initial_values(active_cfg, anchor_values)
+        verify_params = active_cfg.get("parameters", {})
+        anchor_mismatches = []
+        for name, expected in anchor_values.items():
+            actual = float(verify_params.get(name, {}).get("initial", float("nan")))
+            if abs(actual - expected) > 1e-9:
+                anchor_mismatches.append(f"{name}: expected={expected}, actual={actual}")
+        if anchor_mismatches:
+            print(
+                f"ANCHOR APPLY MISMATCH: camera={camera_name}, source={anchor_source}, "
+                f"score={anchor_score}, mismatches={anchor_mismatches}"
+            )
+        else:
+            print(
+                f"Anchor applied: camera={camera_name}, source={anchor_source}, "
+                f"score={anchor_score}, values={_format_scalar_value_map(anchor_values)}, verify=OK"
+            )
     round_summaries: List[dict] = []
     best_round: Optional[dict] = None
     escape_stagnation_rounds = 0
@@ -5059,6 +5147,22 @@ def _run_explore_then_refine_rounds(
     )
     if round_seed_policy["enabled"]:
         active_cfg = _cfg_with_initial_values(active_cfg, anchor_values)
+        verify_params = active_cfg.get("parameters", {})
+        anchor_mismatches = []
+        for name, expected in anchor_values.items():
+            actual = float(verify_params.get(name, {}).get("initial", float("nan")))
+            if abs(actual - expected) > 1e-9:
+                anchor_mismatches.append(f"{name}: expected={expected}, actual={actual}")
+        if anchor_mismatches:
+            print(
+                f"ANCHOR APPLY MISMATCH: camera={camera_name}, source={anchor_source}, "
+                f"score={anchor_score}, mismatches={anchor_mismatches}"
+            )
+        else:
+            print(
+                f"Anchor applied: camera={camera_name}, source={anchor_source}, "
+                f"score={anchor_score}, values={_format_scalar_value_map(anchor_values)}, verify=OK"
+            )
     round_summaries: List[dict] = []
     best_round: Optional[dict] = None
     escape_stagnation_rounds = 0

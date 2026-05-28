@@ -1986,9 +1986,15 @@ def _load_history_best_run_for_config(
     if not history_camera_name and camera_name:
         history_camera_name = _canonical_camera_group_name(camera_name)
     if not history_camera_name:
+        print(f"[history_best] No history camera name for config={config_path}, camera_name={camera_name}")
         return None
     history_dirs = _iter_camera_history_dirs(history_camera_name)
+    print(f"[history_best] camera={history_camera_name}, cfg_scope={required_score_scope}, cfg_sig={cfg_board_signature}, dirs={history_dirs}")
     best_run: Optional[dict] = None
+    total_results = 0
+    filtered_scope = 0
+    filtered_sig = 0
+    filtered_digest = 0
     for history_dir in history_dirs:
         for result_path in sorted(history_dir.rglob("result.json")):
             payload = _load_json_if_exists(result_path)
@@ -2000,21 +2006,29 @@ def _load_history_best_run_for_config(
                 include_in_progress=True,
             )
             if digest is None:
+                filtered_digest += 1
                 continue
             if required_score_scope is not None:
                 digest_score_scope = _resolve_score_scope_from_payload(digest)
                 if digest_score_scope != required_score_scope:
+                    filtered_scope += 1
                     continue
             if cfg_board_signature is not None:
                 result_signature = _compute_board_signature(payload.get("boards"))
                 if result_signature is None or result_signature != cfg_board_signature:
+                    filtered_sig += 1
+                    print(f"[history_best] sig mismatch: {result_path.parent.name} result_sig={result_signature} != cfg_sig={cfg_board_signature}")
                     continue
+            total_results += 1
             if best_run is None or float(digest.get("final_score", float("inf"))) < float(
                 best_run.get("final_score", float("inf"))
             ):
                 best_run = digest
+    print(f"[history_best] total_pass={total_results}, filtered: digest={filtered_digest} scope={filtered_scope} sig={filtered_sig}")
     if isinstance(best_run, dict):
+        print(f"[history_best] FOUND: score={best_run.get('final_score')}, src={best_run.get('result_path')}")
         return dict(best_run)
+    print(f"[history_best] NOT FOUND for camera={history_camera_name}")
     return None
 
 

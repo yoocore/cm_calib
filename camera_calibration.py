@@ -11752,6 +11752,14 @@ def main() -> None:
         marker_payload["live_log"] = str(live_log_path)
         _write_run_marker(marker_path, marker_payload)
 
+    if not args.resume_from_result and should_optimize:
+        _vehicle_initial_values = _read_vehicle_initial_values_via_dde(camera_name)
+        if _vehicle_initial_values:
+            for name, value in _vehicle_initial_values.items():
+                if name in cfg.get("parameters", {}):
+                    cfg["parameters"][name]["initial"] = value
+            print(f"Overrode config initial values from vehicle file for {camera_name}")
+
     calib = CameraCalibrator(cfg, config_path=config_path)
     calib.live_log_path = live_log_path
     setattr(calib, "print_progress_json", bool(args.print_progress_json))

@@ -2423,6 +2423,20 @@ def _write_best_values_to_vehicle_config(
         print(f"Skipped vehicle writeback: vehicle file not found at {vehicle_path}")
         return None
 
+    history_best_run = _load_history_best_run_for_config(config_path, camera_name)
+    if isinstance(history_best_run, dict):
+        try:
+            history_best_score = float(history_best_run.get("final_score"))
+            if float(best_score) > history_best_score + 1e-6:
+                print(
+                    f"Skipped vehicle writeback: current score {float(best_score):.2f} "
+                    f"worse than history best {history_best_score:.2f} "
+                    f"(camera={camera_name}, vehicle={vehicle_path})"
+                )
+                return None
+        except Exception:
+            pass
+
     text = vehicle_path.read_text(encoding="utf-8")
     lines = text.splitlines(keepends=True)
     sensor_name_by_index: Dict[str, str] = {}
@@ -3583,7 +3597,7 @@ def _format_scalar_value_map(values: Dict[str, float]) -> str:
     return ", ".join(ordered)
 
 
-_DEFAULT_BOUNDS_MULTIPLIER = 30.0
+_DEFAULT_BOUNDS_MULTIPLIER = 10.0
 
 
 def _resolve_parameter_bounds(param_cfg: dict) -> Tuple[float, float]:
@@ -11880,6 +11894,16 @@ def main() -> None:
     calib = CameraCalibrator(cfg, config_path=config_path)
     calib.live_log_path = live_log_path
     setattr(calib, "print_progress_json", bool(args.print_progress_json))
+    # DDE capture_initial_values 已移除：初始值只从 vehicle 文件获取。
+    # 如果需要恢复 DDE 覆盖，取消下方注释：
+    # if not args.resume_from_result and should_optimize:
+    #     initial_values = calib.capture_initial_values()
+    #     for p in calib.params:
+    #         if p.name in initial_values:
+    #             p.value = initial_values[p.name]
+    #     for name, value in initial_values.items():
+    #         if name in cfg.get("parameters", {}):
+    #             cfg["parameters"][name]["initial"] = value
     try:
         if args.propose_boards:
             calib.propose_boards_config(

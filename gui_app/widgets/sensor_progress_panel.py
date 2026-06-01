@@ -36,6 +36,7 @@ class SensorProgressPanel(QGroupBox):
         )
         self.sensor_progress_tree.header().setStretchLastSection(True)
         self._sensor_progress_items: dict[str, QTreeWidgetItem] = {}
+        self.sensor_progress_tree.setIndentation(0)
         self._sensor_progress_bars: dict[str, QProgressBar] = {}
 
         layout = QVBoxLayout(self)

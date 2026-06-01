@@ -103,6 +103,7 @@ class CmSettingsPanel(QGroupBox):
         self.precheck_tree.setRootIsDecorated(False)
         self.precheck_tree.header().setStretchLastSection(True)
         self.precheck_tree.header().setDefaultAlignment(Qt.AlignLeft)
+        self.precheck_tree.setIndentation(0)
         self.precheck_tree.setColumnWidth(1, 50)
 
         self.browse_button.clicked.connect(self._browse_project_root)

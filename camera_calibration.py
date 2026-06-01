@@ -5044,6 +5044,7 @@ def _run_plain_optimize_rounds(
             anchor_values, anchor_score,
             any_board_values, any_board_score_val,
             base_output_dir=base_output_dir,
+        )
     if round_seed_policy["enabled"] or round_seed_policy.get("prefer_history_best", True):
         active_cfg = _cfg_with_initial_values(active_cfg, anchor_values)
         verify_params = active_cfg.get("parameters", {})
@@ -5205,6 +5206,7 @@ def _run_multi_start_rounds(
             anchor_values, anchor_score,
             any_board_values, any_board_score_val,
             base_output_dir=base_output_dir,
+        )
     if round_seed_policy["enabled"] or round_seed_policy.get("prefer_history_best", True):
         active_cfg = _cfg_with_initial_values(active_cfg, anchor_values)
         verify_params = active_cfg.get("parameters", {})
@@ -5382,6 +5384,7 @@ def _run_explore_then_refine_rounds(
             anchor_values, anchor_score,
             any_board_values, any_board_score_val,
             base_output_dir=base_output_dir,
+        )
     if round_seed_policy["enabled"] or round_seed_policy.get("prefer_history_best", True):
         active_cfg = _cfg_with_initial_values(active_cfg, anchor_values)
         verify_params = active_cfg.get("parameters", {})

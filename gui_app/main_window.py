@@ -439,6 +439,10 @@ class MainWindow(QMainWindow):
                             source="system",
                         )
                         self.runtime_service.stop()
+                        deadline = time.monotonic() + 3.0
+                        while self.runtime_service.is_running and time.monotonic() < deadline:
+                            QCoreApplication.processEvents()
+                            time.sleep(0.05)
                     self._auto_prepare_and_start(launch)
                     return
                 summary_text = self._build_start_requires_prepare_summary(launch)

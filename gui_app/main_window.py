@@ -44,6 +44,7 @@ class MainWindow(QMainWindow):
         self._camera_progress_iter_text: dict[str, str] = {}
         self._camera_progress_current_score: dict[str, str] = {}
         self._camera_progress_best_score: dict[str, str] = {}
+        self._camera_progress_init_score: dict[str, str] = {}
         self._camera_progress_current_iter: dict[str, int] = {}
         self._camera_progress_total_iters: dict[str, int] = {}
         self._camera_task_best_progress: dict[str, dict[str, object]] = {}
@@ -222,6 +223,7 @@ class MainWindow(QMainWindow):
         self._camera_progress_iter_text = {}
         self._camera_progress_current_score = {}
         self._camera_progress_best_score = {}
+        self._camera_progress_init_score = {}
         self._camera_progress_current_iter = {}
         self._camera_progress_total_iters = {}
         self._camera_task_best_progress = {}
@@ -331,6 +333,7 @@ class MainWindow(QMainWindow):
                 elapsed_seconds=elapsed_seconds,
                 detail=detail,
                 iter_text=self._camera_progress_iter_text.get(camera_name),
+                init_score_text=self._camera_progress_init_score.get(camera_name),
                 current_score_text=self._camera_progress_current_score.get(camera_name),
                 best_score_text=self._camera_progress_best_score.get(camera_name),
             )
@@ -728,7 +731,9 @@ class MainWindow(QMainWindow):
         self._runtime_recent_lines.clear()
         if self._runtime_mode == "prepare":
             self._reset_prepare_trace_state()
-            self._set_status_summary("CM Prepare in progress...")
+            if self._pending_launch is None:
+                self._set_status_summary("CM Prepare in progress...")
+                self.calibration_panel.set_phase_label("CM Prepare in progress...")
             self.output_panel.append_log(self._build_prepare_start_log(), source="runtime")
             self.output_panel.append_log(
                 "CM Prepare steps: activate sensor -> sync TestRun -> bootstrap run -> reuse/start IPG-MOVIE -> wait scene ready -> initialize camera widgets/dialogs -> capture initials -> health check",
@@ -738,7 +743,6 @@ class MainWindow(QMainWindow):
             self._append_status_summary_line(
                 "Prepare steps: activate sensor -> sync TestRun -> bootstrap run -> IPG-MOVIE ready -> widgets/dialogs -> capture initials -> health check"
             )
-            self.calibration_panel.set_phase_label("CM Prepare in progress...")
             self._apply_status(AppStatus.PREPARING)
         else:
             self._sync_control_states()
@@ -979,6 +983,9 @@ class MainWindow(QMainWindow):
                 self._camera_progress_current_score[camera_name] = f"{current_score:.4f}"
             if best_score is not None:
                 self._camera_progress_best_score[camera_name] = f"{best_score:.4f}"
+            start_score = self._as_float(progress.get("start_score"))
+            if start_score is not None and camera_name not in self._camera_progress_init_score:
+                self._camera_progress_init_score[camera_name] = f"{start_score:.4f}"
             self._set_camera_progress_state(camera_name, "running")
             progress_line = f"{camera_name}: iter={iter_index or '?'}"
             if best_score is not None:

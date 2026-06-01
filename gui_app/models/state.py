@@ -21,6 +21,7 @@ class AppStatus(StrEnum):
 class CameraResult:
     camera: str
     best_score: Optional[float] = None
+    init_score: Optional[float] = None
     current_iter_score: Optional[float] = None
     current_iter_index: Optional[int] = None
     current_iter_image: Optional[str] = None

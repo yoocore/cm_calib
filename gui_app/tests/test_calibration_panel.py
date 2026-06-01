@@ -172,7 +172,7 @@ class TestSensorProgressPanel:
         assert sensor_row.itemAt(1).widget() is panel.overall_progress_detail_label
         assert layout.itemAt(1).widget() is panel.overall_progress_bar
         assert layout.itemAt(2).widget() is panel.sensor_progress_tree
-        assert panel.sensor_progress_tree.columnCount() == 7
+        assert panel.sensor_progress_tree.columnCount() == 8
         assert not hasattr(panel, "summary_group")
         assert not hasattr(panel, "detail_group")
         assert "font-weight: 700" in panel.styleSheet()
@@ -210,6 +210,6 @@ class TestSensorProgressPanel:
         assert item.text(1) == "running"
         assert progress_bar.value() == 42
         assert item.text(2) == "E1:12"
-        assert item.text(5) == "1421.5000"
-        assert item.text(6) == "1377.2500"
+        assert item.text(6) == "1421.5000"
+        assert item.text(7) == "1377.2500"
         assert panel.current_sensor_label.text() == "Current Sensor: cam1"

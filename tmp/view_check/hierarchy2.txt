@@ -1,0 +1,4 @@
+rc=1
+msg_begin
+bad window path name ".f.tm"
+msg_end

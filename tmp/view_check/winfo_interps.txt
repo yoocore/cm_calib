@@ -1,0 +1,4 @@
+rc=0
+msg_begin
+interps=IPG-MOVIE GPUSensor_1_0 CarMaker
+msg_end

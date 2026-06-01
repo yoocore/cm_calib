@@ -1,0 +1,4 @@
+rc=0
+msg_begin
+ev.view_exists=0
+msg_end

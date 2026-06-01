@@ -31,9 +31,9 @@ class SensorProgressPanel(QGroupBox):
         self.overall_progress_bar.setValue(0)
         self.overall_progress_detail_label = QLabel("0 / 0 | 0s / ~0s")
         self.sensor_progress_tree = QTreeWidget()
-        self.sensor_progress_tree.setColumnCount(7)
+        self.sensor_progress_tree.setColumnCount(8)
         self.sensor_progress_tree.setHeaderLabels(
-            ["Sensor", "Status", "Iteration", "Elapsed", "Progress", "Current", "Best"]
+            ["Sensor", "Status", "Iteration", "Elapsed", "Progress", "Init", "Current", "Best"]
         )
         self.sensor_progress_tree.header().setStretchLastSection(True)
         self.sensor_progress_tree.header().setDefaultAlignment(Qt.AlignLeft)
@@ -76,6 +76,7 @@ class SensorProgressPanel(QGroupBox):
         elapsed_seconds: int,
         detail: str | None = None,
         iter_text: str | None = None,
+        init_score_text: str | None = None,
         current_score_text: str | None = None,
         best_score_text: str | None = None,
     ) -> None:
@@ -88,10 +89,12 @@ class SensorProgressPanel(QGroupBox):
         item.setText(3, self._format_duration(elapsed_seconds))
         if iter_text is not None:
             item.setText(2, iter_text)
+        if init_score_text is not None:
+            item.setText(5, init_score_text)
         if current_score_text is not None:
-            item.setText(5, current_score_text)
+            item.setText(6, current_score_text)
         if best_score_text is not None:
-            item.setText(6, best_score_text)
+            item.setText(7, best_score_text)
 
     def set_overall_progress(
         self,
@@ -124,6 +127,7 @@ class SensorProgressPanel(QGroupBox):
         item.setText(3, "0s")
         item.setText(5, "")
         item.setText(6, "")
+        item.setText(7, "")
         progress_bar = QProgressBar(self.sensor_progress_tree)
         progress_bar.setRange(0, 100)
         progress_bar.setValue(0)

@@ -1,0 +1,4 @@
+rc=0
+msg_begin
+couldn't open "C:/CM_Projects/CMO141_Calibration/Data/Script/CameraCalibration/tmp/view_check/test_2096d8a9.txt/.remote": no such file or directory
+msg_end

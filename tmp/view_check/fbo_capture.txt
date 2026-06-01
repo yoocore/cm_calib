@@ -1,0 +1,4 @@
+rc=1
+msg_begin
+dde command failed
+msg_end

@@ -145,13 +145,16 @@ class CmSettingsPanel(QGroupBox):
 
         self.project_group = _SectionGroup("Project Inputs", self)
         project_layout = QVBoxLayout(self.project_group)
-        project_layout.setContentsMargins(6, 2, 6, 4)
+        project_layout.setContentsMargins(10, 6, 10, 8)
         project_layout.addLayout(form)
 
         self.camera_group = _SectionGroup("Camera Selection", self)
         camera_layout = QVBoxLayout(self.camera_group)
-        camera_layout.setContentsMargins(6, 2, 6, 4)
-        camera_layout.setSpacing(4)
+        camera_layout.setContentsMargins(8, 4, 8, 6)
+        camera_layout.setSpacing(6)
+        self.camera_list.setMinimumHeight(200)
+        camera_layout.addWidget(self.camera_list, 1)
+        camera_layout.addWidget(precheck_row)
 
         self.results_group = _SectionGroup("Check Results", self)
         results_layout = QVBoxLayout(self.results_group)

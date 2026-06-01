@@ -1,0 +1,4 @@
+rc=0
+msg_begin
+pattern=.f.view w=bad window path name ".f.view" h=bad window path name ".f.view" children=bad window path name ".f.view"
+msg_end

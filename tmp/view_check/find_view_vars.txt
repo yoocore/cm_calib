@@ -1,0 +1,4 @@
+rc=0
+msg_begin
+total=89 first20=Scale LineWidth WidthLine zOffset DrawTunnel ev.t DrawSepLane ev.x DrawBgImage ev.y WidthPoint DrawSepLaneSection DrawRoadMarking DrawTraffic PolygonMode Mode DrawTrfSigns DrawTree DrawSegmentPoints m.btn
+msg_end

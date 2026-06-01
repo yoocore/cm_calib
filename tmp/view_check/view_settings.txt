@@ -1,0 +1,4 @@
+rc=1
+msg_begin
+can't read "View(ev.view)": no such element in array
+msg_end

@@ -1,0 +1,4 @@
+rc=0
+msg_begin
+view0_width=1
+msg_end

@@ -4343,7 +4343,11 @@ def _run_multi_start_campaign(
     seed: int,
     max_iters_override: Optional[int],
     output_root_dir: Optional[Path] = None,
-) -> dict:
+    *,
+    round_index: int = 0,
+    round_count: int = 0,
+    overall_total_iters: int = 0,
+    ) -> dict:
     root_output_dir, run_cfgs = _build_multi_start_run_configs(
         cfg,
         base_output_dir=base_output_dir,
@@ -4391,6 +4395,13 @@ def _run_multi_start_campaign(
         calib = CameraCalibrator(run_cfg)
         calib.live_log_path = live_log_path
         calib.print_progress_json = True
+        calib._calib_phase = "explore"
+        calib._calib_dir_index = start_index
+        calib._calib_total_dirs = start_count
+        calib._calib_max_iters = int(run_cfg.get("max_iters", 0))
+        calib._calib_round_index = round_index
+        calib._calib_round_count = round_count
+        calib._calib_overall_total_iters = overall_total_iters
         try:
             result = calib.optimize()
             run_summaries.append(
@@ -4641,7 +4652,11 @@ def _run_explore_then_refine_campaign(
     previous_escape_stagnation_rounds: int = 0,
     anchor_score: Optional[float] = None,
     output_root_dir: Optional[Path] = None,
-) -> dict:
+    *,
+    round_index: int = 0,
+    round_count: int = 0,
+    overall_total_iters: int = 0,
+    ) -> dict:
     if start_count <= 0:
         raise ValueError("explore-then-refine mode requires a positive start count")
     if explore_max_iters <= 0:
@@ -4671,6 +4686,9 @@ def _run_explore_then_refine_campaign(
         seed=seed,
         max_iters_override=explore_max_iters,
         output_root_dir=campaign_root / "explore",
+        round_index=round_index,
+        round_count=round_count,
+        overall_total_iters=overall_total_iters,
     )
     best_run = explore_summary["best_run"]
     best_values = dict(best_run["best_values"])
@@ -4739,6 +4757,11 @@ def _run_explore_then_refine_campaign(
     calib = CameraCalibrator(refine_cfg)
     calib.live_log_path = live_log_path
     calib.print_progress_json = True
+    calib._calib_phase = "refine"
+    calib._calib_max_iters = int(refine_cfg.get("max_iters", 0))
+    calib._calib_round_index = round_index
+    calib._calib_round_count = round_count
+    calib._calib_overall_total_iters = overall_total_iters
     result = calib.optimize()
 
     summary = {
@@ -4913,7 +4936,8 @@ def _run_single_optimize(
     *,
     resume_from_result: bool,
     output_dir_override: Optional[Path] = None,
-) -> dict:
+    round_index: int = 0,
+    ) -> dict:
     run_cfg = copy.deepcopy(cfg)
     marker_path = _marker_path_for_output_dir(base_output_dir)
     resume_result_path: Optional[Path] = None
@@ -4949,6 +4973,7 @@ def _run_single_optimize(
     calib = CameraCalibrator(run_cfg, config_path=config_path)
     calib.live_log_path = live_log_path
     calib.print_progress_json = True
+    calib._calib_round_index = round_index
     try:
         if resume_from_result:
             calib.load_best_values_from_result(
@@ -5083,6 +5108,7 @@ def _run_plain_optimize_rounds(
             camera_name=camera_name,
             resume_from_result=resume_from_result and round_index == 0,
             output_dir_override=round_output_dir,
+            round_index=round_no,
         )
         result = dict(run_payload["result"])
         strategy_payload = result.get("strategy_adaptation")
@@ -5248,6 +5274,9 @@ def _run_multi_start_rounds(
             seed=round_seed,
             max_iters_override=max_iters_override,
             output_root_dir=round_output_dir,
+            round_index=round_index,
+            round_count=round_count,
+            overall_total_iters=overall_total_iters,
         )
         best_run = dict(summary["best_run"])
         strategy_payload = _load_strategy_adaptation_from_result_json(best_run.get("result_json"))
@@ -5351,6 +5380,8 @@ def _run_explore_then_refine_rounds(
     if round_count <= 0:
         raise ValueError("round_count must be positive")
 
+    _refine_max_iters = refine_max_iters or int(cfg.get("max_iters", 0))
+    overall_total_iters = round_count * (start_count * explore_max_iters + _refine_max_iters)
     rounds_root = _build_isolated_output_dir("rounds", camera_parent=base_output_dir.name)
     active_cfg = copy.deepcopy(cfg)
     target_score = float(cfg.get("target_score", 5.0))
@@ -5433,6 +5464,9 @@ def _run_explore_then_refine_rounds(
                 previous_escape_stagnation_rounds=escape_stagnation_rounds,
                 anchor_score=anchor_score,
                 output_root_dir=round_output_dir,
+                round_index=round_index,
+                round_count=round_count,
+                overall_total_iters=overall_total_iters,
             )
         except Exception as exc:
             timeout_like_failure = _is_timeout_like_round_failure(exc)
@@ -6070,6 +6104,13 @@ class CameraCalibrator:
         self._best_overlay_image_cache: Dict[str, Path] = {}
         self._total_trial_count: int = 0
         self._total_iteration_count: int = 0
+        self._calib_phase: str = ""
+        self._calib_dir_index: int = 0
+        self._calib_total_dirs: int = 0
+        self._calib_max_iters: int = 0
+        self._calib_round_index: int = 0
+        self._calib_round_count: int = 0
+        self._calib_overall_total_iters: int = 0
         self._trial_log_path: Path = self.output_dir / "trial_log.jsonl"
 
         self.boards = self._load_boards(cfg.get("boards", []))
@@ -10610,6 +10651,14 @@ class CameraCalibrator:
                     "current_iter_image": getattr(self, "_last_eval_image", None) or str(best_img),
                     "final_score": summary.get("final_score"),
                     "stop_reason": result.get("stop_reason") or summary.get("stop_reason"),
+                    "start_score": summary.get("start_score"),
+                    "calib_phase": self._calib_phase,
+                    "calib_dir_index": self._calib_dir_index,
+                    "calib_total_dirs": self._calib_total_dirs,
+                    "calib_max_iters": self._calib_max_iters,
+                    "calib_round_index": self._calib_round_index,
+                    "calib_round_count": self._calib_round_count,
+                    "calib_overall_total_iters": self._calib_overall_total_iters,
                 }
             )
 

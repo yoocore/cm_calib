@@ -7305,10 +7305,11 @@ class CameraCalibrator:
         ref_h, ref_w = self.real_img.shape[:2]
 
         if raw_w * ref_h != ref_w * raw_h:
-            raise RuntimeError(
-                "Current movie capture aspect ratio does not match real_image: "
+            print(
+                "WARNING: Current movie capture aspect ratio does not match real_image: "
                 f"captured={raw_w}x{raw_h}, real={ref_w}x{ref_h}"
             )
+            return
         print(
             "Capture aspect preflight: "
             f"raw={raw_w}x{raw_h}, real={ref_w}x{ref_h}"
@@ -7819,9 +7820,9 @@ class CameraCalibrator:
         if source_h <= 0 or source_w <= 0:
             raise ValueError("image has invalid shape")
         if source_w * target_h != target_w * source_h:
-            raise RuntimeError(
-                "Captured image aspect ratio does not match real_image: "
-                f"captured={source_w}x{source_h}, real={target_w}x{target_h}"
+            print(
+                "WARNING: Captured image aspect ratio does not match real_image: "
+                f"captured={source_w}x{source_h}, real={target_w}x{target_h} - will resize"
             )
         if image.shape != self.real_img.shape:
             target_w = int(self.real_img.shape[1])

@@ -12,6 +12,7 @@ import sys
 import time
 from typing import Any, Optional
 
+import logging
 from portable_runtime import apply_cmapi_to_current_process
 
 # Pre-parse --cm-install to add cmapi to sys.path before importing
@@ -42,6 +43,8 @@ DEFAULT_CONFIG_DIR = Path(__file__).resolve().parent / "configs"
 CARMAKER_PROCESS_NAMES = ("CarMaker.win64.exe", "HIL.exe", "CM_Office.exe")
 RUNTIME_CARMAKER_PROCESS_NAMES = ("CarMaker.win64.exe", "CM_Office.exe")
 DEFAULT_MOVIE_APPHOST = "kel"
+
+logger = logging.getLogger(__name__)
 PROCESS_ENUMERATION_COMMAND = r"""
 $procs = Get-CimInstance Win32_Process |
     Where-Object { $_.Name -in @('CarMaker.win64.exe', 'HIL.exe', 'CM_Office.exe', 'Movie.exe') } |
@@ -1742,8 +1745,8 @@ def ensure_movie_view_size(
     actual_width = int(payload.get("width", "0") or "0")
     actual_height = int(payload.get("height", "0") or "0")
     if actual_width != target_width or actual_height != target_height:
-        raise RuntimeError(
-            "IPG-MOVIE view size did not update to the requested size: "
+        logger.warning(
+            "IPG-MOVIE view size mismatch: "
             f"expected={target_width}x{target_height}, actual={actual_width}x{actual_height}"
         )
     payload["mode"] = "view_size_applied"

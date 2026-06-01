@@ -5248,19 +5248,6 @@ def _run_multi_start_rounds(
             output_root_dir=round_output_dir,
         )
         best_run = dict(summary["best_run"])
-        _write_initial_values_to_config_if_best(
-            config_path,
-            camera_name,
-            float(best_run["best_score"]),
-            best_run["best_values"],
-        )
-        _write_best_values_to_vehicle_config(
-            config_path,
-            active_cfg,
-            camera_name,
-            float(best_run["best_score"]),
-            best_run["best_values"],
-        )
         strategy_payload = _load_strategy_adaptation_from_result_json(best_run.get("result_json"))
         current_param_order: List[str] = []
         if isinstance(strategy_payload, dict):
@@ -5316,6 +5303,21 @@ def _run_multi_start_rounds(
                 f"Multi-start rounds: stop early at round {round_no} because target_score was reached"
             )
             break
+
+    if best_round is not None:
+        _write_initial_values_to_config_if_best(
+            config_path,
+            camera_name,
+            float(best_round["best_run"]["best_score"]),
+            best_round["best_run"]["best_values"],
+        )
+        _write_best_values_to_vehicle_config(
+            config_path,
+            active_cfg,
+            camera_name,
+            float(best_round["best_run"]["best_score"]),
+            best_round["best_run"]["best_values"],
+        )
 
     payload = {
         "mode": "multi-start-rounds",
@@ -5460,19 +5462,6 @@ def _run_explore_then_refine_rounds(
             continue
         consecutive_timeout_like_failures = 0
         best_run = dict(summary["best_run"])
-        _write_initial_values_to_config_if_best(
-            config_path,
-            camera_name,
-            float(best_run["best_score"]),
-            best_run["best_values"],
-        )
-        _write_best_values_to_vehicle_config(
-            config_path,
-            active_cfg,
-            camera_name,
-            float(best_run["best_score"]),
-            best_run["best_values"],
-        )
         strategy_payload = _load_strategy_adaptation_from_result_json(best_run.get("result_json"))
         current_param_order: List[str] = []
         if isinstance(strategy_payload, dict):
@@ -5529,6 +5518,21 @@ def _run_explore_then_refine_rounds(
                 f"Explore-then-refine rounds: stop early at round {round_no} because target_score was reached"
             )
             break
+
+    if best_round is not None:
+        _write_initial_values_to_config_if_best(
+            config_path,
+            camera_name,
+            float(best_round["best_run"]["best_score"]),
+            best_round["best_run"]["best_values"],
+        )
+        _write_best_values_to_vehicle_config(
+            config_path,
+            active_cfg,
+            camera_name,
+            float(best_round["best_run"]["best_score"]),
+            best_round["best_run"]["best_values"],
+        )
 
     payload = {
         "mode": "explore-then-refine-rounds",

@@ -5198,6 +5198,8 @@ def _run_multi_start_rounds(
 ) -> dict:
     if round_count <= 0:
         raise ValueError("round_count must be positive")
+    _run_max_iters = max_iters_override or int(cfg.get("max_iters", 0))
+    overall_total_iters = round_count * start_count * _run_max_iters
 
     rounds_root = _build_isolated_output_dir("rounds", camera_parent=base_output_dir.name)
     active_cfg = copy.deepcopy(cfg)

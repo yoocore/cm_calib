@@ -403,6 +403,7 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _start_calibration(self) -> None:
+        self._sync_control_states()
         try:
             launch = self._build_launch_config()
         except Exception as exc:
@@ -638,6 +639,8 @@ class MainWindow(QMainWindow):
                 self._health_verification_pending = False
         if status in {AppStatus.FINISHED, AppStatus.FAILED, AppStatus.STOPPED}:
             self._calibration_task_started_at = None
+            self._health_verification_pending = False
+            self._ready_pending = False
             self._refresh_calibration_progress()
 
     def _runtime_status_probe_can_update_status(self) -> bool:

@@ -2104,25 +2104,53 @@ def _compare_and_pick_better_seed(
     matched_score: Optional[float],
     any_board_values: Dict[str, float],
     any_board_score: Optional[float],
+    base_output_dir: Optional[Path] = None,
 ) -> Tuple[Dict[str, float], Optional[float], str]:
+    # Seed cache: skip re-evaluation if candidates haven't changed
+    if base_output_dir is not None:
+        seed_cache_path = base_output_dir / "seed_cache.json"
+        cache_key = json.dumps(
+            {"matched": matched_values, "any_board": any_board_values}, sort_keys=True
+        )
+        if seed_cache_path.exists():
+            try:
+                cached = json.loads(seed_cache_path.read_text(encoding="utf-8"))
+                if cached.get("cache_key") == cache_key:
+                    winner = cached["winner"]
+                    print(f"[seed_cache] HIT: using cached winner={winner}")
+                    if winner == "any_board":
+                        return any_board_values, any_board_score, "any_board"
+                    return matched_values, matched_score, "matched"
+            except Exception:
+                pass
     print(f"[seed_compare] Evaluating matched candidate (history score={matched_score})...")
     score_a = _evaluate_seed_candidate(config_path, cfg, matched_values, camera_name)
     print(f"[seed_compare] Evaluating any-board candidate (history score={any_board_score})...")
     score_b = _evaluate_seed_candidate(config_path, cfg, any_board_values, camera_name)
 
     if score_a is None and score_b is None:
-        return matched_values, matched_score, "matched"
-    if score_a is None:
-        return any_board_values, any_board_score, "any_board"
-    if score_b is None:
-        return matched_values, matched_score, "matched"
-
-    if score_b < score_a:
+        winner = "matched"
+    elif score_a is None:
+        winner = "any_board"
+    elif score_b is None:
+        winner = "matched"
+    elif score_b < score_a:
         print(f"[seed_compare] any-board candidate wins: {score_b:.1f} < {score_a:.1f}")
-        return any_board_values, any_board_score, "any_board"
+        winner = "any_board"
     else:
         print(f"[seed_compare] matched candidate wins: {score_a:.1f} <= {score_b:.1f}")
-        return matched_values, matched_score, "matched"
+        winner = "matched"
+
+    # Write cache
+    if base_output_dir is not None:
+        base_output_dir.mkdir(parents=True, exist_ok=True)
+        seed_cache_path.write_text(
+            json.dumps({"cache_key": cache_key, "winner": winner}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    if winner == "any_board":
+        return any_board_values, any_board_score, "any_board"
+    return matched_values, matched_score, "matched"
 
 
 def _write_initial_values_to_config(config_path: Path, values: Dict[str, float]) -> None:
@@ -5008,7 +5036,7 @@ def _run_plain_optimize_rounds(
             config_path, cfg, camera_name,
             anchor_values, anchor_score,
             any_board_values, any_board_score_val,
-        )
+            base_output_dir=base_output_dir,
     if round_seed_policy["enabled"] or round_seed_policy.get("prefer_history_best", True):
         active_cfg = _cfg_with_initial_values(active_cfg, anchor_values)
         verify_params = active_cfg.get("parameters", {})
@@ -5169,7 +5197,7 @@ def _run_multi_start_rounds(
             config_path, cfg, camera_name,
             anchor_values, anchor_score,
             any_board_values, any_board_score_val,
-        )
+            base_output_dir=base_output_dir,
     if round_seed_policy["enabled"] or round_seed_policy.get("prefer_history_best", True):
         active_cfg = _cfg_with_initial_values(active_cfg, anchor_values)
         verify_params = active_cfg.get("parameters", {})
@@ -5344,7 +5372,7 @@ def _run_explore_then_refine_rounds(
             config_path, cfg, camera_name,
             anchor_values, anchor_score,
             any_board_values, any_board_score_val,
-        )
+            base_output_dir=base_output_dir,
     if round_seed_policy["enabled"] or round_seed_policy.get("prefer_history_best", True):
         active_cfg = _cfg_with_initial_values(active_cfg, anchor_values)
         verify_params = active_cfg.get("parameters", {})

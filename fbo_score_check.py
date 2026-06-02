@@ -58,43 +58,75 @@ def query_movie_state() -> dict:
     return result
 
 
-def capture_fbo(output_dir: Path) -> Path:
-    """Capture FBO from current IPG-MOVIE view via CarMaker DDE."""
+def _build_capture_body_lines(capture_path: Path, *, stage: str) -> list[str]:
+    body_lines = [
+        "scan $View(ev.view) %d vno",
+        'set wpath ".view$vno"',
+        "set wi [$wpath.gl0 cget -width]",
+        "set he [$wpath.gl0 cget -height]",
+        "set captureFBO [FBO new $wi $he -tex rgb -noclear]",
+    ]
+    if stage == "new":
+        body_lines.extend([
+            'puts "stage=new;status=ok"',
+            "catch {FBO delete $captureFBO}",
+        ])
+        return body_lines
+    body_lines.extend([
+        "set update_rc [catch {",
+        "    FBO begin $captureFBO",
+    ])
+    if stage in {"update", "readpixels"}:
+        body_lines.append("    UpdateView $vno")
+    body_lines.extend([
+        "    FBO end",
+        "} update_msg]",
+        "catch {FBO end}",
+        "if {$update_rc != 0} {",
+        "    catch {FBO delete $captureFBO}",
+        "    error $update_msg",
+        "}",
+    ])
+    if stage == "begin_end":
+        body_lines.extend([
+            'puts "stage=begin_end;status=ok"',
+            "catch {FBO delete $captureFBO}",
+        ])
+        return body_lines
+    if stage not in {"update", "readpixels"}:
+        raise ValueError(f"Unsupported FBO capture stage: {stage}")
+    if stage == "update":
+        body_lines.extend([
+            'puts "stage=update;status=ok"',
+            "catch {FBO delete $captureFBO}",
+        ])
+        return body_lines
+    body_lines.extend([
+        "catch {image delete probeImg}",
+        "image create photo probeImg -width $wi -height $he",
+        "gl bindframebuffer_read $captureFBO",
+        "gl readpixels 0 0 probeImg",
+        f'probeImg write "{capture_path.as_posix()}" -format png',
+        "catch {gl bindframebuffer_read 0}",
+        "catch {FBO delete $captureFBO}",
+        'puts "captured=${wi}x${he}"',
+    ])
+    return body_lines
+
+
+def capture_fbo(output_dir: Path, *, stage: str = "readpixels") -> Path:
+    """Capture or probe FBO stages from current IPG-MOVIE view via CarMaker DDE."""
     output_dir.mkdir(parents=True, exist_ok=True)
     capture_path = output_dir / "fbo_capture.png"
 
     script_text = render_dde_execute_script(
         output_dir / "fbo_capture.txt",
         "IPG-MOVIE",
-        [
-            "scan $View(ev.view) %d vno",
-            'set wpath ".view$vno"',
-            "set wi [$wpath.gl0 cget -width]",
-            "set he [$wpath.gl0 cget -height]",
-            "set captureFBO [FBO new $wi $he -tex rgb -noclear]",
-            "set update_rc [catch {",
-            "    FBO begin $captureFBO",
-            "    UpdateView $vno",
-            "    FBO end",
-            "} update_msg]",
-            "catch {FBO end}",
-            "if {$update_rc != 0} {",
-            "    catch {FBO delete $captureFBO}",
-            "    error $update_msg",
-            "}",
-            "catch {image delete probeImg}",
-            "image create photo probeImg -width $wi -height $he",
-            "gl bindframebuffer_read $captureFBO",
-            "gl readpixels 0 0 probeImg",
-            f'probeImg write "{capture_path.as_posix()}" -format png',
-            "catch {gl bindframebuffer_read 0}",
-            "catch {FBO delete $captureFBO}",
-            'puts "captured=${wi}x${he}"',
-        ],
+        _build_capture_body_lines(capture_path, stage=stage),
     )
 
     result = run_check_attempt(
-        "fbo_capture",
+        f"fbo_capture_{stage}",
         DDE_SERVICE,
         DDE_TOPIC,
         output_dir,
@@ -105,7 +137,7 @@ def capture_fbo(output_dir: Path) -> Path:
     if result.get("rc") != 0:
         raise RuntimeError(f"FBO capture failed: {result}")
 
-    if not capture_path.exists():
+    if stage == "readpixels" and not capture_path.exists():
         raise RuntimeError(f"Capture file not created: {capture_path}")
 
     return capture_path

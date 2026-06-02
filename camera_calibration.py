@@ -5276,7 +5276,7 @@ def _run_multi_start_rounds(
             seed=round_seed,
             max_iters_override=max_iters_override,
             output_root_dir=round_output_dir,
-            round_index=round_index,
+            round_index=round_index + 1,
             round_count=round_count,
             overall_total_iters=overall_total_iters,
         )
@@ -5466,7 +5466,7 @@ def _run_explore_then_refine_rounds(
                 previous_escape_stagnation_rounds=escape_stagnation_rounds,
                 anchor_score=anchor_score,
                 output_root_dir=round_output_dir,
-                round_index=round_index,
+                round_index=round_index + 1,
                 round_count=round_count,
                 overall_total_iters=overall_total_iters,
             )

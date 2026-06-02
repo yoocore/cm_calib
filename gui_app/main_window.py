@@ -404,6 +404,7 @@ class MainWindow(QMainWindow):
     @Slot()
     def _start_calibration(self) -> None:
         self.calibration_panel.start_button.setEnabled(False)
+        QCoreApplication.processEvents()
         try:
             launch = self._build_launch_config()
         except Exception as exc:

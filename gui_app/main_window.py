@@ -403,13 +403,14 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _start_calibration(self) -> None:
-        self._sync_control_states()
+        self.calibration_panel.start_button.setEnabled(False)
         try:
             launch = self._build_launch_config()
         except Exception as exc:
             self.calibration_panel.set_failure_summary(str(exc))
             QMessageBox.critical(self, "Start Failed", str(exc))
             return
+            self._sync_control_states()
 
         try:
             project_root = Path(self.cm_settings_panel.project_root_edit.text().strip() or self.project_root)
@@ -423,10 +424,12 @@ class MainWindow(QMainWindow):
                 self.calibration_panel.set_failure_summary("Precheck failed: " + "; ".join(messages))
                 QMessageBox.critical(self, "Precheck Failed", "Precheck failed. See the Precheck tree and failure summary for details.")
                 return
+                self._sync_control_states()
         except Exception as exc:
             self.calibration_panel.set_failure_summary("Precheck error: " + str(exc))
             QMessageBox.critical(self, "Precheck Error", str(exc))
             return
+            self._sync_control_states()
 
         try:
             self.output_panel.append_log("─" * 60, source="system")
@@ -453,6 +456,7 @@ class MainWindow(QMainWindow):
                 self.calibration_panel.set_failure_summary(summary_text)
                 QMessageBox.warning(self, "Runtime Not Ready", summary_text)
                 return
+                self._sync_control_states()
             launch.skip_prepare_for_first_camera = True
             self.output_panel.append_log("Calib Start will reuse the existing prepared runtime for the first camera", source="runtime")
             self._append_status_summary_line("Calib Start will reuse the current prepared runtime.")
@@ -488,6 +492,7 @@ class MainWindow(QMainWindow):
                     pass
             self._set_status_summary(str(exc))
             QMessageBox.critical(self, "Start Failed", str(exc))
+            self._sync_control_states()
 
     @Slot()
     def _stop_calibration(self) -> None:

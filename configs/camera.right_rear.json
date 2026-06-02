@@ -129,7 +129,7 @@
             "decimals": 4
         },
         "pos_z": {
-            "initial": 0.9748,
+            "initial": 0.9608,
             "step": 0.002,
             "min_offset": -0.03,
             "max_offset": 0.03,

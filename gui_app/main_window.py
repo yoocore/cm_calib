@@ -945,6 +945,7 @@ class MainWindow(QMainWindow):
             calib_round_count = self._as_int(progress.get("calib_round_count"))
             calib_overall_total_iters = self._as_int(progress.get("calib_overall_total_iters"))
             round_prefix = f"Rd:{calib_round_index} " if calib_round_index and calib_round_index > 0 else ""
+            print(f"[PROGRESS_DIAG] {camera_name}: phase={calib_phase} iter={iter_index} tot_iters={calib_overall_total_iters} dir={calib_dir_index}/{calib_total_dirs} round={calib_round_index}/{calib_round_count}")
 
             last_phase = self._camera_last_phase.get(camera_name)
             if calib_overall_total_iters and calib_round_count:

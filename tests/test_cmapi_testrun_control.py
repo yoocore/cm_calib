@@ -122,3 +122,19 @@ class TestCameraDialogActivationGuards:
                 '}',
             ],
         )
+
+class TestMovieAbraxasProbe:
+    def test_ensure_movie_abraxas_enabled_skips_updateview_timerproc(self, cmctrl, monkeypatch, tmp_path):
+        captured = _capture_body_lines(
+            monkeypatch,
+            cmctrl,
+            tmp_path,
+            "before=1;after=1;menu=.view0.mbar.view.m.show;view=0",
+        )
+
+        cmctrl.ensure_movie_abraxas_enabled()
+
+        body_lines = captured["body_lines"]
+        assert 'catch {UpdateView $View(ev.view)}' in body_lines
+        assert 'catch {event generate .view${vno}.gl0 <Expose>}' in body_lines
+        assert 'catch {UpdateView_TimerProc}' not in body_lines

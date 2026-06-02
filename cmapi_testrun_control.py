@@ -1799,7 +1799,6 @@ def ensure_movie_abraxas_enabled(
                 'update',
                 'update idletasks',
                 'catch {UpdateView $View(ev.view)}',
-                'catch {UpdateView_TimerProc}',
                 'catch {event generate .view${vno}.gl0 <Expose>}',
                 'update',
                 'update idletasks',

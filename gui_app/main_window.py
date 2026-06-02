@@ -629,17 +629,19 @@ class MainWindow(QMainWindow):
     def _apply_status(self, status: AppStatus) -> None:
         self.state.status = status
         self.calibration_panel.set_status(status.value)
-        self._sync_control_states()
         if status == AppStatus.READY:
             self._health_timer.start()
         else:
             self._health_timer.stop()
             if not self.runtime_service.is_running:
                 self._health_check_active = False
-                self._health_verification_pending = False
+                if status not in {AppStatus.FINISHED, AppStatus.FAILED, AppStatus.STOPPED}:
+                    self._health_verification_pending = False
         if status in {AppStatus.FINISHED, AppStatus.FAILED, AppStatus.STOPPED}:
             self._calibration_task_started_at = None
+            self._health_verification_pending = True
             self._refresh_calibration_progress()
+        self._sync_control_states()
 
     def _runtime_status_probe_can_update_status(self) -> bool:
         if self.state.status == AppStatus.PREPARING:

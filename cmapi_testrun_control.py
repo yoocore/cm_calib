@@ -1835,15 +1835,11 @@ def ensure_movie_camera_selected(
     output_dir = default_output_dir()
     output_dir.mkdir(parents=True, exist_ok=True)
     probe_name = "cmapi_testrun_control_movie_camera_select_probe"
-    capture_dir = output_dir / "sensor_view_probe"
-    capture_dir.mkdir(parents=True, exist_ok=True)
-    capture_path = capture_dir / "selected_sensor_render.png"
     select_body_lines = [
         'set _before_camera_state [expr {[winfo exists .camera] ? [wm state .camera] : "missing"}]',
         'set _before_lens_state [expr {[winfo exists .camera.cammoddlg] ? [wm state .camera.cammoddlg] : "missing"}]',
         'if {![info exists View(ev.view)]} {error "missing View(ev.view)"}',
         'set vno $View(ev.view)',
-        'set wpath ".view$vno"',
         'if {![winfo exists .camera] || ![winfo exists .camera.btn.set]} {',
         '    Camera::ShowSettingsDlg',
         '    update',
@@ -1861,6 +1857,8 @@ def ensure_movie_camera_selected(
         'if {$_before_camera_state eq "iconic" && [winfo exists .camera]} { wm iconify .camera }',
         'if {$_before_lens_state eq "iconic" && [winfo exists .camera.cammoddlg]} { wm iconify .camera.cammoddlg }',
         'unset _before_camera_state _before_lens_state',
+        'if {[info exists Camera::v(Name)]} {set current $Camera::v(Name)} else {set current ""}',
+        'format "state=selected;selected=%s;current=%s;view=%s;apply_invoked=1" $target $current $vno',
     ]
     result = run_check_attempt(
         name=probe_name,
@@ -1870,51 +1868,10 @@ def ensure_movie_camera_selected(
         script_text=render_dde_execute_script(
             output_dir / f"{probe_name}.txt",
             "IPG-MOVIE",
-            [
-                *select_body_lines,
-                'set wi [$wpath.gl0 cget -width]',
-                'set he [$wpath.gl0 cget -height]',
-                'set captureFBO [FBO new $wi $he -tex rgb -noclear]',
-                'set update_rc [catch {',
-                '    FBO begin $captureFBO',
-                '    UpdateView $vno',
-                '    FBO end',
-                '} update_msg]',
-                'catch {FBO end}',
-                'if {$update_rc != 0} {',
-                '    catch {FBO delete $captureFBO}',
-                '    error $update_msg',
-                '}',
-                'catch {image delete probeImg}',
-                'image create photo probeImg -width $wi -height $he',
-                'gl bindframebuffer_read $captureFBO',
-                'gl readpixels 0 0 probeImg',
-                f'probeImg write "{capture_path.as_posix()}" -format png',
-                'catch {gl bindframebuffer_read 0}',
-                'catch {FBO delete $captureFBO}',
-                'if {[info exists Camera::v(Name)]} {set current $Camera::v(Name)} else {set current ""}',
-                'format "state=selected;selected=%s;current=%s;view=%s;apply_invoked=1;capture_path=%s" $target $current $vno {' + capture_path.as_posix() + '}',
-            ],
+            select_body_lines,
         ),
         timeout_sec=max(1.0, float(timeout_sec)),
     )
-    if not result.get("ok") and 'FBO' in str(result.get("detail") or ""):
-        result = run_check_attempt(
-            name=f"{probe_name}_no_fbo_fallback",
-            service=service,
-            topic=topic,
-            output_dir=output_dir,
-            script_text=render_dde_execute_script(
-                output_dir / f"{probe_name}_no_fbo_fallback.txt",
-                "IPG-MOVIE",
-                [
-                    *select_body_lines,
-                    'if {[info exists Camera::v(Name)]} {set current $Camera::v(Name)} else {set current ""}',
-                    'format "state=selected;selected=%s;current=%s;view=%s;apply_invoked=1;capture_path=;render_fallback=1" $target $current $vno',
-                ],
-            ),
-            timeout_sec=max(1.0, float(timeout_sec)),
-        )
     if not result.get("ok"):
         raise RuntimeError(f"Failed to select IPG-MOVIE camera sensor {target_label}: {result.get('kind')}: {result.get('detail')}")
 

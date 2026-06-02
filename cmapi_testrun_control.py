@@ -1712,6 +1712,25 @@ def ensure_movie_view_size(
     if target_width <= 0 or target_height <= 0:
         raise ValueError(f"Movie view size must be positive, got {target_width}x{target_height}")
 
+    # --- 自动减半以适配 IPG-MOVIE 显示屏 ---
+    try:
+        display_w = ctypes.windll.user32.GetSystemMetrics(0)  # SM_CXSCREEN
+        display_h = ctypes.windll.user32.GetSystemMetrics(1)  # SM_CYSCREEN
+    except Exception:
+        display_w, display_h = 1920, 1080
+    max_w = display_w - 50
+    max_h = display_h - 50
+    while target_width > max_w or target_height > max_h:
+        target_width //= 2
+        target_height //= 2
+        if target_width < 64 or target_height < 64:
+            break
+    if target_width != width or target_height != height:
+        logger.warning(
+            f"Movie view size auto-reduced from {width}x{height} to",
+            f"{target_width}x{target_height} to fit display safe area {display_w-50}x{display_h-50}"
+        )
+
     output_dir = default_output_dir()
     output_dir.mkdir(parents=True, exist_ok=True)
     probe_name = "cmapi_testrun_control_movie_view_size_probe"
@@ -1852,8 +1871,8 @@ def ensure_movie_camera_selected(
             "IPG-MOVIE",
             [
                 *select_body_lines,
-                'set wi [dict get $View($vno) Width]',
-                'set he [dict get $View($vno) Height]',
+                'set wi [$wpath.gl0 cget -width]',
+                'set he [$wpath.gl0 cget -height]',
                 'set captureFBO [FBO new $wi $he -tex rgb -noclear]',
                 'set update_rc [catch {',
                 '    FBO begin $captureFBO',
@@ -1878,7 +1897,7 @@ def ensure_movie_camera_selected(
         ),
         timeout_sec=max(1.0, float(timeout_sec)),
     )
-    if not result.get("ok") and 'View(FBO)' in str(result.get("detail") or ""):
+    if not result.get("ok") and 'FBO' in str(result.get("detail") or ""):
         result = run_check_attempt(
             name=f"{probe_name}_no_fbo_fallback",
             service=service,

@@ -1843,6 +1843,7 @@ def ensure_movie_camera_selected(
         'set _before_lens_state [expr {[winfo exists .camera.cammoddlg] ? [wm state .camera.cammoddlg] : "missing"}]',
         'if {![info exists View(ev.view)]} {error "missing View(ev.view)"}',
         'set vno $View(ev.view)',
+        'set wpath ".view$vno"',
         'if {![winfo exists .camera] || ![winfo exists .camera.btn.set]} {',
         '    Camera::ShowSettingsDlg',
         '    update',

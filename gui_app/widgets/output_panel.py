@@ -65,7 +65,7 @@ _PANEL_STYLE = (
 
 
 def _format_score(value: float | None) -> str:
-    return "-" if value is None else f"{value:.6f}"
+    return "-" if value is None else f"{value:.2f}"
 
 
 def _normalize_log_source(source: str | None, line: str) -> tuple[str, str]:

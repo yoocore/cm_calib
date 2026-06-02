@@ -333,7 +333,7 @@ class MainWindow(QMainWindow):
                 elapsed_seconds=elapsed_seconds,
                 detail=detail,
                 iter_text=self._camera_progress_iter_text.get(camera_name),
-                init_score_text=f"{self._camera_progress_init_score[camera_name]:.4f}" if camera_name in self._camera_progress_init_score else None,
+                init_score_text=f"{self._camera_progress_init_score[camera_name]:.2f}" if camera_name in self._camera_progress_init_score else None,
                 current_score_text=self._camera_progress_current_score.get(camera_name),
                 best_score_text=self._camera_progress_best_score.get(camera_name),
             )
@@ -990,16 +990,16 @@ class MainWindow(QMainWindow):
                     self._camera_progress_current_iter[camera_name] = accrued + (iter_index or 0)
                     self._camera_progress_total_iters[camera_name] = accrued + int(calib_max_iters)
             if current_score is not None:
-                self._camera_progress_current_score[camera_name] = f"{current_score:.4f}"
+                self._camera_progress_current_score[camera_name] = f"{current_score:.2f}"
             if best_score is not None:
-                self._camera_progress_best_score[camera_name] = f"{best_score:.4f}"
+                self._camera_progress_best_score[camera_name] = f"{best_score:.2f}"
             start_score = self._as_float(progress.get("start_score"))
             if start_score is not None and camera_name not in self._camera_progress_init_score:
                 self._camera_progress_init_score[camera_name] = start_score
             self._set_camera_progress_state(camera_name, "running")
             progress_line = f"{camera_name}: iter={iter_index or '?'}"
             if best_score is not None:
-                progress_line += f" best={best_score:.6f}"
+                progress_line += f" best={best_score:.2f}"
             self.output_panel.append_log(progress_line, source="calibration")
             self._append_status_summary_line(progress_line)
             self.output_panel.update_camera_result(
@@ -1096,7 +1096,7 @@ class MainWindow(QMainWindow):
             self.output_panel.update_camera_result(result)
             iter_score = self._as_float(calibration.get("current_iter_score"))
             if iter_score is not None:
-                self._camera_progress_current_score[camera_name] = f"{iter_score:.4f}"
+                self._camera_progress_current_score[camera_name] = f"{iter_score:.2f}"
         self._refresh_calibration_progress()
 
     @staticmethod

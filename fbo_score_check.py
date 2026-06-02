@@ -118,9 +118,10 @@ def capture_fbo(output_dir: Path, *, stage: str = "readpixels") -> Path:
     """Capture or probe FBO stages from current IPG-MOVIE view via CarMaker DDE."""
     output_dir.mkdir(parents=True, exist_ok=True)
     capture_path = output_dir / "fbo_capture.png"
+    result_path = output_dir / f"fbo_capture_{stage}.txt"
 
     script_text = render_dde_execute_script(
-        output_dir / "fbo_capture.txt",
+        result_path,
         "IPG-MOVIE",
         _build_capture_body_lines(capture_path, stage=stage),
     )

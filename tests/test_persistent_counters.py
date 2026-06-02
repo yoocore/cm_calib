@@ -510,3 +510,29 @@ class TestBuildResultPayload:
         assert result["best_image"] == str(historical_img)
         assert result["best_score_image"] == str(historical_img.with_name("historical_score.png"))
         assert result["best_overlay_image"] == str(historical_img.with_name("historical_overlay.png"))
+
+
+class TestMovieFboCaptureScript:
+    def test_capture_movie_uses_widget_dimensions_instead_of_view_dict(self, tmp_path):
+        cfg = _make_minimal_cfg(tmp_path)
+        with patch.object(CameraCalibrator, "_materialize_custom_maker_templates"):
+            with patch.object(CameraCalibrator, "_load_custom_templates", return_value={}):
+                calib = CameraCalibrator(cfg)
+
+        captured = {}
+
+        def _capture_script(_result_path, _target_topic, body_lines, **_kwargs):
+            captured["body_lines"] = list(body_lines)
+            raise RuntimeError("stop after capture")
+
+        with patch("camera_calibration.render_dde_execute_script", side_effect=_capture_script):
+            with pytest.raises(RuntimeError, match="stop after capture"):
+                calib._capture_movie_via_dde_fbo("probe")
+
+        body_lines = captured["body_lines"]
+        assert "scan $View(ev.view) %d wno" in body_lines
+        assert 'set wpath ".view$wno"' in body_lines
+        assert "set wi [$wpath.gl0 cget -width]" in body_lines
+        assert "set he [$wpath.gl0 cget -height]" in body_lines
+        assert "set wi [dict get $View($vno) Width]" not in body_lines
+        assert "set he [dict get $View($vno) Height]" not in body_lines

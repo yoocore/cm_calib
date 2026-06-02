@@ -12169,6 +12169,7 @@ def main() -> None:
     calib._calib_round_index = 1
     calib._calib_round_count = 1
     calib._calib_overall_total_iters = int(cfg.get("max_iters", 0))
+    calib._calib_phase = "explore"
     # DDE capture_initial_values 已移除：初始值只从 vehicle 文件获取。
     # 如果需要恢复 DDE 覆盖，取消下方注释：
     # if not args.resume_from_result and should_optimize:

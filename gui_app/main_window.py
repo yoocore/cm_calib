@@ -44,7 +44,7 @@ class MainWindow(QMainWindow):
         self._camera_progress_iter_text: dict[str, str] = {}
         self._camera_progress_current_score: dict[str, str] = {}
         self._camera_progress_best_score: dict[str, str] = {}
-        self._camera_progress_init_score: dict[str, str] = {}
+        self._camera_progress_init_score: dict[str, float] = {}
         self._camera_progress_current_iter: dict[str, int] = {}
         self._camera_progress_total_iters: dict[str, int] = {}
         self._camera_task_best_progress: dict[str, dict[str, object]] = {}
@@ -333,7 +333,7 @@ class MainWindow(QMainWindow):
                 elapsed_seconds=elapsed_seconds,
                 detail=detail,
                 iter_text=self._camera_progress_iter_text.get(camera_name),
-                init_score_text=self._camera_progress_init_score.get(camera_name),
+                init_score_text=f"{self._camera_progress_init_score[camera_name]:.4f}" if camera_name in self._camera_progress_init_score else None,
                 current_score_text=self._camera_progress_current_score.get(camera_name),
                 best_score_text=self._camera_progress_best_score.get(camera_name),
             )
@@ -409,8 +409,8 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self.calibration_panel.set_failure_summary(str(exc))
             QMessageBox.critical(self, "Start Failed", str(exc))
-            return
             self._sync_control_states()
+            return
 
         try:
             project_root = Path(self.cm_settings_panel.project_root_edit.text().strip() or self.project_root)
@@ -423,13 +423,13 @@ class MainWindow(QMainWindow):
                 messages = [str(r.get("message", "")) for r in failed]
                 self.calibration_panel.set_failure_summary("Precheck failed: " + "; ".join(messages))
                 QMessageBox.critical(self, "Precheck Failed", "Precheck failed. See the Precheck tree and failure summary for details.")
-                return
                 self._sync_control_states()
+                return
         except Exception as exc:
             self.calibration_panel.set_failure_summary("Precheck error: " + str(exc))
             QMessageBox.critical(self, "Precheck Error", str(exc))
-            return
             self._sync_control_states()
+            return
 
         try:
             self.output_panel.append_log("─" * 60, source="system")
@@ -455,8 +455,8 @@ class MainWindow(QMainWindow):
                 summary_text = self._build_start_requires_prepare_summary(launch)
                 self.calibration_panel.set_failure_summary(summary_text)
                 QMessageBox.warning(self, "Runtime Not Ready", summary_text)
-                return
                 self._sync_control_states()
+                return
             launch.skip_prepare_for_first_camera = True
             self.output_panel.append_log("Calib Start will reuse the existing prepared runtime for the first camera", source="runtime")
             self._append_status_summary_line("Calib Start will reuse the current prepared runtime.")
@@ -993,7 +993,7 @@ class MainWindow(QMainWindow):
                 self._camera_progress_best_score[camera_name] = f"{best_score:.4f}"
             start_score = self._as_float(progress.get("start_score"))
             if start_score is not None and camera_name not in self._camera_progress_init_score:
-                self._camera_progress_init_score[camera_name] = f"{start_score:.4f}"
+                self._camera_progress_init_score[camera_name] = start_score
             self._set_camera_progress_state(camera_name, "running")
             progress_line = f"{camera_name}: iter={iter_index or '?'}"
             if best_score is not None:

@@ -7897,10 +7897,8 @@ class CameraCalibrator:
                 "IPG-MOVIE",
                 [
                     "set vno $View(ev.view)",
-                    "scan $View(ev.view) %d wno",
-                    'set wpath ".view$wno"',
-                    "set wi [$wpath.gl0 cget -width]",
-                    "set he [$wpath.gl0 cget -height]",
+                    "set wi [dict get $View($vno) Width]",
+                    "set he [dict get $View($vno) Height]",
                     "set captureFBO [FBO new $wi $he -tex rgb -noclear]",
                     "set update_rc [catch {",
                     "    FBO begin $captureFBO",

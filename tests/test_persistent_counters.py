@@ -536,3 +536,29 @@ class TestMovieFboCaptureScript:
         assert 'set wpath ".view$wno"' not in body_lines
         assert "set wi [$wpath.gl0 cget -width]" not in body_lines
         assert "set he [$wpath.gl0 cget -height]" not in body_lines
+
+    def test_capture_movie_keeps_pre_fbo_section_free_of_event_pumping(self, tmp_path):
+        cfg = _make_minimal_cfg(tmp_path)
+        with patch.object(CameraCalibrator, "_materialize_custom_maker_templates"):
+            with patch.object(CameraCalibrator, "_load_custom_templates", return_value={}):
+                calib = CameraCalibrator(cfg)
+
+        captured = {}
+
+        def _capture_script(_result_path, _target_topic, body_lines, **_kwargs):
+            captured["body_lines"] = list(body_lines)
+            raise RuntimeError("stop after capture")
+
+        with patch("camera_calibration.render_dde_execute_script", side_effect=_capture_script):
+            with pytest.raises(RuntimeError, match="stop after capture"):
+                calib._capture_movie_via_dde_fbo("probe")
+
+        body_lines = captured["body_lines"]
+        fbo_new_index = body_lines.index("set captureFBO [FBO new $wi $he -tex rgb -noclear]")
+        pre_fbo_lines = body_lines[:fbo_new_index]
+        assert "update" not in pre_fbo_lines
+        assert "update idletasks" not in pre_fbo_lines
+        assert "catch {UpdateView $View(ev.view)}" not in pre_fbo_lines
+        assert 'catch {event generate .view${vno}.gl0 <Expose>}' not in pre_fbo_lines
+        assert body_lines[fbo_new_index + 2] == "    FBO begin $captureFBO"
+        assert body_lines[fbo_new_index + 3] == "    UpdateView $vno"

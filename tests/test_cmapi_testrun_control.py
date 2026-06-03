@@ -124,7 +124,7 @@ class TestCameraDialogActivationGuards:
         )
 
 class TestMovieAbraxasProbe:
-    def test_ensure_movie_abraxas_enabled_skips_updateview_timerproc(self, cmctrl, monkeypatch, tmp_path):
+    def test_ensure_movie_abraxas_enabled_avoids_forcing_render(self, cmctrl, monkeypatch, tmp_path):
         captured = _capture_body_lines(
             monkeypatch,
             cmctrl,
@@ -135,6 +135,28 @@ class TestMovieAbraxasProbe:
         cmctrl.ensure_movie_abraxas_enabled()
 
         body_lines = captured["body_lines"]
-        assert 'catch {UpdateView $View(ev.view)}' in body_lines
-        assert 'catch {event generate .view${vno}.gl0 <Expose>}' in body_lines
+        assert 'if {$before != 1} {$menu invoke 1}' in body_lines
+        assert 'update' in body_lines
+        assert 'update idletasks' in body_lines
+        assert 'catch {UpdateView $View(ev.view)}' not in body_lines
+        assert 'catch {event generate .view${vno}.gl0 <Expose>}' not in body_lines
         assert 'catch {UpdateView_TimerProc}' not in body_lines
+
+class TestMovieEventPumpMitigations:
+    def test_movie_background_tcl_commands_do_not_flush_event_loop(self, cmctrl):
+        body_lines = cmctrl._movie_background_tcl_commands(include_root=True)
+        assert 'catch {wm attributes . -topmost 0}' in body_lines
+        assert 'catch {wm lower .}' in body_lines
+        assert 'update' not in body_lines
+        assert 'update idletasks' not in body_lines
+
+    def test_ensure_movie_abraxas_enabled_raises_when_probe_does_not_latch(self, cmctrl, monkeypatch, tmp_path):
+        _capture_body_lines(
+            monkeypatch,
+            cmctrl,
+            tmp_path,
+            "before=0;after=0;menu=.view0.mbar.view.m.show;view=0",
+        )
+
+        with pytest.raises(RuntimeError, match="ABRAXAS did not stay enabled"):
+            cmctrl.ensure_movie_abraxas_enabled()

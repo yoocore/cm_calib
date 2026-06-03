@@ -104,8 +104,6 @@ def _movie_background_tcl_commands(*, include_root: bool = True) -> list[str]:
             '    catch {wm attributes .camera.cammoddlg -topmost 0}',
             '    catch {wm lower .camera.cammoddlg}',
             '}',
-            'update',
-            'update idletasks',
         ]
     )
     return commands
@@ -1796,10 +1794,6 @@ def ensure_movie_abraxas_enabled(
                 'if {![winfo exists $menu]} {error "missing ABRAXAS menu"}',
                 'set before [expr {[info exists View(ABRAXAS)] ? $View(ABRAXAS) : -1}]',
                 'if {$before != 1} {$menu invoke 1}',
-                'update',
-                'update idletasks',
-                'catch {UpdateView $View(ev.view)}',
-                'catch {event generate .view${vno}.gl0 <Expose>}',
                 'update',
                 'update idletasks',
                 'set after [expr {[info exists View(ABRAXAS)] ? $View(ABRAXAS) : -1}]',

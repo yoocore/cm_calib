@@ -6674,7 +6674,7 @@ class CameraCalibrator:
     def _load_params(param_cfg: Dict[str, dict]) -> List[ParameterSpec]:
         params: List[ParameterSpec] = []
         for name, p in param_cfg.items():
-            initial_value = float(p.get("initial", 0.0))
+            initial_value = float(p["initial"])
             bounds_multiplier = float(p.get("bounds_multiplier", _DEFAULT_BOUNDS_MULTIPLIER))
             step = float(p.get("step", 0.001))
             half_range = step * bounds_multiplier

@@ -1419,7 +1419,6 @@ def bootstrap_config_from_annotation(
     output_path: Optional[Path] = None,
     preview_path: Optional[Path] = None,
     camera_name: Optional[str] = None,
-    capture_current_params: bool = True,
 ) -> Tuple[Path, Path, List[dict]]:
     with open(template_config_path, "r", encoding="utf-8-sig") as f:
         template_cfg = json.load(f)
@@ -1460,13 +1459,6 @@ def bootstrap_config_from_annotation(
         ]
     bootstrap_calibrator = CameraCalibrator(cfg, config_path=output_file)
     _sync_materialized_board_fields_from_calibrator(cfg, bootstrap_calibrator)
-    if capture_current_params:
-        current_values = bootstrap_calibrator.capture_initial_values()
-        updated_names = _apply_initial_values_to_cfg(cfg, current_values)
-        print(
-            "Bootstrap captured current window values: "
-            f"names={', '.join(sorted(updated_names))}"
-        )
     with open(output_file, "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=4)
 
@@ -2126,73 +2118,6 @@ def _compare_and_pick_better_seed(
     return matched_values, matched_score, "matched"
 
 
-def _write_initial_values_to_config(config_path: Path, values: Dict[str, float]) -> None:
-    with open(config_path, "r", encoding="utf-8-sig") as f:
-        cfg = json.load(f)
-
-    updated_names = _apply_initial_values_to_cfg(cfg, values)
-
-    with open(config_path, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, ensure_ascii=False, indent=4)
-
-    with open(config_path, "r", encoding="utf-8-sig") as f:
-        verify_cfg = json.load(f)
-    verify_params = verify_cfg.get("parameters", {})
-    mismatches = []
-    for name in updated_names:
-        expected = _clamp_to_parameter_bounds(cfg["parameters"][name], float(values[name]))
-        actual = float(verify_params.get(name, {}).get("initial", float("nan")))
-        if abs(actual - expected) > 1e-9:
-            mismatches.append(f"{name}: expected={expected}, actual={actual}")
-    if mismatches:
-        print(
-            f"CONFIG READBACK MISMATCH: path={config_path}, "
-            f"mismatches={mismatches}"
-        )
-    else:
-        print(
-            "Updated config initial values: "
-            f"path={config_path}, names={', '.join(sorted(updated_names))}, readback=OK"
-        )
-
-
-def _write_initial_values_to_config_if_best(
-    config_path: Path,
-    camera_name: str,
-    best_score: float,
-    values: Dict[str, float],
-    tolerance: float = 1e-6,
-) -> bool:
-    history_best_run = _load_history_best_run_for_config(config_path, camera_name)
-    history_best_score: Optional[float] = None
-    if isinstance(history_best_run, dict):
-        try:
-            history_best_score = float(history_best_run.get("final_score"))
-        except Exception:
-            history_best_score = None
-
-    if history_best_score is not None and float(best_score) > history_best_score + tolerance:
-        history_values = (
-            history_best_run.get("final_values") if isinstance(history_best_run, dict) else None
-        )
-        if isinstance(history_values, dict) and history_values:
-            print(
-                "Config update: using history best "
-                f"path={config_path}, history_score={history_best_score:.6f}, "
-                f"current_score={float(best_score):.6f}"
-            )
-            _write_initial_values_to_config(
-                config_path,
-                {k: float(v) for k, v in history_values.items() if isinstance(v, (int, float))},
-            )
-            return True
-
-    print(
-        "Config update: using current best "
-        f"path={config_path}, score={float(best_score):.6f}"
-    )
-    _write_initial_values_to_config(config_path, values)
-    return True
 
 
 def _vehicle_writeback_backup_path(vehicle_path: Path) -> Path:
@@ -3683,22 +3608,6 @@ def _maybe_autotune_round_strategy(
     }
 
 
-def _apply_initial_values_to_cfg(cfg: dict, values: Dict[str, float]) -> List[str]:
-    parameters = cfg.get("parameters", {})
-    updated_names: List[str] = []
-    for name, value in values.items():
-        if name not in parameters:
-            continue
-        clamped = _clamp_to_parameter_bounds(parameters[name], float(value))
-        raw_value = float(value)
-        if abs(clamped - raw_value) > 1e-9:
-            print(f"Warning: clamping {name}={raw_value} to {clamped} (out of range)")
-        parameters[name]["initial"] = clamped
-        updated_names.append(name)
-
-    if not updated_names:
-        raise ValueError("No matching parameters found in config")
-    return updated_names
 
 
 def _clamp_to_parameter_bounds(param_cfg: dict, value: float) -> float:
@@ -7627,9 +7536,6 @@ class CameraCalibrator:
             captured[param.name] = value
             print(f"{param.name}: {value}")
         return captured
-
-    def write_initial_values_to_config(self, config_path: str, values: Dict[str, float]) -> None:
-        _write_initial_values_to_config(Path(config_path), values)
 
     @staticmethod
     def _quantize_value(value: float, decimals: int) -> float:
@@ -11660,11 +11566,6 @@ def parse_args() -> argparse.Namespace:
         help="Read current Script Control values and print initial values",
     )
     parser.add_argument(
-        "--write-initials-to-config",
-        action="store_true",
-        help="Write captured initial values back to --config file",
-    )
-    parser.add_argument(
         "--propose-boards",
         action="store_true",
         help="Auto-detect candidate board instances from real_image and write a proposed config",
@@ -12168,8 +12069,10 @@ def main() -> None:
 
         if args.capture_initials:
             values = calib.capture_initial_values()
-            if args.write_initials_to_config:
-                calib.write_initial_values_to_config(args.config, values)
+            print("Captured current values from CarMaker GUI:")
+            for name, value in sorted(values.items()):
+                print(f"  {name}: {value}")
+            print("Note: These values are not written to config file. Vehicle file is the single source of truth.")
             return
 
         if args.resume_from_result:

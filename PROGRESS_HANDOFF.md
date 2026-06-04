@@ -1,7 +1,8 @@
 # IPG-MOVIE Intermittent FBO Failure - Progress Handoff
 
 > Last updated: 2026-06-04  
-> Latest commit: `60aa02c fix: reduce movie pre-capture event pumping`  
+> Latest commit: `5e22ddd fix: make 'initial' optional in _load_params`  
+> Previous major fix: `60aa02c fix: reduce movie pre-capture event pumping`  
 > Author: Bytes (OpenCode agent)
 
 ---
@@ -274,6 +275,19 @@ All in `E:\Temp\opencode\`. These are NOT in the repo.
 | `background_probe_spammer_subsplit.py` | Background DDE probe spammer | Supporting tool |
 | `runtime_stepwise_fbo_verify.py` | Live prepare→FBO probe | All steps result_ok after 60aa02c |
 | `runtime_camera_select_fbo_verify.py` | Live camera selection→FBO probe | right_rear works end-to-end |
+
+---
+
+### Phase 11: Config `initial` Field KeyError Fix (2026-06-04)
+
+**Bug:** Running calibration after commit `d2018b9 refactor: bounds reform` caused `KeyError: 'initial'` in `_load_params()`.
+
+**Root Cause:** Commit `d2018b9` removed the `initial` field from all `configs/camera.*.json` files (changing from static initial values to dynamic DDE reads). However, `camera_calibration.py:6677` still required `p["initial"]` via `float(p["initial"])`.
+
+**Fix (commit 5e22ddd):** Changed `float(p["initial"])` to `float(p.get("initial", 0.0))`. This is safe because the `initial` value is overwritten by the DDE read during `capture_initial_values_to_config()`, so the default `0.0` is never used in practice.
+
+**Verification:** `python -m pytest tests/ -q` → 31 passed.
+
 
 ---
 
@@ -598,23 +612,19 @@ The FBO failure is probabilistic by nature, but the 60aa02c fix eliminates the t
 ## 10. Git History
 
 ```
+5e22ddd fix: make 'initial' optional in _load_params (missing after bounds reform d2018b9)
+d2018b9 refactor: bounds reform — replace min_offset/max_offset with step×bounds_multiplier
 545083c fix: read capture dimensions from GL widget instead of stale View dict
-b90713d test: add E2E production calibration stress test; update handoff
-09e096b test: add 20x/100x FBO stress test; update handoff with resolution
 60aa02c fix: reduce movie pre-capture event pumping
 0bb05ff fix: avoid recursive movie timer update
 9e06b95 fix: align staged FBO result paths
-64a2c3d test: add staged FBO probe diagnostics
-df80680 fix: restore movie FBO size source
 ```
 
 ### Uncommitted Changes
 
 ```
-configs/camera.left_tv.json          # config updates
-configs/camera.rear_tv.json          # config updates
-configs/camera.right_rear.json       # config updates
 dde_health_check.py                  # minor additions
+tests/test_dde_health_check.py        # new test file
 ```
 
 ---

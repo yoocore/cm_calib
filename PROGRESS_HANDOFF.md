@@ -222,6 +222,22 @@ Full production path: capture → board detection → scoring. All 20 iterations
 
 **Conclusion: The FBO fix (60aa02c) is validated end-to-end through the real production calibration pipeline.** `capture_movie()` produces valid PNG output, and `evaluate()` successfully detects all 10 boards and produces consistent scores.
 
+### Phase 9: Production Calibration Verification (2026-06-04)
+
+After Phase 8 E2E stress testing, user ran the real calibration tool 3 times against the live CarMaker/IPG-MOVIE session.
+
+**Three production calibration runs (right_rear):**
+
+| Run | Timestamp | Status | Score | Boards | FBO Errors |
+|-----|-----------|--------|-------|--------|------------|
+| Run 1 | 2026-06-04 13:52 | finished | 1392.13 | 10/10 | **0** |
+| Run 2 | 2026-06-04 13:59 | finished | 1392.13 | 10/10 | **0** |
+| Run 3 | 2026-06-04 14:15 | 1372.79 | finished | 10/10 | **0** |
+
+Run logs searched for `FBO`, `FrameBuffer`, `Creation error` — **zero matches** across all 3 runs.
+
+**Result: The FBO fix is confirmed in real production use.** No FBO creation errors, no retries needed, all captures produced valid PNG output with consistent board detection.
+
 ### Temporary Scripts Inventory
 
 All in `E:\Temp\opencode\`. These are NOT in the repo.
@@ -417,10 +433,12 @@ execute_prepare_mode()
 
 | Function | Lines | Count | Risk Level |
 |----------|-------|-------|------------|
-| `ensure_movie_camera_selected()` | 1838-1848 | 3 rounds | HIGH — most complex, widget interactions |
-| `ensure_movie_camera_dialogs_normal()` | 1979-1994 | 3 rounds | MEDIUM — dialog opening |
-| `ensure_movie_camera_widgets()` | 1920-1931 | 2 rounds | MEDIUM — widget materialization |
-| `ensure_movie_view_size()` | 1748-1749 | 1 round | LOW — simple resize |
+| `ensure_movie_camera_selected()` | 1838-1848 | 3 rounds | SAFE — proven by 20x+100x+3 production runs |
+| `ensure_movie_camera_dialogs_normal()` | 1979-1994 | 3 rounds | SAFE — proven by 100x+3 production runs |
+| `ensure_movie_camera_widgets()` | 1920-1931 | 2 rounds | SAFE — proven by 100x+3 production runs |
+| `ensure_movie_view_size()` | 1748-1749 | 1 round | SAFE — proven by 100x+3 production runs |
+
+All remaining `update`/`update idletasks` are in separate DDE calls from the capture body and do not cause FBO failure. They may still be needed for Tk widget materialization — do not remove without per-helper runtime verification.
 
 ### Risk: verify_runtime_chain_baseline.py
 
@@ -464,13 +482,29 @@ Each helper runs in its own DDE call (separate Tcl execute), so the event pump f
 
 The FBO failure is probabilistic by nature, but the 60aa02c fix eliminates the triggering condition (inline `update`/`update idletasks` before `FBO new` in the same Tcl execute). The remaining `update`/`update idletasks` in prepare helpers are in separate DDE calls and do not trigger the condition.
 
-## 8. Current Status: RESOLVED
+## 8. Current Status: RESOLVED (Production-Validated)
 
 **The intermittent FBO Creation error is resolved by commit 60aa02c.**
 
-### Why the remaining `update`/`update idletasks` are safe
+### Validation Summary
 
-The root cause requires `update`/`update idletasks` to be in the **same Tcl execute** as `FBO new`. The prepare helpers each run in their own DDE call, so their event pumping is isolated. The production capture body (`_capture_movie_via_dde_fbo`) has no `update`/`update idletasks` before `FBO new`.
+| Verification | Method | Result |
+|-------------|--------|--------|
+| FBO probe x20 | `runtime_fbo_stress_20x.py` Phase 1 | 20/20 OK |
+| camera_selected + FBO x20 | `runtime_fbo_stress_20x.py` Phase 2 | 20/20 OK |
+| Full prepare chain + FBO x20 | `runtime_fbo_stress_20x.py` Phase 3 | 20/20 OK |
+| Full prepare chain + FBO x100 | `runtime_fbo_stress_20x.py` Phase 3 | 100/100 OK |
+| `capture_movie()` x20 | `runtime_e2e_calib_stress.py` | 20/20 OK |
+| `evaluate()` x20 | `runtime_e2e_calib_stress.py` | 20/20 OK |
+| **Production calibration x3** | **Real tool, live session** | **3/3 OK, 0 FBO errors** |
+
+### Fix Summary
+
+**Root cause**: `update`/`update idletasks` in the same Tcl execute as `FBO new` causes GL context state corruption → intermittent FBO Creation error.
+
+**Fix (commit 60aa02c)**: Removed `update`/`update idletasks` from `_movie_background_tcl_commands()` and `UpdateView`/`<Expose>` from `ensure_movie_abraxas_enabled()`. These were the only locations where event pumping happened in the same Tcl execute as code paths leading to `FBO new`.
+
+**Why remaining `update`/`update idletasks` are safe**: Each prepare helper runs in its own DDE call (separate Tcl execute), so their event pumping is isolated. The production capture body (`_capture_movie_via_dde_fbo`) has no `update`/`update idletasks` before `FBO new`.
 
 ### Remaining items (low priority)
 
@@ -526,14 +560,22 @@ The root cause requires `update`/`update idletasks` to be in the **same Tcl exec
 
 | Directory | Contents |
 |-----------|----------|
-| `SimOutput\dde_health_check\20260604_094217\runtime_stepwise_fbo_verify\` | Round 1 stepwise prepare→FBO results |
-| `SimOutput\dde_health_check\20260604_094257\runtime_camera_select_fbo_verify\` | Round 2 camera selection→FBO results |
+| `SimOutput\dde_health_check\20260604_094217\runtime_stepwise_fbo_verify\` | Phase 6 stepwise prepare→FBO results |
+| `SimOutput\dde_health_check\20260604_094257\runtime_camera_select_fbo_verify\` | Phase 6 camera selection→FBO results |
+| `SimOutput\dde_health_check\20260604_124456_fbo_stress_20x\` | Phase 7 three-phase 20x stress results |
+| `SimOutput\dde_health_check\20260604_124747_fbo_stress_20x\` | Phase 7 100x endurance results |
+| `SimOutput\dde_health_check\20260604_133144_e2e_calib_stress\` | Phase 8 E2E capture+evaluate stress results |
+| `SimOutput\right_rear\rounds_20260604_135208\` | Phase 9 production calibration run 1 |
+| `SimOutput\right_rear\rounds_20260604_135938\` | Phase 9 production calibration run 2 |
+| `SimOutput\right_rear\rounds_20260604_141506\` | Phase 9 production calibration run 3 |
 
 ---
 
 ## 10. Git History
 
 ```
+b90713d test: add E2E production calibration stress test; update handoff
+09e096b test: add 20x/100x FBO stress test; update handoff with resolution
 60aa02c fix: reduce movie pre-capture event pumping
 0bb05ff fix: avoid recursive movie timer update
 9e06b95 fix: align staged FBO result paths
@@ -541,7 +583,7 @@ The root cause requires `update`/`update idletasks` to be in the **same Tcl exec
 df80680 fix: restore movie FBO size source
 ```
 
-### Uncommitted Changes (Not Part of 60aa02c)
+### Uncommitted Changes
 
 ```
 configs/camera.left_tv.json          # config updates

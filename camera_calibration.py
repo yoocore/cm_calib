@@ -2347,6 +2347,8 @@ def _read_vehicle_initial_values_via_dde(camera_name: str) -> Optional[Dict[str,
     if not vehicle_path:
         return None
     sensor_name = runtime_context.get("sensor_name")
+    print(f"Reading vehicle file: {vehicle_path}")
+    print(f"Sensor name override: {sensor_name}")
     return _read_sensor_values_from_vehicle(Path(vehicle_path), camera_name, sensor_name)
 
 
@@ -11931,11 +11933,27 @@ def main() -> None:
     requires_runtime_session = bool(args.capture_initials) or should_optimize
 
     if requires_runtime_session and should_optimize:
+        print(f"Config initial values BEFORE vehicle DDE read for {camera_name}:")
+        for name, param in sorted(cfg.get("parameters", {}).items()):
+            if "initial" in param:
+                print(f"  {name}: {param['initial']}")
+            else:
+                print(f"  {name}: (no initial)")
         _vehicle_initial_values = _read_vehicle_initial_values_mandatory(camera_name)
+        print(f"Vehicle DDE read returned {len(_vehicle_initial_values)} values:")
+        for name, value in sorted(_vehicle_initial_values.items()):
+            print(f"  {name}: {value}")
         for name, value in _vehicle_initial_values.items():
             if name in cfg.get("parameters", {}):
                 cfg["parameters"][name]["initial"] = value
-        print(f"Loaded initial values from vehicle file for {camera_name}")
+            else:
+                print(f"  WARNING: {name} from vehicle file not in config parameters")
+        print(f"Config initial values AFTER vehicle DDE read for {camera_name}:")
+        for name, param in sorted(cfg.get("parameters", {}).items()):
+            if "initial" in param:
+                print(f"  {name}: {param['initial']}")
+            else:
+                print(f"  {name}: (no initial)")
 
     if requires_runtime_session:
         _acquire_runtime_session_lock(base_output_dir, config_path)

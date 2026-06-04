@@ -238,6 +238,30 @@ Run logs searched for `FBO`, `FrameBuffer`, `Creation error` — **zero matches*
 
 **Result: The FBO fix is confirmed in real production use.** No FBO creation errors, no retries needed, all captures produced valid PNG output with consistent board detection.
 
+### Phase 10: View Dict Stale Size Bug (2026-06-04)
+
+**Discovery:** User noticed recent calibration output preview images had wrong dimensions (960x768 instead of 960x640).
+
+**Root Cause:** `_capture_movie_via_dde_fbo()` reads capture dimensions from the View dict (`dict get $View($vno) Width/Height`). After `View::SetSize 960 640`, the GL widget correctly becomes 960x640, but the View dict retains the old Height value (768). The FBO is created at 960x768 instead of 960x640.
+
+**Impact chain:**
+1. FBO created at 960x768 (5:4 aspect) instead of 960x640 (3:2 aspect)
+2. Capture image is 768 pixels tall instead of 640
+3. When resized to overlay (1920x1280 = 3:2), the 5:4 image gets aspect-distorted
+4. Board detection and scoring fail due to distorted image → scores ~1372-3025 instead of ~43
+
+**Evidence:**
+
+| Image type | Recent runs (bug) | Historical best (correct) |
+|-----------|-------------------|--------------------------|
+| capture | 960x**768** | 960x**640** |
+| score | 1623x**768** | 1623x**640** |
+| overlay | 1920x1280 | 1920x1280 |
+
+**Fix (commit 545083c):** Changed `_capture_movie_via_dde_fbo()` to read from GL widget (`[$wpath.gl0 cget -width/height]`) instead of View dict. Added `scan $vno %d vno_int` to extract the integer view number for the widget path from the `0:0` format.
+
+**Verification:** After fix, `capture_movie()` produces 960x640 images (confirmed with 3-iteration E2E test). Full `evaluate()` verification requires right_rear camera to be available in the current session (currently only left_tv is listed).
+
 ### Temporary Scripts Inventory
 
 All in `E:\Temp\opencode\`. These are NOT in the repo.
@@ -574,6 +598,7 @@ The FBO failure is probabilistic by nature, but the 60aa02c fix eliminates the t
 ## 10. Git History
 
 ```
+545083c fix: read capture dimensions from GL widget instead of stale View dict
 b90713d test: add E2E production calibration stress test; update handoff
 09e096b test: add 20x/100x FBO stress test; update handoff with resolution
 60aa02c fix: reduce movie pre-capture event pumping

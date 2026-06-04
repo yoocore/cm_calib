@@ -108,84 +108,57 @@
     ],
     "parameters": {
         "pos_x": {
-            "initial": 0.3016,
             "step": 0.002,
-            "min_offset": -0.04,
-            "max_offset": 0.04,
             "min_step": 0.001,
             "decimals": 4
         },
         "pos_y": {
-            "initial": 0.0438,
             "step": 0.001,
-            "min_offset": -0.01,
-            "max_offset": 0.01,
             "min_step": 0.001,
             "decimals": 4
         },
         "pos_z": {
-            "initial": 0.6782,
             "step": 0.002,
-            "min_offset": -0.06,
-            "max_offset": 0.06,
             "min_step": 0.001,
             "decimals": 4
         },
         "yaw": {
-            "initial": 180.2311,
             "step": 0.01,
-            "min_offset": -0.25,
-            "max_offset": 0.25,
             "min_step": 0.002,
             "decimals": 4
         },
         "pitch": {
-            "initial": 17.5418,
             "step": 0.02,
-            "min_offset": -0.45,
-            "max_offset": 0.45,
             "min_step": 0.002,
             "decimals": 4
         },
         "roll": {
-            "initial": -0.0544,
             "step": 0.01,
-            "min_offset": -0.2,
-            "max_offset": 0.2,
             "min_step": 0.002,
             "decimals": 4
         },
         "lens_fov": {
-            "initial": 195.2,
             "step": 0.2,
-            "min_offset": -6.0,
-            "max_offset": 6.0,
             "min_step": 0.1,
             "decimals": 1
         },
         "lens_scale": {
-            "initial": 1.0,
             "step": 0.005,
-            "min_offset": 0.0,
-            "max_offset": 0.0,
             "min_step": 0.005,
-            "decimals": 3
+            "decimals": 3,
+            "bounds_multiplier": 0
         },
         "lens_offset_x": {
-            "initial": 0.0,
             "step": 0.01,
-            "min_offset": 0.0,
-            "max_offset": 0.0,
             "min_step": 0.01,
-            "decimals": 2
+            "decimals": 2,
+            "bounds_multiplier": 0
         },
         "lens_offset_y": {
-            "initial": 0.0,
             "step": 0.01,
-            "min_offset": 0.0,
-            "max_offset": 0.0,
             "min_step": 0.01,
-            "decimals": 2
+            "decimals": 2,
+            "bounds_multiplier": 0
         }
     },
     "real_image": "C:/CM_Projects/CMO141_Calibration/Movie/ngxpro/6_rear_tv_origin.jpg",

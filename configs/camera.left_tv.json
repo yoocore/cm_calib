@@ -333,84 +333,57 @@
     ],
     "parameters": {
         "pos_x": {
-            "initial": 3.1693,
             "step": 0.002,
-            "min_offset": -0.02,
-            "max_offset": 0.02,
             "min_step": 0.001,
             "decimals": 4
         },
         "pos_y": {
-            "initial": 1.0222,
             "step": 0.001,
-            "min_offset": -0.01,
-            "max_offset": 0.01,
             "min_step": 0.001,
             "decimals": 4
         },
         "pos_z": {
-            "initial": 1.083,
             "step": 0.001,
-            "min_offset": -0.012,
-            "max_offset": 0.012,
             "min_step": 0.001,
             "decimals": 4
         },
         "yaw": {
-            "initial": 88.9567,
             "step": 0.015,
-            "min_offset": -0.35,
-            "max_offset": 0.35,
             "min_step": 0.002,
             "decimals": 4
         },
         "pitch": {
-            "initial": 24.8985,
             "step": 0.03,
-            "min_offset": -0.6,
-            "max_offset": 0.6,
             "min_step": 0.002,
             "decimals": 4
         },
         "roll": {
-            "initial": 0.5607,
             "step": 0.01,
-            "min_offset": -0.2,
-            "max_offset": 0.2,
             "min_step": 0.002,
             "decimals": 4
         },
         "lens_fov": {
-            "initial": 192.1,
             "step": 0.2,
-            "min_offset": -2.0,
-            "max_offset": 2.0,
             "min_step": 0.1,
             "decimals": 1
         },
         "lens_scale": {
-            "initial": 1.0,
             "step": 0.005,
-            "min_offset": 0.0,
-            "max_offset": 0.0,
             "min_step": 0.005,
-            "decimals": 3
+            "decimals": 3,
+            "bounds_multiplier": 0
         },
         "lens_offset_x": {
-            "initial": 0.0,
             "step": 0.01,
-            "min_offset": 0.0,
-            "max_offset": 0.0,
             "min_step": 0.01,
-            "decimals": 2
+            "decimals": 2,
+            "bounds_multiplier": 0
         },
         "lens_offset_y": {
-            "initial": 0.0,
             "step": 0.01,
-            "min_offset": 0.0,
-            "max_offset": 0.0,
             "min_step": 0.01,
-            "decimals": 2
+            "decimals": 2,
+            "bounds_multiplier": 0
         }
     },
     "output_dir": "C:\\CM_Projects\\CMO141_Calibration\\SimOutput\\left_tv"

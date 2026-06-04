@@ -52,12 +52,9 @@ def _make_minimal_cfg(output_dir: Path) -> dict:
         "parameters": {
             "pos_x": {
                 "initial": 0.0,
-                "min": -10.0,
-                "max": 10.0,
                 "step": 1.0,
                 "min_step": 0.1,
                 "decimals": 3,
-                "unlocked": True,
             }
         },
         "boards": [

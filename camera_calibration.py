@@ -317,84 +317,57 @@ def _default_bootstrap_template_path() -> Path:
 def _default_parameter_config() -> Dict[str, dict]:
     return {
         "pos_x": {
-            "initial": 0.0,
             "step": 0.002,
-            "min_offset": -0.02,
-            "max_offset": 0.02,
             "min_step": 0.001,
             "decimals": 4,
         },
         "pos_y": {
-            "initial": 0.0,
             "step": 0.001,
-            "min_offset": -0.01,
-            "max_offset": 0.01,
             "min_step": 0.001,
             "decimals": 4,
         },
         "pos_z": {
-            "initial": 0.0,
             "step": 0.002,
-            "min_offset": -0.03,
-            "max_offset": 0.03,
             "min_step": 0.001,
             "decimals": 4,
         },
         "yaw": {
-            "initial": 0.0,
             "step": 0.01,
-            "min_offset": -0.25,
-            "max_offset": 0.25,
             "min_step": 0.002,
             "decimals": 4,
         },
         "pitch": {
-            "initial": 0.0,
             "step": 0.02,
-            "min_offset": -0.45,
-            "max_offset": 0.45,
             "min_step": 0.002,
             "decimals": 4,
         },
         "roll": {
-            "initial": 0.0,
             "step": 0.01,
-            "min_offset": -0.2,
-            "max_offset": 0.2,
             "min_step": 0.002,
             "decimals": 4,
         },
         "lens_fov": {
-            "initial": 195.0,
             "step": 0.2,
-            "min_offset": -6.0,
-            "max_offset": 6.0,
             "min_step": 0.1,
             "decimals": 1,
         },
         "lens_scale": {
-            "initial": 1.0,
             "step": 0.005,
-            "min_offset": 0.0,
-            "max_offset": 0.0,
             "min_step": 0.005,
             "decimals": 3,
+            "bounds_multiplier": 0,
         },
         "lens_offset_x": {
-            "initial": 0.0,
             "step": 0.01,
-            "min_offset": 0.0,
-            "max_offset": 0.0,
             "min_step": 0.01,
             "decimals": 2,
+            "bounds_multiplier": 0,
         },
         "lens_offset_y": {
-            "initial": 0.0,
             "step": 0.01,
-            "min_offset": 0.0,
-            "max_offset": 0.0,
             "min_step": 0.01,
             "decimals": 2,
+            "bounds_multiplier": 0,
         },
     }
 
@@ -2377,6 +2350,24 @@ def _read_vehicle_initial_values_via_dde(camera_name: str) -> Optional[Dict[str,
     return _read_sensor_values_from_vehicle(Path(vehicle_path), camera_name, sensor_name)
 
 
+def _read_vehicle_initial_values_mandatory(
+    camera_name: str,
+    max_retries: int = 3,
+    retry_delay_sec: float = 2.0,
+) -> Dict[str, float]:
+    for attempt in range(1, max_retries + 1):
+        values = _read_vehicle_initial_values_via_dde(camera_name)
+        if values:
+            return values
+        if attempt < max_retries:
+            print(f"Vehicle DDE read attempt {attempt}/{max_retries} failed, retrying in {retry_delay_sec}s...")
+            time.sleep(retry_delay_sec)
+    raise RuntimeError(
+        f"Cannot read initial values from vehicle file for '{camera_name}' "
+        f"after {max_retries} attempts. Ensure CarMaker is running with the correct vehicle loaded."
+    )
+
+
 def _parse_runtime_vehicle_probe_detail(detail: str) -> Dict[str, str]:
     parsed: Dict[str, str] = {}
     for raw_line in str(detail).splitlines():
@@ -3497,21 +3488,11 @@ def _build_round_strategy_autotune_patch(
                     continue
                 if multiplier <= 0.0 or step <= 0.0:
                     continue
-                initial_value = float(param_cfg.get("initial", 0.0))
-                min_value, max_value = _resolve_parameter_bounds(param_cfg)
-                current_min_offset = float(param_cfg.get("min_offset", min_value - initial_value))
-                current_max_offset = float(param_cfg.get("max_offset", max_value - initial_value))
-                desired_half_range = _quantize_float(
-                    max(step * multiplier, abs(current_min_offset), abs(current_max_offset)),
-                    int(param_cfg.get("decimals", 4)),
-                )
-                next_min_offset = min(current_min_offset, -desired_half_range)
-                next_max_offset = max(current_max_offset, desired_half_range)
+                current_bounds_multiplier = float(param_cfg.get("bounds_multiplier", _DEFAULT_BOUNDS_MULTIPLIER))
+                desired_multiplier = max(multiplier, current_bounds_multiplier)
                 param_patch: Dict[str, float] = {}
-                if not math.isclose(next_min_offset, current_min_offset, rel_tol=0.0, abs_tol=1e-12):
-                    param_patch["min_offset"] = next_min_offset
-                if not math.isclose(next_max_offset, current_max_offset, rel_tol=0.0, abs_tol=1e-12):
-                    param_patch["max_offset"] = next_max_offset
+                if not math.isclose(desired_multiplier, current_bounds_multiplier, rel_tol=0.0, abs_tol=1e-12):
+                    param_patch["bounds_multiplier"] = desired_multiplier
                 if param_patch:
                     parameter_patch[name] = param_patch
                     unlock_priority_names.append(name)
@@ -3737,23 +3718,15 @@ def _format_scalar_value_map(values: Dict[str, float]) -> str:
     return ", ".join(ordered)
 
 
-_DEFAULT_BOUNDS_MULTIPLIER = 10.0
+_DEFAULT_BOUNDS_MULTIPLIER = 50.0
 
 
 def _resolve_parameter_bounds(param_cfg: dict) -> Tuple[float, float]:
     initial_value = float(param_cfg["initial"])
-    if "min_offset" in param_cfg or "max_offset" in param_cfg:
-        min_value = initial_value + float(param_cfg.get("min_offset", 0.0))
-        max_value = initial_value + float(param_cfg.get("max_offset", 0.0))
-    elif "min" in param_cfg and "max" in param_cfg:
-        min_value = float(param_cfg["min"])
-        max_value = float(param_cfg["max"])
-    else:
-        step = float(param_cfg.get("step", 0.001))
-        half_range = step * _DEFAULT_BOUNDS_MULTIPLIER
-        min_value = initial_value - half_range
-        max_value = initial_value + half_range
-    return min_value, max_value
+    bounds_multiplier = float(param_cfg.get("bounds_multiplier", _DEFAULT_BOUNDS_MULTIPLIER))
+    step = float(param_cfg.get("step", 0.001))
+    half_range = step * bounds_multiplier
+    return initial_value - half_range, initial_value + half_range
 
 
 def _build_explicit_parameter_config(param_cfg: dict, initial_value: float) -> dict:
@@ -3767,8 +3740,6 @@ def _build_explicit_parameter_config(param_cfg: dict, initial_value: float) -> d
     explicit_param_cfg["initial"] = quantized_initial
     explicit_param_cfg["min"] = min_value
     explicit_param_cfg["max"] = max_value
-    explicit_param_cfg.pop("min_offset", None)
-    explicit_param_cfg.pop("max_offset", None)
     return explicit_param_cfg
 
 
@@ -4981,12 +4952,6 @@ def _run_single_optimize(
             )
 
         result = calib.optimize()
-        _write_initial_values_to_config_if_best(
-            config_path,
-            camera_name,
-            float(result["best_score"]),
-            result["best_values"],
-        )
         _write_best_values_to_vehicle_config(
             config_path,
             run_cfg,
@@ -5338,12 +5303,6 @@ def _run_multi_start_rounds(
             break
 
     if best_round is not None:
-        _write_initial_values_to_config_if_best(
-            config_path,
-            camera_name,
-            float(best_round["best_run"]["best_score"]),
-            best_round["best_run"]["best_values"],
-        )
         _write_best_values_to_vehicle_config(
             config_path,
             active_cfg,
@@ -5559,12 +5518,6 @@ def _run_explore_then_refine_rounds(
             break
 
     if best_round is not None:
-        _write_initial_values_to_config_if_best(
-            config_path,
-            camera_name,
-            float(best_round["best_run"]["best_score"]),
-            best_round["best_run"]["best_values"],
-        )
         _write_best_values_to_vehicle_config(
             config_path,
             active_cfg,
@@ -6722,19 +6675,11 @@ class CameraCalibrator:
         params: List[ParameterSpec] = []
         for name, p in param_cfg.items():
             initial_value = float(p["initial"])
-            if "min_offset" in p or "max_offset" in p:
-                min_offset = float(p.get("min_offset", 0.0))
-                max_offset = float(p.get("max_offset", 0.0))
-                min_value = initial_value + min_offset
-                max_value = initial_value + max_offset
-            elif "min" in p and "max" in p:
-                min_value = float(p["min"])
-                max_value = float(p["max"])
-            else:
-                step = float(p.get("step", 0.001))
-                half_range = step * _DEFAULT_BOUNDS_MULTIPLIER
-                min_value = initial_value - half_range
-                max_value = initial_value + half_range
+            bounds_multiplier = float(p.get("bounds_multiplier", _DEFAULT_BOUNDS_MULTIPLIER))
+            step = float(p.get("step", 0.001))
+            half_range = step * bounds_multiplier
+            min_value = initial_value - half_range
+            max_value = initial_value + half_range
             if min_value > max_value:
                 raise ValueError(
                     f"Parameter {name} has invalid range: min ({min_value}) > max ({max_value})"
@@ -11985,6 +11930,13 @@ def main() -> None:
     )
     requires_runtime_session = bool(args.capture_initials) or should_optimize
 
+    if requires_runtime_session and should_optimize:
+        _vehicle_initial_values = _read_vehicle_initial_values_mandatory(camera_name)
+        for name, value in _vehicle_initial_values.items():
+            if name in cfg.get("parameters", {}):
+                cfg["parameters"][name]["initial"] = value
+        print(f"Loaded initial values from vehicle file for {camera_name}")
+
     if requires_runtime_session:
         _acquire_runtime_session_lock(base_output_dir, config_path)
 
@@ -12156,14 +12108,6 @@ def main() -> None:
         marker_payload["live_log"] = str(live_log_path)
         _write_run_marker(marker_path, marker_payload)
 
-    if not args.resume_from_result and should_optimize:
-        _vehicle_initial_values = _read_vehicle_initial_values_via_dde(camera_name)
-        if _vehicle_initial_values:
-            for name, value in _vehicle_initial_values.items():
-                if name in cfg.get("parameters", {}):
-                    cfg["parameters"][name]["initial"] = value
-            print(f"Overrode config initial values from vehicle file for {camera_name}")
-
     calib = CameraCalibrator(cfg, config_path=config_path)
     calib.live_log_path = live_log_path
     setattr(calib, "print_progress_json", bool(args.print_progress_json))
@@ -12216,12 +12160,6 @@ def main() -> None:
             )
 
         result = calib.optimize()
-        _write_initial_values_to_config_if_best(
-            config_path,
-            camera_name,
-            float(result["best_score"]),
-            result["best_values"],
-        )
         _write_best_values_to_vehicle_config(
             config_path,
             cfg,

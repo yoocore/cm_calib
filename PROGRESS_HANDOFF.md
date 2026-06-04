@@ -186,6 +186,42 @@ Output: `SimOutput\dde_health_check\20260604_124747_fbo_stress_20x\`
 
 **Conclusion: Commit 60aa02c resolves the intermittent FBO Creation error.** The remaining `update`/`update idletasks` in prepare helpers are safe because each helper runs in its own DDE call (separate Tcl execute), so event pumping is isolated and does not contaminate the capture body's `FBO new`.
 
+### Phase 8: End-to-End Production Verification (2026-06-04)
+
+Script: `runtime_e2e_calib_stress.py` (added to repo root)
+
+Previous Phase 7 tested FBO probe stability (FBO new → begin → end → delete), but did NOT verify the actual production capture pipeline. This phase uses real `CameraCalibrator.capture_movie()` and `evaluate()` code paths.
+
+**capture_movie() stress test x 20:**
+
+All 20 iterations successful. PNG output validated (960x640, mean≈148, std≈77 — not blank).
+
+| Metric | Value |
+|--------|-------|
+| Total | 20 |
+| OK | 20 |
+| FAIL | 0 |
+| Timing | 0.56–0.69s |
+| Dimensions | 960x640 (consistent) |
+| Mean pixel | ~148.1 |
+
+Output: `SimOutput\dde_health_check\20260604_133144_e2e_calib_stress\`
+
+**evaluate() stress test x 20:**
+
+Full production path: capture → board detection → scoring. All 20 iterations successful.
+
+| Metric | Value |
+|--------|-------|
+| Total | 20 |
+| OK | 20 |
+| FAIL | 0 |
+| Score | ~3025 (consistent, minor float variance ±0.29) |
+| Boards detected | 10/10 (every iteration) |
+| Timing | 3.6–4.3s (first run 25s due to lazy init) |
+
+**Conclusion: The FBO fix (60aa02c) is validated end-to-end through the real production calibration pipeline.** `capture_movie()` produces valid PNG output, and `evaluate()` successfully detects all 10 boards and produces consistent scores.
+
 ### Temporary Scripts Inventory
 
 All in `E:\Temp\opencode\`. These are NOT in the repo.
@@ -472,6 +508,7 @@ The root cause requires `update`/`update idletasks` to be in the **same Tcl exec
 | `test_fbo_after_prepare_step.py` | Step-by-step prepare→FBO diagnostic | BROKEN: uses removed `skip_fbo_probe` param |
 | `verify_runtime_chain_baseline.py` | Full runtime chain verification | Works but has the pre-FBO update pattern |
 | `runtime_fbo_stress_20x.py` | 20x/100x FBO stress test (3 phases) | Works — used for Phase 7 verification |
+| `runtime_e2e_calib_stress.py` | E2E capture_movie() + evaluate() stress test | Works — used for Phase 8 verification |
 | `fbo_score_check.py` | Standalone FBO capture probe | Works, useful for manual testing |
 
 ### Temporary Scripts (E:\Temp\opencode\)

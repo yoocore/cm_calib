@@ -53,6 +53,123 @@ please check if FrameBufferObjects are supported
 
 ---
 
+## 2.1 Experimental Process (How We Got Here)
+
+This section documents the full diagnostic journey, including temporary scripts that are NOT in the repo.
+
+### Phase 1: Symptom Characterization
+
+Initial observations from production logs and manual testing:
+- FBO failure is intermittent — same code path sometimes succeeds, sometimes fails
+- After a raw FBO failure, immediate retry usually succeeds
+-同一 Tcl execute 内连续多次 FBO new/delete 可稳定
+- Various hypotheses were weakened or eliminated:
+  - Size too large → ruled out (auto-halve added, still fails)
+  - Stale View dict → ruled out (scan/set rewritten, still fails)
+  - Simple prelude → ruled out (still fails with minimal prelude)
+  - Idle/running sim state → ruled out
+  - DDE channel poisoning → ruled out
+
+### Phase 2: Contention Experiments
+
+**Script: `fbo_new_contention_subsplit.py`** (E:\Temp\opencode\)
+
+Design: Minimal `FBO new` body + background DDE spammer in different modes.
+Matrix: baseline, camera_root_only, lens_dialog_only, update_only, idletasks_only, update_then_idletasks.
+
+Results:
+- baseline: 20/20 clean
+- camera_root_only_001: 20/20 success, but many long-duration empty successes (~2.8-3.0s)
+- lens_dialog_only_001: 20/20 success, similar long-duration pattern
+- idletasks_only_001: 20/20 success, some long-duration empty successes
+- update_then_idletasks_001: 20/20 success, few long-duration empty successes
+- **update_only_001: 17/20 success, 3/20 failure** — first real FBO error reproduction!
+
+Key finding: Pure background `update` activity is the only mode that reliably produces real FBO failures.
+
+### Phase 3: Update Intensity/Frequency
+
+**Script: `fbo_new_update_pressure.py`** (E:\Temp\opencode\)
+
+Design: Vary update sleep interval (0.0s, 0.01s, 0.05s) and burst count (1x, 3x, 10x).
+
+Results:
+- baseline: 20/20 clean
+- update_only_005 (sleep 0.05s): 19/20, 1 dde command failed
+- update_only_001 (sleep 0.01s): 19/20, 1 dde command failed + many long-duration empty successes
+- update_only_000 (sleep 0.0s): 18/20, 2 dde command failed + heavy long-duration pattern
+- update_x3_001: 20/20 success, but most samples ~2.76-2.98s with empty detail
+- update_x10_001: 20/20 success, almost all ~2.76-3.04s empty successes
+
+Key finding: High-frequency background `update` creates两类异常 — `dde command failed` and long-duration empty successes — but this round did NOT produce real FBO errors.
+
+### Phase 4: Inline Update (The Decisive Experiment)
+
+**Script: `fbo_new_inline_update_compare.py`** (E:\Temp\opencode\)
+
+Design: **Remove second-client concurrency entirely.** Put `update`/`update idletasks` INSIDE the same Tcl execute as `FBO new`, as inline prefix commands.
+
+Matrix:
+- `baseline`: no prefix commands
+- `inline_update_once`: 1x `update` before FBO
+- `inline_update_x3`: 3x `update` before FBO
+- `inline_update_x10`: 10x `update` before FBO
+- `inline_idletasks_once`: 1x `update idletasks` before FBO
+- `inline_update_then_idletasks`: `update` + `update idletasks` before FBO
+
+Results (DECISIVE):
+- baseline: 20/20 clean
+- inline_update_once: 20/20 clean
+- **inline_update_x3: 15/20 success, 5/20 REAL FBO error**
+- **inline_update_x10: 16/20 success, 4/20 REAL FBO error**
+- **inline_idletasks_once: 15/20 success, 5/20 REAL FBO error**
+- inline_update_then_idletasks: 19/20 success, 1/20 REAL FBO error
+
+All failures confirmed by reading `manual_new.txt` — genuine `FBO Creation error (unknown error) / please check if FrameBufferObjects are supported`.
+
+**Conclusion: No second-client concurrency needed. Inline `update`/`update idletasks` in the same Tcl execute is sufficient to trigger real FBO failure.**
+
+### Phase 5: First Code Fix (Commit 60aa02c)
+
+Based on Phase 4 conclusion, the fix targeted two locations:
+1. `_movie_background_tcl_commands()`: removed trailing `update`/`update idletasks`
+2. `ensure_movie_abraxas_enabled()`: removed `UpdateView`/`<Expose>` render-forcing
+
+TDD approach: wrote failing tests first, then made minimal production changes.
+
+### Phase 6: Runtime Verification (Current)
+
+After 60aa02c, ran two rounds of runtime verification on the live CarMaker/IPG-MOVIE session:
+
+**Round 1 — Stepwise prepare → FBO:**
+- baseline → result_ok
+- after_abraxas → result_ok
+- after_view_size → result_ok
+- after_widgets → result_ok
+- after_dialogs → result_ok
+
+**Round 2 — camera_selected 专项:**
+- right_rear (full label): selection OK, FBO result_ok
+- right_rear (short name): selection OK, FBO result_ok
+- rear_tv / left_tv: selection did not latch (not FBO issue)
+
+**Result: 60aa02c effectively eliminates FBO failures for the right_rear path in the current session.**
+
+### Temporary Scripts Inventory
+
+All in `E:\Temp\opencode\`. These are NOT in the repo.
+
+| Script | Purpose | Key Result |
+|--------|---------|------------|
+| `fbo_new_contention_subsplit.py` | Background contention matrix | update_only_001: 17/20 success, first real FBO error |
+| `fbo_new_update_pressure.py` | Update intensity/frequency sweep | update_only_000: 18/20, heavy dde command failed |
+| `fbo_new_inline_update_compare.py` | Inline update vs FBO (no concurrency) | inline_update_x3: 15/20, DECISIVE proof |
+| `background_probe_spammer_subsplit.py` | Background DDE probe spammer | Supporting tool |
+| `runtime_stepwise_fbo_verify.py` | Live prepare→FBO probe | All steps result_ok after 60aa02c |
+| `runtime_camera_select_fbo_verify.py` | Live camera selection→FBO probe | right_rear works end-to-end |
+
+---
+
 ## 3. Code Changes (Commit 60aa02c)
 
 ### 3.1 Production Changes

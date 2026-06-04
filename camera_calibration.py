@@ -3722,7 +3722,7 @@ _DEFAULT_BOUNDS_MULTIPLIER = 50.0
 
 
 def _resolve_parameter_bounds(param_cfg: dict) -> Tuple[float, float]:
-    initial_value = float(param_cfg["initial"])
+    initial_value = float(param_cfg.get("initial", 0.0))
     bounds_multiplier = float(param_cfg.get("bounds_multiplier", _DEFAULT_BOUNDS_MULTIPLIER))
     step = float(param_cfg.get("step", 0.001))
     half_range = step * bounds_multiplier
@@ -4448,7 +4448,7 @@ def _cfg_with_initial_values(cfg: dict, initial_values: Dict[str, float]) -> dic
     for name, param_cfg in list(parameters.items()):
         if not isinstance(param_cfg, dict):
             continue
-        next_initial = float(initial_values.get(name, param_cfg["initial"]))
+        next_initial = float(initial_values.get(name, param_cfg.get("initial", 0.0)))
         parameters[name] = _build_explicit_parameter_config(param_cfg, next_initial)
     return run_cfg
 
@@ -6674,7 +6674,7 @@ class CameraCalibrator:
     def _load_params(param_cfg: Dict[str, dict]) -> List[ParameterSpec]:
         params: List[ParameterSpec] = []
         for name, p in param_cfg.items():
-            initial_value = float(p["initial"])
+            initial_value = float(p.get("initial", 0.0))
             bounds_multiplier = float(p.get("bounds_multiplier", _DEFAULT_BOUNDS_MULTIPLIER))
             step = float(p.get("step", 0.001))
             half_range = step * bounds_multiplier

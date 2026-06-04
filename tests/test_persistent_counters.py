@@ -513,7 +513,7 @@ class TestBuildResultPayload:
 
 
 class TestMovieFboCaptureScript:
-    def test_capture_movie_uses_view_dict_dimensions(self, tmp_path):
+    def test_capture_movie_uses_gl_widget_dimensions(self, tmp_path):
         cfg = _make_minimal_cfg(tmp_path)
         with patch.object(CameraCalibrator, "_materialize_custom_maker_templates"):
             with patch.object(CameraCalibrator, "_load_custom_templates", return_value={}):
@@ -530,12 +530,11 @@ class TestMovieFboCaptureScript:
                 calib._capture_movie_via_dde_fbo("probe")
 
         body_lines = captured["body_lines"]
-        assert "set wi [dict get $View($vno) Width]" in body_lines
-        assert "set he [dict get $View($vno) Height]" in body_lines
-        assert "scan $View(ev.view) %d wno" not in body_lines
-        assert 'set wpath ".view$wno"' not in body_lines
-        assert "set wi [$wpath.gl0 cget -width]" not in body_lines
-        assert "set he [$wpath.gl0 cget -height]" not in body_lines
+        assert "set wi [$wpath.gl0 cget -width]" in body_lines
+        assert "set he [$wpath.gl0 cget -height]" in body_lines
+        assert "set vno $View(ev.view)" in body_lines
+        assert "scan $vno %d vno_int" in body_lines
+        assert "dict get" not in " ".join(body_lines)
 
     def test_capture_movie_keeps_pre_fbo_section_free_of_event_pumping(self, tmp_path):
         cfg = _make_minimal_cfg(tmp_path)

@@ -198,7 +198,6 @@ def capture_initial_values_to_config(config_path: Path) -> dict[str, Any]:
 
     calibrator = CameraCalibrator(cfg, config_path=resolved_config_path)
     values = calibrator.capture_initial_values()
-    calibrator.write_initial_values_to_config(str(resolved_config_path), values)
     return {
         "config_path": str(resolved_config_path),
         "captured_names": sorted(values.keys()),

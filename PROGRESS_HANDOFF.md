@@ -288,7 +288,28 @@ All in `E:\Temp\opencode\`. These are NOT in the repo.
 
 **Verification:** `python -m pytest tests/ -q` → 31 passed.
 
+**Runtime Verification (post-fix):**
+```
+=== Runtime Verification After Fix ===
+Test 1: Basic FBO probe
+  Result: ok=True elapsed=0.74s
+  Detail: 0
 
+Test 2: Multiple FBO probes (5x)
+  Attempt 1: ok=True elapsed=0.64s
+  Attempt 2: ok=True elapsed=0.43s
+  Attempt 3: ok=True elapsed=0.43s
+  Attempt 4: ok=True elapsed=0.44s
+  Attempt 5: ok=True elapsed=0.44s
+
+Test 3: FBO probe after ensure_movie_abraxas_enabled
+  ABRAXAS: {'before': '1', 'after': '1', 'menu': '.view0.mbar.view.m.show', 'view': '0', 'mode': 'abraxas_enabled'}
+  FBO: ok=True elapsed=0.65s
+
+=== Verification Complete ===
+```
+
+**Result: All runtime tests pass.** FBO creation works correctly after the fix.
 ---
 
 ## 3. Code Changes (Commit 60aa02c)

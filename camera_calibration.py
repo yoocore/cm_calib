@@ -7847,6 +7847,23 @@ class CameraCalibrator:
         raise final_error
 
     def capture_movie(self, tag: str) -> Path:
+        # Ensure movie view size matches real image before capturing
+        try:
+            import cmapi_testrun_control as cmctrl
+            from runtime_config_bootstrap import load_movie_view_size_from_real_image
+
+            # Read real image size
+            width, height = load_movie_view_size_from_real_image(
+                Path(self.cfg.get("config_path", self.output_dir.parent / "config.json"))
+            )
+
+            # Set movie view size to match real image
+            cmctrl.ensure_movie_view_size(width, height)
+            print(f"Set movie view size to {width}x{height} before capture")
+        except Exception as exc:
+            print(f"Warning: Could not set movie view size: {exc}")
+            print("Proceeding with current view size (may cause aspect ratio mismatch)")
+
         return self._capture_movie_via_dde_fbo(tag)
 
     def _snapshot_values(self) -> Dict[str, float]:

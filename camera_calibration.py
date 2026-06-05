@@ -7852,10 +7852,10 @@ class CameraCalibrator:
             import cmapi_testrun_control as cmctrl
             from runtime_config_bootstrap import load_movie_view_size_from_real_image
 
-            # Read real image size
-            width, height = load_movie_view_size_from_real_image(
-                Path(self.cfg.get("config_path", self.output_dir.parent / "config.json"))
-            )
+            # Read real image size from config
+            if self.config_path is None:
+                raise ValueError("config_path not set")
+            width, height = load_movie_view_size_from_real_image(self.config_path)
 
             # Set movie view size to match real image
             cmctrl.ensure_movie_view_size(width, height)

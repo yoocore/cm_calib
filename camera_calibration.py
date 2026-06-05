@@ -4274,7 +4274,7 @@ def _run_multi_start_campaign(
             f"initials={_format_scalar_value_map(initial_values)}{meta_suffix}"
         )
 
-        calib = CameraCalibrator(run_cfg, config_path=config_path)
+        calib = CameraCalibrator(run_cfg)
         calib.live_log_path = live_log_path
         calib.print_progress_json = True
         calib._calib_phase = "explore"
@@ -4404,12 +4404,6 @@ def _resolve_round_seed_anchor(
     anchor_values = _extract_initial_values_from_cfg(cfg)
     anchor_score: Optional[float] = None
     anchor_source = "config_initial"
-
-    # If config has initial values (from vehicle file), use them as authoritative source
-    # Only fall back to history_best if config doesn't have initial values
-    if anchor_values:
-        print(f"Using config initial values as seed anchor (from vehicle file)")
-        return anchor_values, anchor_score, anchor_source
 
     if not bool(policy.get("prefer_history_best", True)):
         return anchor_values, anchor_score, anchor_source
@@ -4642,7 +4636,7 @@ def _run_explore_then_refine_campaign(
         f"initials={_format_scalar_value_map(best_values)}"
     )
 
-    calib = CameraCalibrator(refine_cfg, config_path=config_path)
+    calib = CameraCalibrator(refine_cfg)
     calib.live_log_path = live_log_path
     calib.print_progress_json = True
     calib._calib_phase = "refine"
@@ -7853,23 +7847,6 @@ class CameraCalibrator:
         raise final_error
 
     def capture_movie(self, tag: str) -> Path:
-        # Ensure movie view size matches real image before capturing
-        try:
-            import cmapi_testrun_control as cmctrl
-            from runtime_config_bootstrap import load_movie_view_size_from_real_image
-
-            # Read real image size from config
-            if self.config_path is None:
-                raise ValueError("config_path not set")
-            width, height = load_movie_view_size_from_real_image(self.config_path)
-
-            # Set movie view size to match real image
-            cmctrl.ensure_movie_view_size(width, height)
-            print(f"Set movie view size to {width}x{height} before capture")
-        except Exception as exc:
-            print(f"Warning: Could not set movie view size: {exc}")
-            print("Proceeding with current view size (may cause aspect ratio mismatch)")
-
         return self._capture_movie_via_dde_fbo(tag)
 
     def _snapshot_values(self) -> Dict[str, float]:

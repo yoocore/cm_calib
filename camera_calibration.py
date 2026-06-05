@@ -4929,7 +4929,7 @@ def _run_plain_optimize_rounds(
         round_seed_policy,
     )
     any_board_run = _load_history_best_run_any_boards(config_path, camera_name)
-    if isinstance(any_board_run, dict) and anchor_source == "history_best":
+    if isinstance(any_board_run, dict):
         any_board_values_raw = any_board_run.get("final_values", {})
         any_board_values = {
             name: float(value)
@@ -5094,7 +5094,7 @@ def _run_multi_start_rounds(
         round_seed_policy,
     )
     any_board_run = _load_history_best_run_any_boards(config_path, camera_name)
-    if isinstance(any_board_run, dict) and anchor_source == "history_best":
+    if isinstance(any_board_run, dict):
         any_board_values_raw = any_board_run.get("final_values", {})
         any_board_values = {
             name: float(value)
@@ -5271,7 +5271,7 @@ def _run_explore_then_refine_rounds(
         round_seed_policy,
     )
     any_board_run = _load_history_best_run_any_boards(config_path, camera_name)
-    if isinstance(any_board_run, dict) and anchor_source == "history_best":
+    if isinstance(any_board_run, dict):
         any_board_values_raw = any_board_run.get("final_values", {})
         any_board_values = {
             name: float(value)

@@ -3610,8 +3610,8 @@ def _maybe_autotune_round_strategy(
 
 
 
-def _clamp_to_parameter_bounds(param_cfg: dict, value: float) -> float:
-    min_value, max_value = _resolve_parameter_bounds(param_cfg)
+def _clamp_to_parameter_bounds(param_cfg: dict, value: float, initial_value: Optional[float] = None) -> float:
+    min_value, max_value = _resolve_parameter_bounds(param_cfg, initial_value=initial_value)
     decimals = int(param_cfg.get("decimals", 4))
     min_value = round(min_value, decimals)
     max_value = round(max_value, decimals)
@@ -3632,20 +3632,20 @@ def _format_scalar_value_map(values: Dict[str, float]) -> str:
 _DEFAULT_BOUNDS_MULTIPLIER = 50.0
 
 
-def _resolve_parameter_bounds(param_cfg: dict) -> Tuple[float, float]:
-    initial_value = float(param_cfg.get("initial", 0.0))
+def _resolve_parameter_bounds(param_cfg: dict, initial_value: Optional[float] = None) -> Tuple[float, float]:
+    effective_initial = float(initial_value) if initial_value is not None else float(param_cfg.get("initial", 0.0))
     bounds_multiplier = float(param_cfg.get("bounds_multiplier", _DEFAULT_BOUNDS_MULTIPLIER))
     step = float(param_cfg.get("step", 0.001))
     half_range = step * bounds_multiplier
-    return initial_value - half_range, initial_value + half_range
+    return effective_initial - half_range, effective_initial + half_range
 
 
 def _build_explicit_parameter_config(param_cfg: dict, initial_value: float) -> dict:
-    min_value, max_value = _resolve_parameter_bounds(param_cfg)
+    min_value, max_value = _resolve_parameter_bounds(param_cfg, initial_value=initial_value)
     decimals = int(param_cfg.get("decimals", 4))
     min_value = round(min_value, decimals)
     max_value = round(max_value, decimals)
-    quantized_initial = _clamp_to_parameter_bounds(param_cfg, initial_value)
+    quantized_initial = _clamp_to_parameter_bounds(param_cfg, initial_value, initial_value=initial_value)
 
     explicit_param_cfg = copy.deepcopy(param_cfg)
     explicit_param_cfg["initial"] = quantized_initial

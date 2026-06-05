@@ -4274,7 +4274,7 @@ def _run_multi_start_campaign(
             f"initials={_format_scalar_value_map(initial_values)}{meta_suffix}"
         )
 
-        calib = CameraCalibrator(run_cfg)
+        calib = CameraCalibrator(run_cfg, config_path=config_path)
         calib.live_log_path = live_log_path
         calib.print_progress_json = True
         calib._calib_phase = "explore"
@@ -4636,7 +4636,7 @@ def _run_explore_then_refine_campaign(
         f"initials={_format_scalar_value_map(best_values)}"
     )
 
-    calib = CameraCalibrator(refine_cfg)
+    calib = CameraCalibrator(refine_cfg, config_path=config_path)
     calib.live_log_path = live_log_path
     calib.print_progress_json = True
     calib._calib_phase = "refine"

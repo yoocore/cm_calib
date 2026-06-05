@@ -11857,18 +11857,6 @@ def main() -> None:
     requires_runtime_session = bool(args.capture_initials) or should_optimize
 
     if requires_runtime_session and should_optimize:
-        # Debug: write to file to ensure we can see this
-        debug_log_path = base_output_dir / "vehicle_dde_debug.log"
-        with open(debug_log_path, "w", encoding="utf-8") as debug_log:
-            debug_log.write(f"Vehicle DDE read START for {camera_name}\n")
-            debug_log.write(f"requires_runtime_session={requires_runtime_session}, should_optimize={should_optimize}\n")
-            debug_log.write(f"Config initial values BEFORE vehicle DDE read:\n")
-            for name, param in sorted(cfg.get("parameters", {}).items()):
-                if "initial" in param:
-                    debug_log.write(f"  {name}: {param['initial']}\n")
-                else:
-                    debug_log.write(f"  {name}: (no initial)\n")
-
         print(f"Config initial values BEFORE vehicle DDE read for {camera_name}:")
         for name, param in sorted(cfg.get("parameters", {}).items()):
             if "initial" in param:
@@ -11876,12 +11864,6 @@ def main() -> None:
             else:
                 print(f"  {name}: (no initial)")
         _vehicle_initial_values = _read_vehicle_initial_values_mandatory(camera_name)
-
-        with open(debug_log_path, "a", encoding="utf-8") as debug_log:
-            debug_log.write(f"\nVehicle DDE read returned {len(_vehicle_initial_values)} values:\n")
-            for name, value in sorted(_vehicle_initial_values.items()):
-                debug_log.write(f"  {name}: {value}\n")
-
         print(f"Vehicle DDE read returned {len(_vehicle_initial_values)} values:")
         for name, value in sorted(_vehicle_initial_values.items()):
             print(f"  {name}: {value}")
@@ -11890,15 +11872,6 @@ def main() -> None:
                 cfg["parameters"][name]["initial"] = value
             else:
                 print(f"  WARNING: {name} from vehicle file not in config parameters")
-
-        with open(debug_log_path, "a", encoding="utf-8") as debug_log:
-            debug_log.write(f"\nConfig initial values AFTER vehicle DDE read:\n")
-            for name, param in sorted(cfg.get("parameters", {}).items()):
-                if "initial" in param:
-                    debug_log.write(f"  {name}: {param['initial']}\n")
-                else:
-                    debug_log.write(f"  {name}: (no initial)\n")
-
         print(f"Config initial values AFTER vehicle DDE read for {camera_name}:")
         for name, param in sorted(cfg.get("parameters", {}).items()):
             if "initial" in param:

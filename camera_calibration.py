@@ -4405,6 +4405,12 @@ def _resolve_round_seed_anchor(
     anchor_score: Optional[float] = None
     anchor_source = "config_initial"
 
+    # If config has initial values (from vehicle file), use them as authoritative source
+    # Only fall back to history_best if config doesn't have initial values
+    if anchor_values:
+        print(f"Using config initial values as seed anchor (from vehicle file)")
+        return anchor_values, anchor_score, anchor_source
+
     if not bool(policy.get("prefer_history_best", True)):
         return anchor_values, anchor_score, anchor_source
 

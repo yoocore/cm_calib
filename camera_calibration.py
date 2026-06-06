@@ -4284,6 +4284,7 @@ def _run_multi_start_campaign(
         calib._calib_round_index = round_index
         calib._calib_round_count = round_count
         calib._calib_overall_total_iters = overall_total_iters
+        calib.ensure_movie_render_size()
         try:
             result = calib.optimize()
             run_summaries.append(
@@ -4650,6 +4651,7 @@ def _run_explore_then_refine_campaign(
     calib._calib_round_index = round_index
     calib._calib_round_count = round_count
     calib._calib_overall_total_iters = overall_total_iters
+    calib.ensure_movie_render_size()
     result = calib.optimize()
 
     summary = {
@@ -4868,6 +4870,7 @@ def _run_single_optimize(
                 resume_result_path or (base_output_dir / "result.json")
             )
 
+        calib.ensure_movie_render_size()
         result = calib.optimize()
         _write_best_values_to_vehicle_config(
             config_path,
@@ -7769,24 +7772,35 @@ class CameraCalibrator:
                     "    catch { foreach {_l _p} {px .camera.svptx py .camera.svpty pz .camera.svptz} { if {[winfo exists $_p]} { puts $_dfh \"$_l=[$_p get]\" } } }",
                     "    flush $_dfh; close $_dfh",
                     "}",
-                    "set captureFBO [FBO new $wi $he -tex rgb -noclear]",
+                    "# --- shared FBO: lazy init, auto-rebuild, no delete ---",
+                    "if {![info exists ::calib_fbo] || $::calib_fbo eq \"\"} {",
+                    "    set ::calib_fbo [FBO new $wi $he -tex rgb -noclear]",
+                    "}",
                     "set update_rc [catch {",
-                    "    FBO begin $captureFBO",
+                    "    FBO begin $::calib_fbo",
                     "    UpdateView $vno",
                     "    FBO end",
                     "} update_msg]",
                     "catch {FBO end}",
                     "if {$update_rc != 0} {",
-                    "    catch {FBO delete $captureFBO}",
+                    "    set fbo_healthy [catch {",
+                    "        FBO begin $::calib_fbo",
+                    "        FBO end",
+                    "    }]",
+                    "    if {$fbo_healthy != 0} {",
+                    "        catch {FBO end}",
+                    "        catch {FBO delete $::calib_fbo}",
+                    "        set ::calib_fbo [FBO new $wi $he -tex rgb -noclear]",
+                    "    }",
                     "    error $update_msg",
                     "}",
                     "catch {image delete probeImg}",
                     "image create photo probeImg -width $wi -height $he",
-                    "gl bindframebuffer_read $captureFBO",
+                    "gl bindframebuffer_read $::calib_fbo",
                     "gl readpixels 0 0 probeImg",
                     f'probeImg write "{out_path.as_posix()}" -format png',
                     "catch {gl bindframebuffer_read 0}",
-                    "catch {FBO delete $captureFBO}",
+                    "# no FBO delete here — persistent",
                 ],
             )
             script_path.write_text(script_text, encoding="utf-8")
@@ -7863,6 +7877,200 @@ class CameraCalibrator:
 
     def capture_movie(self, tag: str) -> Path:
         return self._capture_movie_via_dde_fbo(tag)
+
+    # --- Shared FBO lifecycle helpers (restored from 5a2e045) ---
+
+    def _get_ipgmovie_display_size(self) -> Optional[Tuple[int, int]]:
+        """Query IPG-MOVIE viewport GL widget size via DDE. Returns (w, h) or None."""
+        try:
+            import dde as _dde  # type: ignore
+        except Exception:
+            return None
+        for _retry in range(3):
+            result_path = self.output_dir / "display_size_query.txt"
+            _unlink_if_exists(result_path)
+            body = [
+                "set vno $View(ev.view)",
+                "scan $vno %d vno_int",
+                "set wpath \".view$vno_int\"",
+                "set _sw [winfo screenwidth $wpath.gl0]",
+                "set _sh [winfo screenheight $wpath.gl0]",
+                "list $_sw $_sh",
+            ]
+            script_text = render_dde_execute_script(result_path, "IPG-MOVIE", body)
+            script_path = self.output_dir / "display_size_query.tcl"
+            script_path.write_text(script_text, encoding="utf-8")
+            srv = None
+            try:
+                srv = _dde.CreateServer()
+                srv.Create(f"CalibDisplaySize.{uuid.uuid4().hex}")
+                conv = _dde.CreateConversation(srv)
+                conv.ConnectTo(self.script_control_dde_service, self.script_control_dde_topic)
+                conv.Exec(f"RunScript {{{script_path.as_posix()}}}")
+            except Exception:
+                pass
+            finally:
+                if srv is not None:
+                    try:
+                        srv.Shutdown()
+                    except Exception:
+                        pass
+            deadline = time.time() + self.script_control_timeout_sec
+            while time.time() < deadline:
+                if result_path.exists():
+                    text = result_path.read_text(encoding="utf-8", errors="replace").strip()
+                    # render_dde_execute_script result contains: rc=N\nmsg_begin\n<value>\nmsg_end
+                    in_msg = False
+                    msg_text = ""
+                    for line in text.splitlines():
+                        if line == "msg_begin":
+                            in_msg = True
+                            continue
+                        if line == "msg_end":
+                            break
+                        if in_msg:
+                            msg_text += line + " "
+                    msg_text = msg_text.strip()
+                    # Tcl list "960 768" may come as "960 768" or "{960} {768}"
+                    import re
+                    nums = re.findall(r"\d+", msg_text)
+                    if len(nums) >= 2:
+                        try:
+                            return int(nums[0]), int(nums[1])
+                        except ValueError:
+                            pass
+                    break
+                time.sleep(0.1)
+            time.sleep(0.5)
+        return None
+
+    def _resize_movie_viewport(self, target_w: int, target_h: int) -> bool:
+        """Resize IPG-MOVIE GL widget via DDE. Returns True on success."""
+        try:
+            import dde as _dde  # type: ignore
+        except Exception:
+            return False
+        for _retry in range(3):
+            result_path = self.output_dir / "viewport_resize.txt"
+            _unlink_if_exists(result_path)
+            body = [
+                "set vno $View(ev.view)",
+                "scan $vno %d vno_int",
+                "set wpath \".view$vno_int\"",
+                "$wpath.gl0 configure -width {%d} -height {%d}" % (target_w, target_h),
+                "update idletasks",
+                "set _aw [$wpath.gl0 cget -width]",
+                "set _ah [$wpath.gl0 cget -height]",
+                "list $_aw $_ah",
+            ]
+            script_text = render_dde_execute_script(result_path, "IPG-MOVIE", body)
+            script_path = self.output_dir / "viewport_resize.tcl"
+            script_path.write_text(script_text, encoding="utf-8")
+            srv = None
+            try:
+                srv = _dde.CreateServer()
+                srv.Create(f"CalibVpResize.{uuid.uuid4().hex}")
+                conv = _dde.CreateConversation(srv)
+                conv.ConnectTo(self.script_control_dde_service, self.script_control_dde_topic)
+                conv.Exec(f"RunScript {{{script_path.as_posix()}}}")
+            except Exception:
+                pass
+            finally:
+                if srv is not None:
+                    try:
+                        srv.Shutdown()
+                    except Exception:
+                        pass
+            deadline = time.time() + self.script_control_timeout_sec
+            while time.time() < deadline:
+                if result_path.exists():
+                    text = result_path.read_text(encoding="utf-8", errors="replace").strip()
+                    in_msg = False
+                    msg_text = ""
+                    for line in text.splitlines():
+                        if line == "msg_begin":
+                            in_msg = True
+                            continue
+                        if line == "msg_end":
+                            break
+                        if in_msg:
+                            msg_text += line + " "
+                    msg_text = msg_text.strip()
+                    import re
+                    nums = re.findall(r"\d+", msg_text)
+                    if len(nums) >= 2:
+                        try:
+                            aw, ah = int(nums[0]), int(nums[1])
+                            if aw == target_w and ah == target_h:
+                                return True
+                        except ValueError:
+                            pass
+                    break
+                time.sleep(0.1)
+            time.sleep(0.5)
+        print(f"Warning: could not verify viewport resize to {target_w}x{target_h}")
+        return False
+
+    def ensure_movie_render_size(self) -> None:
+        """Ensure IPG-MOVIE viewport size can accommodate the reference image for FBO capture."""
+        if self.real_img is None:
+            return
+        ref_h, ref_w = self.real_img.shape[:2]
+        display_size = self._get_ipgmovie_display_size()
+        if display_size is None:
+            return
+        disp_w, disp_h = display_size
+        safe_w, safe_h = disp_w - 50, disp_h - 50
+        if ref_w <= safe_w and ref_h <= safe_h:
+            return
+        new_w = ref_w // 2
+        new_h = ref_h // 2
+        print(f"Viewport {disp_w}x{disp_h} too small for ref {ref_w}x{ref_h}; resizing to {new_w}x{new_h}")
+        self._resize_movie_viewport(new_w, new_h)
+
+    def _cleanup_shared_fbo(self) -> None:
+        """Delete the shared FBO global in IPG-MOVIE via DDE (best-effort)."""
+        try:
+            import dde as _dde  # type: ignore
+        except Exception:
+            return
+        body = [
+            "catch {FBO delete $::calib_fbo}",
+            "unset -nocomplain ::calib_fbo",
+            "ok",
+        ]
+        for attempt in range(3):
+            result_path = self.output_dir / f"cleanup_fbo_{attempt}.txt"
+            _unlink_if_exists(result_path)
+            script_text = render_dde_execute_script(result_path, "IPG-MOVIE", body)
+            script_path = self.output_dir / f"cleanup_fbo_{attempt}.tcl"
+            script_path.write_text(script_text, encoding="utf-8")
+            srv = None
+            try:
+                srv = _dde.CreateServer()
+                srv.Create(f"CalibFboCleanup.{uuid.uuid4().hex}")
+                conv = _dde.CreateConversation(srv)
+                conv.ConnectTo(self.script_control_dde_service, self.script_control_dde_topic)
+                conv.Exec(f"RunScript {{{script_path.as_posix()}}}")
+            except Exception:
+                pass
+            finally:
+                if srv is not None:
+                    try:
+                        srv.Shutdown()
+                    except Exception:
+                        pass
+            deadline = time.time() + self.script_control_timeout_sec
+            while time.time() < deadline:
+                if result_path.exists():
+                    text = result_path.read_text(encoding="utf-8", errors="replace").strip()
+                    if "ok" in text.lower():
+                        _unlink_if_exists(result_path)
+                        return
+                    break
+                time.sleep(0.1)
+            time.sleep(0.5 * (attempt + 1))
+        print("Warning: could not clean up shared FBO (non-fatal)")
 
     def _snapshot_values(self) -> Dict[str, float]:
         return {p.name: p.value for p in self.params}
@@ -11535,17 +11743,20 @@ class CameraCalibrator:
         return result
 
     def optimize(self) -> dict:
-        if self.optimizer_mode == "bayesian":
-            return self._optimize_bayesian()
-        elif self.optimizer_mode == "auto":
-            if _OPTUNA_AVAILABLE:
-                print("Using Bayesian optimizer (optuna available)")
+        try:
+            if self.optimizer_mode == "bayesian":
                 return self._optimize_bayesian()
+            elif self.optimizer_mode == "auto":
+                if _OPTUNA_AVAILABLE:
+                    print("Using Bayesian optimizer (optuna available)")
+                    return self._optimize_bayesian()
+                else:
+                    print("Using coordinate_descent optimizer (optuna not available)")
+                    return self._optimize_coordinate_descent()
             else:
-                print("Using coordinate_descent optimizer (optuna not available)")
                 return self._optimize_coordinate_descent()
-        else:
-            return self._optimize_coordinate_descent()
+        finally:
+            self._cleanup_shared_fbo()
 
 
 def parse_args() -> argparse.Namespace:
@@ -12095,6 +12306,7 @@ def main() -> None:
                 resume_result_path or (base_output_dir / "result.json")
             )
 
+        calib.ensure_movie_render_size()
         result = calib.optimize()
         _write_best_values_to_vehicle_config(
             config_path,

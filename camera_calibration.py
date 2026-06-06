@@ -7731,155 +7731,6 @@ class CameraCalibrator:
             f"raw={raw_w}x{raw_h}, real={ref_w}x{ref_h}"
         )
 
-    def _diagnose_camera_state_dde(self, phase: str = "") -> None:
-        """Query comprehensive camera state via DDE and save to diagnostic file.
-
-        Captures:
-        - Viewport number and camera selector state
-        - All WRITE and READ widget values
-        - Viewport dimensions
-        - Camera model type
-        - Timing info
-        """
-        try:
-            import dde  # type: ignore
-        except Exception:
-            print(f"[{phase}] DDE diagnostic skipped: no dde module")
-            return
-
-        diag_path = self.output_dir / f"camera_diag_{phase}_{uuid.uuid4().hex[:8]}.txt"
-        result_path = self.output_dir / f"camera_diag_{phase}_{uuid.uuid4().hex[:8]}.result.txt"
-
-        body = [
-            f'set diag_fh [open "{diag_path.as_posix()}" w]',
-            'puts $diag_fh "=== Camera State Diagnostic ==="',
-            f'puts $diag_fh "Phase: {phase}"',
-            f'puts $diag_fh "Timestamp: [clock format [clock seconds]]"',
-            '',
-            '# Viewport info',
-            'if {[catch {set vno $View(ev.view)} err]} {',
-            '    puts $diag_fh "View(ev.view): ERROR - $err"',
-            '} else {',
-            '    scan $vno %d vno_int',
-            '    puts $diag_fh "View(ev.view): $vno (int=$vno_int)"',
-            '    set wpath ".view$vno_int"',
-            '    if {[winfo exists $wpath]} {',
-            '        puts $diag_fh "Viewport widget: $wpath EXISTS"',
-            '        catch {',
-            '            set wi [$wpath.gl0 cget -width]',
-            '            set he [$wpath.gl0 cget -height]',
-            '            puts $diag_fh "Viewport size: ${wi}x${he}"',
-            '        }',
-            '    } else {',
-            '        puts $diag_fh "Viewport widget: $wpath NOT FOUND"',
-            '    }',
-            '}',
-            '',
-            '# Camera dialog state',
-            'if {[winfo exists .camera]} {',
-            '    puts $diag_fh ".camera: EXISTS"',
-            '    catch {',
-            '        set cam_children [winfo children .camera]',
-            '        puts $diag_fh "Camera dialog children: $cam_children"',
-            '    }',
-            '    # Check camera selector (combo/listbox)',
-            '    catch {',
-            '        set sel .camera.f.camselect',
-            '        if {[winfo exists $sel]} {',
-            '            catch {puts $diag_fh "Camera selector: [$sel cget -value]"}',
-            '        }',
-            '    }',
-            '    catch {',
-            '        set sel .camera.car.camselect',
-            '        if {[winfo exists $sel]} {',
-            '            catch {puts $diag_fh "Camera selector (car): [$sel cget -value]"}',
-            '        }',
-            '    }',
-            '} else {',
-            '    puts $diag_fh ".camera: NOT FOUND"',
-            '}',
-            '',
-            '# WRITE widget values (ev prefix)',
-            'puts $diag_fh ""',
-            'puts $diag_fh "=== WRITE Widgets ==="',
-            'foreach {label path} {',
-            '    pos_x .camera.evptx',
-            '    pos_y .camera.evpty',
-            '    pos_z .camera.evptz',
-            '    roll .camera.euler.x',
-            '    pitch .camera.euler.y',
-            '    yaw .camera.euler.z',
-            '    lens_fov .camera.cammoddlg.fov.e',
-            '    lens_scale .camera.cammoddlg.fisheye.ctrl.e1',
-            '    lens_offset_x .camera.cammoddlg.fisheye.ctrl.e2',
-            '    lens_offset_y .camera.cammoddlg.fisheye.ctrl.e3',
-            '} {',
-            '    if {[winfo exists $path]} {',
-            '        catch {puts $diag_fh "$label ($path): [$path get]"}',
-            '    } else {',
-            '        puts $diag_fh "$label ($path): WIDGET NOT FOUND"',
-            '    }',
-            '}',
-            '',
-            '# READ widget values (sv prefix)',
-            'puts $diag_fh ""',
-            'puts $diag_fh "=== READ Widgets ==="',
-            'foreach {label path} {',
-            '    pos_x .camera.svptx',
-            '    pos_y .camera.svpty',
-            '    pos_z .camera.svptz',
-            '    roll .camera.euler.x',
-            '    pitch .camera.euler.y',
-            '    yaw .camera.euler.z',
-            '    lens_fov .camera.cammoddlg.fov.e',
-            '    lens_scale .camera.cammoddlg.fisheye.ctrl.e1',
-            '    lens_offset_x .camera.cammoddlg.fisheye.ctrl.e2',
-            '    lens_offset_y .camera.cammoddlg.fisheye.ctrl.e3',
-            '} {',
-            '    if {[winfo exists $path]} {',
-            '        catch {puts $diag_fh "$label ($path): [$path get]"}',
-            '    } else {',
-            '        puts $diag_fh "$label ($path): WIDGET NOT FOUND"',
-            '    }',
-            '}',
-            '',
-            '# Camera model type',
-            'puts $diag_fh ""',
-            'puts $diag_fh "=== Camera Model ==="',
-            'catch {',
-            '    set model_path .camera.cammoddlg.model',
-            '    if {[winfo exists $model_path]} {',
-            '        catch {puts $diag_fh "Model selector: [$model_path cget -value]"}',
-            '    }',
-            '}',
-            'catch {',
-            '    set fov_path .camera.cammoddlg.fov.e',
-            '    if {[winfo exists $fov_path]} {',
-            '        puts $diag_fh "FOV: [$fov_path get]"',
-            '    }',
-            '}',
-            '',
-            'flush $diag_fh',
-            'close $diag_fh',
-            f'puts "{result_path.as_posix()}"',
-        ]
-
-        try:
-            render_dde_execute_script(
-                result_path,
-                "IPG-MOVIE",
-                body,
-                timeout_sec=5.0,
-            )
-            if diag_path.exists():
-                content = diag_path.read_text(encoding="utf-8")
-                print(f"\n=== Camera Diagnostic [{phase}] ===")
-                print(content)
-            else:
-                print(f"[{phase}] Diagnostic file not created: {diag_path}")
-        except Exception as exc:
-            print(f"[{phase}] Camera diagnostic failed: {exc}")
-
     def _capture_movie_via_dde_fbo(self, tag: str) -> Path:
         out_path = self.output_dir / f"{tag}.png"
 
@@ -7909,24 +7760,7 @@ class CameraCalibrator:
                     "set wpath \".view$vno_int\"",
                     "set wi [$wpath.gl0 cget -width]",
                     "set he [$wpath.gl0 cget -height]",
-                    '',
-                    '# --- FBO Diagnostic ---',
-                    'set diag [list]',
-                    'lappend diag "viewno=$vno wpath=$wpath size=${wi}x${he}"',
-                    'catch {',
-                    '    set sel .camera.f.camselect',
-                    '    if {[winfo exists $sel]} { lappend diag "cam_selector=[$sel cget -value]" }',
-                    '}',
-                    'catch {',
-                    '    set sel .camera.car.camselect',
-                    '    if {[winfo exists $sel]} { lappend diag "cam_selector_car=[$sel cget -value]" }',
-                    '}',
-                    'foreach {lbl pth} {px .camera.svptx py .camera.svpty pz .camera.svptz} {',
-                    '    catch { if {[winfo exists $pth]} { lappend diag "$lbl=[$pth get]" } }',
-                    '}',
-                    '',
                     "set captureFBO [FBO new $wi $he -tex rgb -noclear]",
-                    'puts stderr "[FBO Diagnostic] [join $diag { }]"',
                     "set update_rc [catch {",
                     "    FBO begin $captureFBO",
                     "    UpdateView $vno",
@@ -11275,7 +11109,6 @@ class CameraCalibrator:
         self._print_run_summary()
         self._preflight_capture_aspect_ratio()
         self.preflight_script_control()
-        self._diagnose_camera_state_dde(phase="pre_apply")
         try:
             self._apply_initial_value_map_with_retry(
                 self._snapshot_values(),
@@ -11283,7 +11116,6 @@ class CameraCalibrator:
             )
         except RuntimeError as exc:
             print(f"Initial Script Control apply skipped: {exc}")
-        self._diagnose_camera_state_dde(phase="post_apply")
         best_total_detail, best_img = self.evaluate("initial", baseline_metrics=None)
         self._raise_if_initial_board_failures(best_total_detail)
         best_score = best_total_detail.total_score

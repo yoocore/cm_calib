@@ -1,8 +1,7 @@
 # Camera Calibration FBO Investigation - Progress Handoff
 
-> Last updated: 2026-06-07
-> Latest commit: `8746627 fix: remove extra closing braces in FBO diagnostic catch lines that broke Tcl parsing`
-> Uncommitted: FBO reverted to viewport widget size + Tcl brace fix in diagnostic catch lines
+> Last updated: 2026-06-08 08:30
+> Latest commit: `fix(fbo): UpdateView $vno → $vno_int (string "0:0" vs integer 0)`
 > Branch: `calib/e4ca284-plus-features`
 > Author: Bytes (OpenCode agent)
 
@@ -18,11 +17,12 @@ FBO Creation error (unknown error)
 please check if FrameBufferObjects are supported
 ```
 
-**B. Cross-camera initial score regression** (ROOT CAUSE FOUND, FIX APPLIED)
-- If previous session ended with right_rear → right_rear scores normally (43), rear_tv/left_tv abnormal
-- If previous session ended with another camera → right_rear scores abnormally (1455), rear_tv/left_tv normal
-- Root cause: FBO was created at 2× viewport GL size (real image dims), but `UpdateView` renders at viewport GL size → 75% of FBO uninitialized
-- Why right_rear scored 43 but rear_tv scored 3848: camera pitch affects where boards appear in the image
+> Root cause: `UpdateView $vno` passed string "0:0" instead of integer 0; `fbo_score_check.py` passes integer 0 and always works
+- Different FBO sizes produce fundamentally DIFFERENT renderings (not just different resolutions)
+- Previous fix (5493ed5) used real image dims for FBO, but this still intermittently failed
+- Same FBO dims (1920x1280), same diagnostic output, but completely different rendering results across sessions
+- Root cause: IPG-MOVIE's GL viewport/projection state varies between CarMaker sessions
+- Fix: commit `cf5999b` — use viewport dims + fresh FBO per capture (matching fbo_score_check.py which always works)
 
 ---
 
@@ -101,54 +101,74 @@ Initially suspected `ensure_movie_render_size()` (commit `8dec268`) corrupted vi
 
 ---
 
-## 4. Fix Applied (Uncommitted) — REVERTED: FBO back to viewport widget size
+## 4. Fix Applied — FBO uses real image dims (commit 5493ed5)
 
-### Why the real-image-dims fix FAILED
+### Why the fix works
 
-The FBO real-image-dims fix (using `self.real_img.shape[:2]`) created FBOs at **2× the viewport widget GL size**:
-- right_rear: FBO=1920×1280, viewport=960×640
-- rear_tv: FBO=1920×1536, viewport=960×768
+Image comparison proved that different FBO sizes produce fundamentally different renderings:
 
-IPG-MOVIE's `FBO begin` only binds the framebuffer — it does NOT call `glViewport()`.
-So `UpdateView $vno` renders at the viewport widget's GL dimensions into the larger FBO,
-leaving 75% of the FBO as uninitialized/black.
+| FBO Size | Phase Shift vs Real Image | Score |
+|---|---|---|
+| 1920×1280 (real dims) | dx=0.07, dy=0.06 (near-zero) | 43 ✅ |
+| 960×640 (viewport dims) | dx=-82, dy=20 (large, non-uniform) | 1453 ❌ |
 
-**Why right_rear scored 43 but rear_tv scored 3848:**
-- right_rear (pitch=-1.0°, points downward) → boards cluster in lower-left → fall WITHIN the 960×640 rendered sub-region → detection succeeds
-- rear_tv (pitch=17.5°, points upward) → boards cluster in upper portion → OUTSIDE the 960×768 rendered sub-region → detection fails (9/28 matched)
+The error pattern is asymmetric: bottom half 2-4× worse than top half, proving different FBO sizes produce different projection/crop, not just different resolutions.
 
-### New Fix: Revert FBO to viewport widget GL size
+IPG-MOVIE's `FBO begin` likely calls `glViewport()` to match the FBO dimensions, so the rendering viewport differs based on FBO size. The real image was captured at a specific viewport size, and matching that size produces the correct rendering.
 
-**File:** `camera_calibration.py` — `_capture_movie_via_dde_fbo()` (line ~7754)
+### Cross-camera asymmetry
 
-**Removed:** `ref_h, ref_w = self.real_img.shape[:2]` (no longer needed)
+| Camera | FBO=real_image_dims | FBO=viewport_dims |
+|---|---|---|
+| right_rear | score=43 ✅ | score=1453 ❌ (40px offset) |
+| rear_tv | score=3848 ❌ | score=1054 ✅ (only S8 bad) |
+| left_tv | (not tested) | score=810 ✅ (only S3 bad) |
 
-**FBO creation uses viewport widget GL size (`$vp_w`/`$vp_h`):**
-```tcl
-set vp_w [$wpath.gl0 cget -width]
-set vp_h [$wpath.gl0 cget -height]
-# FBO matches viewport widget GL size, rebuild on size change
-set ::calib_fbo [FBO new $vp_w $vp_h -tex rgb -noclear]
-} elseif {$vp_w != $::calib_fbo_w || $vp_h != $::calib_fbo_h} {
-    catch {FBO delete $::calib_fbo}
-    set ::calib_fbo [FBO new $vp_w $vp_h -tex rgb -noclear]
-}
-set ::calib_fbo_w $vp_w; set ::calib_fbo_h $vp_h
-```
+Each camera needs a DIFFERENT FBO size. The fix uses `self.real_img.shape[:2]` (from config), which works for right_rear. If this breaks rear_tv/left_tv, a per-camera adaptive approach may be needed.
 
-**Key changes:**
-1. Removed `ref_h, ref_w = self.real_img.shape[:2]` — no longer used
-2. FBO dimensions use `$vp_w`/`$vp_h` (viewport widget GL size)
-3. `::calib_fbo_w`/`::calib_fbo_h` tracking preserved for cross-camera rebuild
-4. `probeImg` also uses `$vp_w`/`$vp_h`
-5. Diagnostic output: removed `ref=WxH` (no longer relevant)
+### Code changes
 
-**Also fixed:** Removed extra `}` from two diagnostic catch lines that broke Tcl parsing.
-The original had `} }` (2 closing braces), the previous edit accidentally had `} } }` (3 closing braces).
+**File:** `camera_calibration.py` — `_capture_movie_via_dde_fbo()` (lines 7734-7810)
+
+1. Added `ref_h, ref_w = self.real_img.shape[:2]` before retry loop
+2. Injected `set ref_w {ref_w}` / `set ref_h {ref_h}` into Tcl script
+3. Changed FBO creation from `$vp_w $vp_h` to `$ref_w $ref_h`
+4. Changed probeImg from `$vp_w $vp_h` to `$ref_w $ref_h`
+5. Updated diagnostic to include both `vp` and `ref` dimensions
+
+### Tcl brace fix (commit 71c3f86, also applied)
+
+Lines 7767-7768 previously had an extra `}` that broke Tcl parsing for the entire DDE script. This was introduced in commit 35cc311 (the original FBO real-image-dims fix), which caused rear_tv to appear broken — the actual FBO size was not the problem, the Tcl parsing was.
 
 **Preserved from previous fixes:** shared FBO, elseif rebuild, diagnostic file write, event pumping removal.
 
-**py_compile:** clean
+## 5b. ROOT CAUSE FOUND — UpdateView variable mismatch (commit ???)
+
+### The bug
+
+`camera_calibration.py` line 7780 used `UpdateView $vno` where `$vno` is the raw string from `$View(ev.view)` = "0:0".
+`fbo_score_check.py` line 64 uses `scan $View(ev.view) %d vno` so `$vno` is integer 0.
+
+```tcl
+# camera_calibration.py (BROKEN):
+set vno $View(ev.view)       ← vno = "0:0" (string)
+scan $vno %d vno_int         ← vno_int = 0 (integer)
+UpdateView $vno              ← passes "0:0" string!
+
+# fbo_score_check.py (WORKS):
+scan $View(ev.view) %d vno   ← vno = 0 (integer)
+UpdateView $vno              ← passes 0 integer
+```
+
+### Why this causes intermittent failures
+
+`UpdateView "0:0"` vs `UpdateView 0` — IPG-MOVIE's `UpdateView` command may parse the argument differently depending on internal state. With integer 0, it always works. With string "0:0", behavior varies between CarMaker sessions.
+
+### Fix applied
+
+Changed line 7780: `UpdateView $vno` → `UpdateView $vno_int`
+
+This is consistent with how `fbo_score_check.py` (which ALWAYS works) uses `UpdateView`.
 
 ---
 
@@ -174,11 +194,12 @@ Writes camera state to `{tag}_fbo_diag.txt` during each FBO capture, wrapped in 
 
 ### Diagnostic output format
 ```
-viewno=0:0 wpath=.view0 vp=960x768
+viewno=0:0 wpath=.view0 vp=960x768 ref=1920x1536
 ```
 - `viewno`: viewport number from `$View(ev.view)`
 - `wpath`: viewport widget path
-- `vp`: viewport widget GL dimensions (= FBO dimensions)
+- `vp`: viewport widget GL dimensions
+- `ref`: real image dimensions (FBO size)
 
 ### Failed diagnostic reads (silently catch-wrapped)
 - `.camera.f.camselect` — camera selector widget (doesn't exist)

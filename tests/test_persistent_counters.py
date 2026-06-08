@@ -527,8 +527,8 @@ class TestMovieFboCaptureScript:
                 calib._capture_movie_via_dde_fbo("probe")
 
         body_lines = captured["body_lines"]
-        assert "set wi [$wpath.gl0 cget -width]" in body_lines
-        assert "set he [$wpath.gl0 cget -height]" in body_lines
+        assert "set vp_w [$wpath.gl0 cget -width]" in body_lines
+        assert "set vp_h [$wpath.gl0 cget -height]" in body_lines
         assert "set vno $View(ev.view)" in body_lines
         assert "scan $vno %d vno_int" in body_lines
         assert "dict get" not in " ".join(body_lines)
@@ -550,11 +550,11 @@ class TestMovieFboCaptureScript:
                 calib._capture_movie_via_dde_fbo("probe")
 
         body_lines = captured["body_lines"]
-        fbo_new_index = body_lines.index("set captureFBO [FBO new $wi $he -tex rgb -noclear]")
+        fbo_new_index = body_lines.index("set captureFBO [FBO new $vp_w $vp_h -tex rgb -noclear]")
         pre_fbo_lines = body_lines[:fbo_new_index]
         assert "update" not in pre_fbo_lines
         assert "update idletasks" not in pre_fbo_lines
         assert "catch {UpdateView $View(ev.view)}" not in pre_fbo_lines
         assert 'catch {event generate .view${vno}.gl0 <Expose>}' not in pre_fbo_lines
-        assert body_lines[fbo_new_index + 2] == "    FBO begin $captureFBO"
-        assert body_lines[fbo_new_index + 3] == "    UpdateView $vno"
+        assert body_lines[fbo_new_index + 3] == "    FBO begin $captureFBO"
+        assert body_lines[fbo_new_index + 4] == "    UpdateView $vno_int"

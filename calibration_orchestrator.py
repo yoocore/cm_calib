@@ -270,13 +270,6 @@ def _prepare_runtime_for_camera(
         poll_interval_sec=float(args.movie_ready_poll_sec),
     )
     # --- Step 5: Configure Movie for this camera ---
-    if movie_view_size is not None:
-        view_width, view_height = movie_view_size
-        applied_view = cmctrl.ensure_movie_view_size(view_width, view_height)
-        movie_scene["width"] = str(view_width)
-        movie_scene["height"] = str(view_height)
-        movie_scene["view_widget"] = str(applied_view.get("widget") or "")
-        movie_scene["mode"] = str(applied_view.get("mode") or movie_scene.get("mode") or "")
     abraxas = cmctrl.ensure_movie_abraxas_enabled(timeout_sec=float(args.health_check_timeout_sec))
     camera_selection = cmctrl.ensure_movie_camera_selected(
         activation["ipgmovie_sensor_label"],
@@ -284,6 +277,15 @@ def _prepare_runtime_for_camera(
     )
     movie_scene["camera_name"] = str(camera_selection.get("current") or movie_scene.get("camera_name") or "")
     camera_widgets = cmctrl.ensure_movie_camera_widgets(timeout_sec=float(args.health_check_timeout_sec))
+    # Set view size AFTER camera selection and widget init: Camera::Select + .camera.btn.set invoke
+    # may reset GL widget dimensions, clobbering any previously set view size.
+    if movie_view_size is not None:
+        view_width, view_height = movie_view_size
+        applied_view = cmctrl.ensure_movie_view_size(view_width, view_height)
+        movie_scene["width"] = str(view_width)
+        movie_scene["height"] = str(view_height)
+        movie_scene["view_widget"] = str(applied_view.get("widget") or "")
+        movie_scene["mode"] = str(applied_view.get("mode") or movie_scene.get("mode") or "")
     # --- Step 6: Capture initial parameter values ---
     config_initial_capture = cmctrl.capture_initial_values_to_config(config_path)
     # --- Step 7: Health check ---
@@ -318,6 +320,7 @@ def _reuse_existing_runtime_for_camera(
     testrun_rel_path: Path,
     camera_name: str,
     config_path: Path,
+    movie_view_size: tuple[int, int] | None = None,
 ) -> dict[str, Any]:
     vehicle_path, vehicle_key = cmctrl.resolve_vehicle_path(project_root, testrun_rel_path)
     status_summary = cmctrl.build_status_summary(
@@ -351,6 +354,9 @@ def _reuse_existing_runtime_for_camera(
         timeout_sec=float(args.health_check_timeout_sec),
     )
     camera_widgets = cmctrl.ensure_movie_camera_widgets(timeout_sec=float(args.health_check_timeout_sec))
+    if movie_view_size is not None:
+        view_width, view_height = movie_view_size
+        cmctrl.ensure_movie_view_size(view_width, view_height)
     config_initial_capture = cmctrl.capture_initial_values_to_config(config_path)
 
     return {
@@ -515,6 +521,7 @@ def main() -> None:
                     testrun_rel_path,
                     camera_name,
                     config_path,
+                    movie_view_size=movie_view_size,
                 )
             else:
                 runtime_state = _prepare_runtime_for_camera(

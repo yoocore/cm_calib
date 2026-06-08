@@ -276,9 +276,10 @@ def _prepare_runtime_for_camera(
         timeout_sec=float(args.health_check_timeout_sec),
     )
     movie_scene["camera_name"] = str(camera_selection.get("current") or movie_scene.get("camera_name") or "")
-    camera_widgets = cmctrl.ensure_movie_camera_widgets(timeout_sec=float(args.health_check_timeout_sec))
-    # Set view size AFTER camera selection and widget init: Camera::Select + .camera.btn.set invoke
+    # Set view size AFTER camera selection: Camera::Select + .camera.btn.set invoke
     # may reset GL widget dimensions, clobbering any previously set view size.
+    # Must be BEFORE camera_widgets because opening modal dialogs can block the
+    # Tk event loop, preventing View::SetSize DDE commands from executing.
     if movie_view_size is not None:
         view_width, view_height = movie_view_size
         applied_view = cmctrl.ensure_movie_view_size(view_width, view_height)
@@ -286,6 +287,7 @@ def _prepare_runtime_for_camera(
         movie_scene["height"] = str(view_height)
         movie_scene["view_widget"] = str(applied_view.get("widget") or "")
         movie_scene["mode"] = str(applied_view.get("mode") or movie_scene.get("mode") or "")
+    camera_widgets = cmctrl.ensure_movie_camera_widgets(timeout_sec=float(args.health_check_timeout_sec))
     # --- Step 6: Capture initial parameter values ---
     config_initial_capture = cmctrl.capture_initial_values_to_config(config_path)
     # --- Step 7: Health check ---
@@ -353,10 +355,10 @@ def _reuse_existing_runtime_for_camera(
         f"CAMERA_RSI-SENSOR Vhcl.{camera_name}",
         timeout_sec=float(args.health_check_timeout_sec),
     )
-    camera_widgets = cmctrl.ensure_movie_camera_widgets(timeout_sec=float(args.health_check_timeout_sec))
     if movie_view_size is not None:
         view_width, view_height = movie_view_size
         cmctrl.ensure_movie_view_size(view_width, view_height)
+    camera_widgets = cmctrl.ensure_movie_camera_widgets(timeout_sec=float(args.health_check_timeout_sec))
     config_initial_capture = cmctrl.capture_initial_values_to_config(config_path)
 
     return {

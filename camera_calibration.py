@@ -7867,6 +7867,16 @@ class CameraCalibrator:
         raise final_error
 
     def capture_movie(self, tag: str) -> Path:
+        if not getattr(self, "_movie_view_size_initialized", False):
+            try:
+                import cmapi_testrun_control as cmctrl
+                from runtime_config_bootstrap import load_movie_view_size_from_real_image
+                if self.config_path is not None and self.config_path.exists():
+                    width, height = load_movie_view_size_from_real_image(self.config_path)
+                    cmctrl.ensure_movie_view_size(width, height)
+            except Exception:
+                pass
+            self._movie_view_size_initialized = True
         return self._capture_movie_via_dde_fbo(tag)
 
     # --- Shared FBO cleanup ---

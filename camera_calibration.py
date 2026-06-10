@@ -4274,7 +4274,7 @@ def _run_multi_start_campaign(
             f"initials={_format_scalar_value_map(initial_values)}{meta_suffix}"
         )
 
-        calib = CameraCalibrator(run_cfg)
+        calib = CameraCalibrator(run_cfg, config_path=config_path)
         calib.live_log_path = live_log_path
         calib.print_progress_json = True
         calib._calib_phase = "explore"
@@ -7874,8 +7874,11 @@ class CameraCalibrator:
                 if self.config_path is not None and self.config_path.exists():
                     width, height = load_movie_view_size_from_real_image(self.config_path)
                     cmctrl.ensure_movie_view_size(width, height)
-            except Exception:
-                pass
+                    print(f"Set movie view size to {width}x{height} before first capture")
+                else:
+                    print(f"Skipped movie view size init: config_path={'None' if self.config_path is None else 'not found'}")
+            except Exception as exc:
+                print(f"Warning: could not set movie view size: {exc}")
             self._movie_view_size_initialized = True
         return self._capture_movie_via_dde_fbo(tag)
 

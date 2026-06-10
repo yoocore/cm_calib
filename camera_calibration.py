@@ -7772,8 +7772,8 @@ class CameraCalibrator:
                     "    catch { foreach {_l _p} {px .camera.svptx py .camera.svpty pz .camera.svptz} { if {[winfo exists $_p]} { puts $_dfh \"$_l=[$_p get]\" } } }",
                     "    flush $_dfh; close $_dfh",
                     "}",
-                    "# --- fresh FBO per capture (real image dims for full-detail rendering) ---",
-                    "set captureFBO [FBO new $ref_w $ref_h -tex rgb -noclear]",
+                    "# --- fresh FBO per capture (viewport dims) ---",
+                    "set captureFBO [FBO new $vp_w $vp_h -tex rgb -noclear]",
                     "after 100",
                     "set update_rc [catch {",
                     "    FBO begin $captureFBO",
@@ -7786,7 +7786,7 @@ class CameraCalibrator:
                     "    error $update_msg",
                     "}",
                     "catch {image delete probeImg}",
-                    "image create photo probeImg -width $ref_w -height $ref_h",
+                    "image create photo probeImg -width $vp_w -height $vp_h",
                     "gl bindframebuffer_read $captureFBO",
                     "gl readpixels 0 0 probeImg",
                     f'probeImg write "{out_path.as_posix()}" -format png',
@@ -7987,7 +7987,28 @@ class CameraCalibrator:
             touched_params.append(param)
             touched = True
         if touched_params:
-            self._apply_script_control_params(touched_params)
+            # Only apply params that differ from IPG-MOVIE's current values.
+            # Re-applying unchanged params via widget entries + .camera.btn.set invoke
+            # can trigger an internal camera model re-initialization, causing a
+            # rendering shift even when nominal values are identical.
+            try:
+                current = self._read_script_control_values(touched_params)
+                changed_params = []
+                for param in touched_params:
+                    expected = self._quantize_param_value(param, param.value)
+                    actual = current.get(param.name)
+                    if actual is None:
+                        changed_params.append(param)
+                        continue
+                    read_decimals = self.SCRIPT_CONTROL_READ_DECIMALS.get(param.name, param.decimals)
+                    if not self._script_control_readback_matches(expected, actual, param.decimals, read_decimals):
+                        changed_params.append(param)
+                if changed_params:
+                    self._apply_script_control_params(changed_params)
+                else:
+                    print("All parameters already match IPG-MOVIE state, skipping apply")
+            except Exception:
+                self._apply_script_control_params(touched_params)
         if touched:
             time.sleep(self.settle_sec)
 

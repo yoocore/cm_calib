@@ -668,3 +668,129 @@ tests/test_dde_health_check.py        # new test file
 - **Python**: 3.12 (based on `__pycache__` filenames)
 - **DDE mechanism**: pywin32 `dde` module → `TclEval` service → `CarMaker` topic → `IPG-MOVIE` target
 - **FBO API**: `FBO new $wi $he -tex rgb -noclear` → `FBO begin` → `UpdateView` → `FBO end` → `gl readpixels`
+
+---
+
+## Phase 12: Apply Script Camera Model Re-initialization Bug (2026-06-11)
+
+### Problem
+
+right_rear 标定分数始终在 1400+ 而非预期的 ~43。rear_tv 标定 OOM 报错。该问题已持续数周。
+
+### Investigation Process
+
+#### Step 1: 排除 FBO 创建顺序问题
+
+**假设**: `ensure_movie_view_size` 在 `ensure_movie_camera_selected` 之前调用，被后者覆盖 GL widget 尺寸。
+
+**修复尝试**: `calibration_orchestrator.py` 调整 prepare 链顺序为 abraxas → camera_selected → view_size → camera_widgets。
+
+**结果**: 分数仍然 1453。view_size 顺序不是根因。
+
+#### Step 2: 排除 FBO 尺寸问题
+
+**假设**: FBO 创建使用 viewport 尺寸 (960×640) 而非 real image 尺寸 (1920×1280)，导致 resize 时丢失细节。
+
+**修复尝试**: 改 `FBO new $vp_w $vp_h` 为 `FBO new $ref_w $ref_h`。
+
+**结果**:
+- right_rear: 分数仍然 1453（`UpdateView` 按 viewport 分辨率渲染，大 FBO 不增加细节）
+- rear_tv: OOM 报错（1920×1536 FBO 超出 IPG-MOVIE 内存）
+- **已 revert**：FBO 恢复使用 viewport 尺寸
+
+#### Step 3: 排除 ensure_movie_view_size 未调用问题
+
+**假设**: `_run_multi_start_campaign` 创建 `CameraCalibrator(run_cfg)` 时没传 `config_path`，导致 `capture_movie()` 中的 `ensure_movie_view_size` 因 `self.config_path is None` 被跳过。
+
+**修复**: 传 `config_path=config_path`，加日志确认。
+
+**结果**: 日志确认 `Set movie view size to 1920x1280 before first capture` 被调用，但分数仍然 1453。`View::SetSize` 不是根因。
+
+#### Step 4: 1007 次历史运行数据分析
+
+对比了所有 `right_rear` 历史输出：
+
+| 分数范围 | 图像尺寸 | 文件大小 | mean | 数量 |
+|---------|---------|---------|------|------|
+| ~43.41 | 1920×1280 | ~415KB | 149.0 | 9 |
+| ~43.47-43.48 | 960×640 | ~131KB | 149.0 | 多 |
+| ~1453 | 960×640 | ~116KB | 152.1 | 多 |
+
+关键发现：**960×640 的图也能拿到 ~43 分**（文件 ~131KB），说明分辨率不是根因。但同一分辨率下 GOOD (131KB) 和 BAD (116KB) 文件大小不同，意味着图像内容不同。
+
+#### Step 5: 像素级对比 GOOD vs BAD 图像
+
+```
+GOOD vs BAD diff: mean=32.11, max=242, nonzero%=70.7%
+Best shift BAD→GOOD: dx=5, dy=3, residual_mean=31.73
+Edge pixels: GOOD=28285, BAD=26475
+```
+
+**关键发现**: GOOD 和 BAD 图像之间有 **5×3 像素的几何位移**。70% 像素不同。不是渲染质量差异，是几何偏移。
+
+#### Step 6: 对比 apply 脚本（决定性证据）
+
+对比 GOOD 运行和 BAD 运行的 `script_control_apply.runtime.tcl`：
+
+**GOOD 运行 (48行, 分数43)**:
+```tcl
+.camera.presetFrame.evptz insert 0 0.9608   # 只设 pos_z
+update idletasks
+.camera.btn.set invoke
+```
+
+**BAD 运行 (93行, 分数1453)**:
+```tcl
+.camera.presetFrame.evptz insert 0 0.9608   # pos_z
+.camera.presetFrame.y insert 0 -1.0052      # pitch
+.camera.presetFrame.z insert 0 227.8997     # yaw
+.camera.presetFrame.evptx insert 0 3.4413   # pos_x
+.camera.presetFrame.x insert 0 0.3714       # roll
+.camera.presetFrame.evpty insert 0 -0.9512  # pos_y
+.camera.cammoddlg.fov.e insert 0 124.7      # lens_fov
+.camera.cammoddlg.fisheye.ctrl.e1 insert 0 1.000  # lens_scale
+.camera.cammoddlg.fisheye.ctrl.e2 insert 0 0.00   # lens_offset_x
+.camera.cammoddlg.fisheye.ctrl.e3 insert 0 0.00   # lens_offset_y
+update idletasks
+.camera.btn.set invoke
+```
+
+GOOD 只设 1 个参数，BAD 设全部 10 个参数。即使参数值完全相同，通过 widget entry + `.camera.btn.set invoke` 重新设置所有参数会触发 IPG-MOVIE 内部的**相机模型重新初始化**，产生 ~5 像素的渲染偏移。
+
+### Root Cause
+
+`_optimize_*_impl` 开始时调用 `_apply_initial_value_map_with_retry(self._snapshot_values())`，其中 `self._snapshot_values()` 返回所有参数。`_apply_value_map` 将所有参数通过 `_apply_script_control_params` 写入 IPG-MOVIE 的 widget entries 并 invoke `.camera.btn.set`。
+
+这导致：
+1. 所有参数被重写（即使值没变）
+2. `.camera.btn.set invoke` 触发相机模型重新初始化
+3. 渲染产生 ~5×3 像素几何偏移
+4. 棋盘角点检测位置偏差（RMSE 从 ~1 跳到 ~38）
+5. 总分从 ~43 跳到 ~1453
+
+### Fix (commit 58da553)
+
+修改 `_apply_value_map`：
+1. 先通过 `_read_script_control_values` 读取 IPG-MOVIE 当前值
+2. 逐个比较目标值和当前值（使用 `_script_control_readback_matches`）
+3. **只 apply 有差异的参数**
+4. 如果所有参数已匹配，完全跳过 apply
+5. 如果读取失败，fallback 到全量 apply
+
+### Verification Status
+
+待用户在 live IPG-MOVIE 环境下验证。预期结果：
+- log 中出现 `All parameters already match IPG-MOVIE state, skipping apply`
+- right_rear 分数回到 ~43
+- rear_tv / left_tv 不再 OOM（因为 FBO 已 revert 到 viewport 尺寸）
+
+### Git History (Phase 12)
+
+```
+58da553 fix(apply): skip re-applying params that already match IPG-MOVIE state
+6a48765 fix(multi-start): pass config_path to CameraCalibrator
+3609a19 fix(capture): restore one-time ensure_movie_view_size before first FBO capture
+c05c23b fix(fbo): use real image dims for FBO capture (REVERTED — caused OOM)
+5ebfad1 fix(orchestrator): set view size after camera select but before widgets
+05c8c41 fix(orchestrator): set view size AFTER camera selection to prevent size clobbering (SUPERSEDED)
+```

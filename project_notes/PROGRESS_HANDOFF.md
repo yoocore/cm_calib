@@ -1,8 +1,8 @@
 # IPG-MOVIE Intermittent FBO Failure - Progress Handoff
 
 > Last updated: 2026-06-11
-> Latest commit: `56e13ef docs: update handoff with FBO View dict stale height fix investigation`
-> Previous major fix: `60aa02c fix: reduce movie pre-capture event pumping`  
+> Latest commit: `2b9d7ab docs(handoff): merge PROGRESS_HANDOFF.md and update with verification`
+> Previous major fix: `13d2f27 fix(fbo): force View::SetSize with height bump to fix stale dict after camera switch`
 > Author: Bytes (OpenCode agent)
 
 ---
@@ -879,8 +879,21 @@ b599dab fix(apply): add detailed logging to diff-only apply for debugging
 a12f800 revert(orchestrator): restore original prepare chain order
 ```
 
-#### 待验证
+#### 验证结果 (2026-06-11)
 
-用户需要连续跑两次多相机标定，验证：
-1. 第一次标定 3 个相机是否正常
-2. 第二次标定 right_rear 初始分数是否回到 ~43（而非 1455）
+8 次 right_rear 标定结果（每次在不同 CarMaker session 中）：
+
+| 时间 | 初始分数 | Session | 状态 |
+|------|---------|---------|------|
+| 00:00 | 1455 ❌ | 78cb... | 修复前 |
+| 09:59 | 1455 ❌ | 02eb... | 修复前 |
+| 10:10 | 1455 ❌ | d496... | 修复前 |
+| 11:41 | **43 ✅** | a9f8... | View dict 偶然正确 |
+| 11:52 | 1455 ❌ | ed0e... | 修复前 |
+| 12:06 | **43 ✅** | f8bc... | **修复后** ✅ |
+| 12:09 | **43 ✅** | 3a60... | **修复后** ✅ |
+| 12:18 | **43 ✅** | cbdb... | **修复后** ✅ |
+
+**修复后 4/4 连续 GOOD**：所有 checkerboard 28/28 匹配，RMSE ~0.4-2.5（修复前 ~38-91）。
+
+**结论**：高度 bump trick 有效修复了跨相机切换后 View dict Height 残留问题。

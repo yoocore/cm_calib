@@ -7777,7 +7777,7 @@ class CameraCalibrator:
                     "after 100",
                     "set update_rc [catch {",
                     "    FBO begin $captureFBO",
-                    "    UpdateView $vno",
+                    "    UpdateView $vno_int",
                     "    FBO end",
                     "} update_msg]",
                     "catch {FBO end}",

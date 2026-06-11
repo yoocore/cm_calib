@@ -7760,16 +7760,32 @@ class CameraCalibrator:
                     "set wpath \".view$vno_int\"",
                     "set vp_w [$wpath.gl0 cget -width]",
                     "set vp_h [$wpath.gl0 cget -height]",
-                    "# --- render to default framebuffer, read pixels directly ---",
-                    "# --- cancel pending UpdateView_TimerProc to avoid CheckViewPort recursion ---",
-                    "after cancel UpdateView_TimerProc",
+                    "# --- create persistent FBO once, reuse for all captures ---",
+                    "if {![info exists __captureFBO]} {",
+                    "    set __captureFBO [FBO new $vp_w $vp_h -tex rgb -noclear]",
+                    "    set __captureFBO_w $vp_w",
+                    "    set __captureFBO_h $vp_h",
+                    "} elseif {$__captureFBO_w != $vp_w || $__captureFBO_h != $vp_h} {",
+                    "    catch {FBO delete $__captureFBO}",
+                    "    set __captureFBO [FBO new $vp_w $vp_h -tex rgb -noclear]",
+                    "    set __captureFBO_w $vp_w",
+                    "    set __captureFBO_h $vp_h",
+                    "}",
+                    "# --- height bump outside FBO to force View dict update ---",
                     "View::SetSize $vp_w [expr {$vp_h + 1}] $wpath",
                     "View::SetSize $vp_w $vp_h $wpath",
                     "after 100",
-                    "UpdateView $vno_int",
+                    "# --- render to persistent FBO (offscreen) ---",
+                    "set update_rc [catch {",
+                    "    FBO begin $__captureFBO",
+                    "    UpdateView $vno_int",
+                    "    FBO end",
+                    "} update_msg]",
+                    "catch {FBO end}",
+                    "if {$update_rc != 0} {error $update_msg}",
                     "catch {image delete probeImg}",
                     "image create photo probeImg -width $vp_w -height $vp_h",
-                    "gl bindframebuffer_read 0",
+                    "gl bindframebuffer_read $__captureFBO",
                     "gl readpixels 0 0 probeImg",
                     f'probeImg write "{out_path.as_posix()}" -format png',
                     "catch {gl bindframebuffer_read 0}",
@@ -11561,17 +11577,42 @@ class CameraCalibrator:
         return result
 
     def optimize(self) -> dict:
-        if self.optimizer_mode == "bayesian":
-            return self._optimize_bayesian()
-        elif self.optimizer_mode == "auto":
-            if _OPTUNA_AVAILABLE:
-                print("Using Bayesian optimizer (optuna available)")
+        try:
+            if self.optimizer_mode == "bayesian":
                 return self._optimize_bayesian()
+            elif self.optimizer_mode == "auto":
+                if _OPTUNA_AVAILABLE:
+                    print("Using Bayesian optimizer (optuna available)")
+                    return self._optimize_bayesian()
+                else:
+                    print("Using coordinate_descent optimizer (optuna not available)")
+                    return self._optimize_coordinate_descent()
             else:
-                print("Using coordinate_descent optimizer (optuna not available)")
                 return self._optimize_coordinate_descent()
-        else:
-            return self._optimize_coordinate_descent()
+        finally:
+            self._cleanup_persistent_fbo()
+
+    def _cleanup_persistent_fbo(self) -> None:
+        """Delete the persistent capture FBO created during this run."""
+        try:
+            import dde
+            import uuid
+            server = dde.CreateServer()
+            server.Create(f"CleanupFBO.{uuid.uuid4().hex}")
+            conv = dde.CreateConversation(server)
+            conv.ConnectTo(self.script_control_dde_service, self.script_control_dde_topic)
+            cleanup_script = (
+                'if {[info exists __captureFBO]} {\n'
+                '    catch {FBO delete $__captureFBO}\n'
+                '    catch {unset __captureFBO}\n'
+                '    catch {unset __captureFBO_w}\n'
+                '    catch {unset __captureFBO_h}\n'
+                '}'
+            )
+            conv.Exec(f"RunScript {{{cleanup_script}}}")
+            server.Shutdown()
+        except Exception as exc:
+            print(f"Warning: could not cleanup persistent FBO: {exc}")
 
 
 def parse_args() -> argparse.Namespace:

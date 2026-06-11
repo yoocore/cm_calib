@@ -556,5 +556,5 @@ class TestMovieFboCaptureScript:
         assert "update idletasks" not in pre_fbo_lines
         assert "catch {UpdateView $View(ev.view)}" not in pre_fbo_lines
         assert 'catch {event generate .view${vno}.gl0 <Expose>}' not in pre_fbo_lines
-        assert body_lines[fbo_new_index + 2] == "    FBO begin $captureFBO"
-        assert body_lines[fbo_new_index + 3] == "    UpdateView $vno"
+        assert body_lines[fbo_new_index + 3] == "    FBO begin $captureFBO"
+        assert body_lines[fbo_new_index + 4] == "    UpdateView $vno"

@@ -1725,7 +1725,7 @@ def ensure_movie_view_size(
             break
     if target_width != width or target_height != height:
         logger.warning(
-            f"Movie view size auto-reduced from {width}x{height} to",
+            f"Movie view size auto-reduced from {width}x{height} to "
             f"{target_width}x{target_height} to fit display safe area {display_w-50}x{display_h-50}"
         )
 
@@ -1746,7 +1746,6 @@ def ensure_movie_view_size(
                 'set wpath ".view$wno"',
                 f"View::SetSize {target_width} {target_height} $wpath",
                 'update',
-                'update idletasks',
                 'set wi [$wpath.gl0 cget -width]',
                 'set he [$wpath.gl0 cget -height]',
                 'format "width=%s;height=%s;widget=%s" $wi $he $wpath',

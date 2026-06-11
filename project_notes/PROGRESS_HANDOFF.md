@@ -1,7 +1,7 @@
 # IPG-MOVIE Intermittent FBO Failure - Progress Handoff
 
 > Last updated: 2026-06-11
-> Latest commit: dc6e8df fix(script_control_apply): remove update idletasks
+> Latest commit: 18566e3 fix(fbo): use default framebuffer capture, remove FBO entirely
 > Previous major fix: e0c858b fix(ensure_movie_view_size): remove update idletasks
 > Author: Bytes (OpenCode agent)
 
@@ -934,3 +934,98 @@ FBO 随机 GL 失败（20:42 运行）：初始 capture 失败，Script Control 
 dc6e8df fix(script_control_apply): remove update idletasks to prevent FBO creation error
 e0c858b fix(ensure_movie_view_size): remove update idletasks to prevent FBO creation error
 ```
+
+---
+
+## Phase 14: FBO Pool Exhaustion — Switch to Default Framebuffer (2026-06-11)
+
+### Problem
+
+IPG-MOVIE SWIFT 软件 GL 驱动在 fresh-FBO-per-capture 模式下，`FBO delete` 不释放 GL 资源，
+多次 create/delete 循环后耗尽 GL FBO 池。典型症状：
+
+- right_rear（第一个相机）OK
+- right_rear → rear_tv 切换时 rear_tv 失败
+- FBO Creation error (unknown error) 6/6 全部失败
+- 再次运行可能又 OK（池状态不同）
+
+### 失败的尝试
+
+1. **persistent FBO** (commit `560745d`): 不 delete，复用 FBO。导致 `CheckViewPort` 无限递归：
+   `dict set View($vno) Width/Height` 与 View::SetSize 互相触发，回滚。
+2. **persistent FBO v2** (commit `87de7d5`): 再次尝试。用户指出重复 Phase 12 失败经验，回滚。
+
+### Root Cause
+
+**FBO delete 不释放资源是 SWIFT 软件 GL 驱动的问题**（非 IPG-MOVIE 可修复）。
+fresh-FBO-per-capture 模式下每个相机创建 4-6 个 FBO（capture + 重试），
+跨多个相机切换时累计占用不可能再释放。
+
+### Fix: No-FBO Capture (commit 18566e3)
+
+**方案**: 完全跳过 FBO，从 default framebuffer 读取。
+
+**Tcl 脚本变更**:
+
+```tcl
+# Before (FBO):
+# FBO new $vp_w $vp_h -tex rgb -noclear
+# FBO begin $captureFBO
+# UpdateView $vno_int
+# FBO end
+# gl bindframebuffer_read $captureFBO
+# gl readpixels 0 0 probeImg
+# FBO delete $captureFBO
+
+# After (NoFBO):
+UpdateView $vno_int
+after 100
+image create photo probeImg -width $vp_w -height $vp_h
+gl bindframebuffer_read 0
+gl readpixels 0 0 probeImg
+probeImg write /path/to/output.png -format png
+# no FBO new/begin/end/delete needed
+```
+
+**保留的防御性代码**:
+- 高度 bump trick (`View::SetSize $vp_w [expr {$vp_h + 1}]` → `View::SetSize $vp_w $vp_h`)
+- `after 100` 渲染稳定等待
+- 6 次重试（针对非 FBO 的 DDE 超时等失败场景）
+
+**删除的代码**:
+- `_capture_movie_via_dde_fbo()` → 改为 `_capture_movie_via_dde()`（无 FBO 版本）
+- `_cleanup_shared_fbo()` 方法及其在 `optimize()` 中 finally 块的调用
+
+### 验证结果
+
+**fbo_score_check.py noFBO 阶段测试（live CarMaker session）：**
+
+| 阶段 | 次数 | 结果 |
+|------|------|------|
+| NoFBO | 5x | 5/5 OK |
+| FBO | 4x | 4/5 OK（1次底层 GL 竞争失败） |
+| NoFBO (after FBO) | 5x | 5/5 OK |
+
+**像素质量对比**:
+- NoFBO vs FBO: mean Δ=0.01 (0.2% 差异, 基本一致)
+- NoFBO vs NoFBO (跨 FBO): 0% 差异（完美可复现）
+- 最终 PNG 文件 1561 bytes, 960×768（有效小 PNG）
+
+**结论**: NoFBO capture 与 FBO capture 质量一致（SWIFT 软件渲染器行为），
+且消除了 FBO 池耗尽的风险。
+
+### Git History (Phase 14)
+
+```
+18566e3 fix(fbo): use default framebuffer capture, remove FBO entirely
+0d248fd revert: remove persistent FBO (repeats Phase 12 failed approach)
+87de7d5 fix(fbo): reuse persistent FBO, skip delete/cleanup (REVERTED)
+```
+
+### 文件变更
+
+| File | Diff |
+|------|------|
+| `camera_calibration.py` | -94/+17 (net -77): FBO removed, default FB capture |
+| `fbo_score_check.py` | +24: noFBO stage + --stage CLI arg |
+| `_test_nofbo_multi.py` | deleted (investigation test) |

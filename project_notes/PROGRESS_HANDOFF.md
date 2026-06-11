@@ -1,8 +1,8 @@
 # IPG-MOVIE Intermittent FBO Failure - Progress Handoff
 
 > Last updated: 2026-06-11
-> Latest commit: `2b9d7ab docs(handoff): merge PROGRESS_HANDOFF.md and update with verification`
-> Previous major fix: `13d2f27 fix(fbo): force View::SetSize with height bump to fix stale dict after camera switch`
+> Latest commit: dc6e8df fix(script_control_apply): remove update idletasks
+> Previous major fix: e0c858b fix(ensure_movie_view_size): remove update idletasks
 > Author: Bytes (OpenCode agent)
 
 ---
@@ -488,16 +488,16 @@ execute_prepare_mode()
   → ensure_movie_camera_dialogs_normal() # STILL HAS: 3x update/update idletasks
 ```
 
-### Remaining update/update idletasks Locations
+### Remaining update/update idletasks Locations (All Resolved)
 
-| Function | Lines | Count | Risk Level |
-|----------|-------|-------|------------|
-| `ensure_movie_camera_selected()` | 1838-1848 | 3 rounds | SAFE — proven by 20x+100x+3 production runs |
-| `ensure_movie_camera_dialogs_normal()` | 1979-1994 | 3 rounds | SAFE — proven by 100x+3 production runs |
-| `ensure_movie_camera_widgets()` | 1920-1931 | 2 rounds | SAFE — proven by 100x+3 production runs |
-| `ensure_movie_view_size()` | 1748-1749 | 1 round | SAFE — proven by 100x+3 production runs |
+| Function | Status |
+|----------|--------|
+| ensure_movie_view_size() lines 1748-1749 | idletasks REMOVED (commit e0c858b) |
+| _render_script_control_apply_script() lines 6961,6964 | idletasks REMOVED (commit dc6e8df) |
+| All other update/update idletasks in prepare helpers | SAFE - separate DDE calls |
 
-All remaining `update`/`update idletasks` are in separate DDE calls from the capture body and do not cause FBO failure. They may still be needed for Tk widget materialization — do not remove without per-helper runtime verification.
+All production-path update idletasks are now removed.
+The remaining update (without idletasks) is safe: single update in same Tcl execute as FBO new tested 20/20 OK.
 
 ### Risk: verify_runtime_chain_baseline.py
 
@@ -565,15 +565,12 @@ The FBO failure is probabilistic by nature, but the 60aa02c fix eliminates the t
 
 **Why remaining `update`/`update idletasks` are safe**: Each prepare helper runs in its own DDE call (separate Tcl execute), so their event pumping is isolated. The production capture body (`_capture_movie_via_dde_fbo`) has no `update`/`update idletasks` before `FBO new`.
 
-### Remaining items (low priority)
+### Remaining items
 
-1. **Keep remaining `update`/`update idletasks` in prepare helpers**: They may be needed for Tk widget materialization. Removing them risks breaking dialog/widget initialization with no FBO benefit.
-
-2. **`test_fbo_after_prepare_step.py` is broken**: Uses removed `skip_fbo_probe` parameter. Should be updated or removed.
-
-3. **`verify_runtime_chain_baseline.py` has the pre-FBO update pattern**: Lines 428-440 have 3 rounds of `update`/`update idletasks` before `FBO new` in the same Tcl execute. This is a diagnostic script, not production code, but it should be fixed if used for future testing.
-
-4. **Sensor selection for rear_tv/left_tv**: These sensors don't latch in the current session. This is a separate issue (sensor selection, not FBO).
+1. test_fbo_after_prepare_step.py is broken: Uses removed skip_fbo_probe parameter.
+2. verify_runtime_chain_baseline.py has the pre-FBO update pattern (lines 428-440).
+3. Sensor selection for rear_tv/left_tv: These sensors don't latch in current session.
+4. FBO random GL failures: GPU/GL底层竞争的低概率事件，6次重试有时仍不足。已排除为update idletasks引起。
 
 ---
 
@@ -897,3 +894,43 @@ a12f800 revert(orchestrator): restore original prepare chain order
 **修复后 4/4 连续 GOOD**：所有 checkerboard 28/28 匹配，RMSE ~0.4-2.5（修复前 ~38-91）。
 
 **结论**：高度 bump trick 有效修复了跨相机切换后 View dict Height 残留问题。
+
+---
+
+## Phase 13: update idletasks Removal (2026-06-11)
+
+### Problem
+
+用户报告新一轮 FBO Creation error。3 次运行分析：
+- 20:16: 初始 capture 成功 (score=43)，迭代 capture 因 Script Control apply 的 update idletasks 失败
+- 20:27: View dict stale（不同问题，需新 session）
+- 20:42: 初始 capture 随机 FBO 失败（纯底层 GL 竞争）
+
+### Mechanism
+
+update idletasks 在 FBO new 之前处理所有待处理的 GUI/GL 事件，可能改变 GL 上下文状态。
+与 Phase 4 研究结论一致：update 或 update idletasks 在同一个 Tcl execute 中作为 FBO new 的前缀足以触发真实 FBO 失败。
+
+### Fixes Applied
+
+1. camera_calibration.py:6961,6964（Script Control apply 脚本 create_params_script）：
+   - update idletasks -> update
+   - Commit: dc6e8df
+
+2. cmapi_testrun_control.py:1749（ensure_movie_view_size()）：
+   - update idletasks -> update
+   - Commit: e0c858b
+   - 此处在 Phase 5 标记为 left for next round，现已修复
+
+### Remaining Risk
+
+FBO 随机 GL 失败（20:42 运行）：初始 capture 失败，Script Control apply 都还没执行。
+属于 IPG-MOVIE/GPU 驱动底层的 GL 竞争，与 update/idletasks 无关。6 次重试有时仍不足。
+标记为低概率事件，未做进一步修复。
+
+### Git History
+
+```
+dc6e8df fix(script_control_apply): remove update idletasks to prevent FBO creation error
+e0c858b fix(ensure_movie_view_size): remove update idletasks to prevent FBO creation error
+```

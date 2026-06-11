@@ -794,3 +794,93 @@ c05c23b fix(fbo): use real image dims for FBO capture (REVERTED — caused OOM)
 5ebfad1 fix(orchestrator): set view size after camera select but before widgets
 05c8c41 fix(orchestrator): set view size AFTER camera selection to prevent size clobbering (SUPERSEDED)
 ```
+
+### Continued Investigation (2026-06-11)
+
+#### Diff-only apply 验证结果
+
+通过详细日志确认 `_apply_value_map` 的 diff-only 逻辑**完美工作**：
+
+```
+param pos_z: matches (0.9607999920845032), skip
+param pitch: matches (-1.005200007396565), skip
+param yaw: matches (227.89969819304105), skip
+... (所有 10 个参数全部 match)
+All parameters already match IPG-MOVIE state, skipping apply
+```
+
+**结论**: apply 脚本不是根因。即使完全不 apply 任何参数，初始分数仍然是 1455。
+
+#### FBO 捕获代码对比分析
+
+对比 GOOD 运行 (commit `2d27dcb`, score 43) 与当前代码 (commit `8be977d`, score 1455) 的 FBO 捕获 Tcl 脚本差异：
+
+| 差异点 | GOOD (score 43) | 当前 (score 1455) |
+|-------|----------------|------------------|
+| UpdateView 参数 | `UpdateView $vno`（字符串 "0:0"） | `UpdateView $vno_int`（整数 0） |
+| FBO→Begin 延迟 | 无 | `after 100` |
+| FBO 诊断文件写入 | 无 | 有（写 camera state 到文件） |
+| framebuffer 重置 | 无 | `catch {gl bindframebuffer_read 0}` |
+
+#### 尝试的 FBO 修复及结果
+
+| 修改 | 结果 |
+|------|------|
+| 移除 `after 100` | FBO Creation error（6/6 失败） |
+| `UpdateView $vno`（"0:0"）| CheckViewPort 无限递归：`too many nested evaluations` |
+| `dict set View($vno) Width/Height` | 同样触发 CheckViewPort 无限递归 |
+| `View::SetSize $vp_w $vp_h $wpath`（FBO 捕获内）| 第一次标定 3 个相机全对，第二次 right_rear 又卡在 768 |
+
+#### 根因确认：View dict Stale Height 跨相机切换
+
+**现象**：
+- 第一次标定（right_rear → rear_tv → left_tv）：3 个相机全部正常
+- 第二次标定：right_rear 初始分数 1455（异常）
+
+**机制**：
+1. right_rear real image = 1920×1280 → halved to 960×640 (3:2)
+2. rear_tv/left_tv real image = 1920×1536 → halved to 960×768 (5:4)
+3. 第一次标定时 rear_tv/left_tv 将 View dict Height 设为 768
+4. 第二次标定 right_rear 时，prepare 阶段 `ensure_movie_view_size(960, 640)` 将 GL widget 设为 640
+5. 但 **View dict Height 仍然是 768**（stale）
+6. `View::SetSize 960 640` 发现 widget 已经是 640 → **no-op** → View dict 不更新
+7. `UpdateView` 从 View dict 读取 Height=768 → 渲染在 960×768 下进行
+8. FBO 只截取前 640 行 → 几何偏移 ~5×3 像素 → RMSE 从 ~1 跳到 ~38 → 分数 1455
+
+#### Fix (commit 13d2f27)
+
+在 FBO 捕获脚本中，`FBO new` 之后、`FBO begin` 之前，用"高度+1"技巧强制 `View::SetSize` 更新 View dict：
+
+```tcl
+set captureFBO [FBO new $vp_w $vp_h -tex rgb -noclear]
+View::SetSize $vp_w [expr {$vp_h + 1}] $wpath    # 先改成 641，强制触发更新
+View::SetSize $vp_w $vp_h $wpath                   # 再改回 640，View dict 正确
+after 100
+FBO begin $captureFBO
+UpdateView $vno_int                                 # 现在用正确尺寸渲染
+FBO end
+```
+
+这样即使 widget 已经是目标尺寸，`View::SetSize` 也会因为尺寸变化（641→640）而实际执行更新。
+
+#### 当前代码变更汇总
+
+```
+13d2f27 fix(fbo): force View::SetSize with height bump to fix stale dict after camera switch
+ca5e83e fix(fbo): add View::SetSize between FBO new and FBO begin to fix stale View dict
+84b8ee5 revert(fbo): remove View dict sync that triggers CheckViewPort infinite loop
+8894a72 revert(fbo): restore UpdateView $vno_int to fix CheckViewPort infinite loop
+560745d fix(fbo): sync View dict to widget dims before capture (REVERTED — CheckViewPort loop)
+d3b3ee8 fix(fbo): restore UpdateView $vno and remove after 100 (REVERTED — FBO errors + CheckViewPort)
+b599dab fix(apply): add detailed logging to diff-only apply for debugging
+58da553 fix(apply): skip re-applying params that already match IPG-MOVIE state
+6a48765 fix(multi-start): pass config_path to CameraCalibrator
+3609a19 fix(capture): restore one-time ensure_movie_view_size before first FBO capture
+a12f800 revert(orchestrator): restore original prepare chain order
+```
+
+#### 待验证
+
+用户需要连续跑两次多相机标定，验证：
+1. 第一次标定 3 个相机是否正常
+2. 第二次标定 right_rear 初始分数是否回到 ~43（而非 1455）

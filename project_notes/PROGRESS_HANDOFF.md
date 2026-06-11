@@ -1,377 +1,886 @@
-# Camera Calibration FBO Investigation - Progress Handoff
+# IPG-MOVIE Intermittent FBO Failure - Progress Handoff
 
-> Last updated: 2026-06-08 08:30
-> Latest commit: `fix(fbo): UpdateView $vno → $vno_int (string "0:0" vs integer 0)`
-> Branch: `calib/e4ca284-plus-features`
+> Last updated: 2026-06-11
+> Latest commit: `56e13ef docs: update handoff with FBO View dict stale height fix investigation`
+> Previous major fix: `60aa02c fix: reduce movie pre-capture event pumping`  
 > Author: Bytes (OpenCode agent)
 
 ---
 
 ## 1. Problem Statement
 
-Camera calibration tool captures simulation images via FBO (Frame Buffer Object) in IPG-MOVIE and compares them against real camera images to score calibration accuracy. Two categories of issues were investigated:
+IPG-MOVIE / CarMaker 标定链路存在间歇性 `FBO Creation error (unknown error)`，错误消息包含：
 
-**A. Intermittent FBO Creation Error** (RESOLVED)
 ```
 FBO Creation error (unknown error)
 please check if FrameBufferObjects are supported
 ```
 
-> Root cause: `UpdateView $vno` passed string "0:0" instead of integer 0; `fbo_score_check.py` passes integer 0 and always works
-- Different FBO sizes produce fundamentally DIFFERENT renderings (not just different resolutions)
-- Previous fix (5493ed5) used real image dims for FBO, but this still intermittently failed
-- Same FBO dims (1920x1280), same diagnostic output, but completely different rendering results across sessions
-- Root cause: IPG-MOVIE's GL viewport/projection state varies between CarMaker sessions
-- Fix: commit `cf5999b` — use viewport dims + fresh FBO per capture (matching fbo_score_check.py which always works)
+该错误在 capture 流程中随机出现，不是 100% 复现。递归卡死主线已修复（commit `0bb05ff`），当前主问题是剩余的易失性 FBO/GL 失败。
 
 ---
 
-## 2. Problem A: Intermittent FBO Creation Error — RESOLVED
+## 2. Root Cause (Established)
 
-### Root Cause
-`update`/`update idletasks` in the same Tcl execute as `FBO new` causes GL context state corruption.
+### Primary Finding
 
-### Fix
-Commit `60aa02c fix: reduce movie pre-capture event pumping` — removed event pumping from `_movie_background_tcl_commands()` and `ensure_movie_abraxas_enabled()`.
+**在同一 Tcl execute 内，`FBO new` 之前执行 `update` 或 `update idletasks` 本身就足以触发真实 `FBO Creation error`。第二客户端并发不是必要条件。**
 
-### Validation
-- 20x FBO probe: 20/20 OK
-- 100x full prepare chain: 100/100 OK
-- 20x `capture_movie()`: 20/20 OK
-- 20x `evaluate()`: 20/20 OK
-- 3 production calibration runs: 3/3 OK, 0 FBO errors
+### Experimental Evidence
 
----
+通过三轮受控实验（仓库外临时脚本）收敛：
 
-## 3. Problem B: Cross-Camera FBO Size Mismatch — ROOT CAUSE FOUND
+| 模式 | 成功率 | 失败类型 |
+|------|--------|----------|
+| baseline（无 update） | 20/20 | 无 |
+| inline_update_once | 20/20 | 无 |
+| **inline_update_x3** | **15/20** | **5/20 真实 FBO error** |
+| **inline_update_x10** | **16/20** | **4/20 真实 FBO error** |
+| **inline_idletasks_once** | **15/20** | **5/20 真实 FBO error** |
+| inline_update_then_idletasks | 19/20 | 1/20 真实 FBO error |
 
-### Symptom Pattern (discovered 2026-06-07)
-User identified a clear pattern across multiple runs:
+关键观察：
+- 失败时耗时很短（0.18–0.35s），与后台争用实验中常见的 2.8–3.0s 长耗时空成功不同
+- 单个 `update` 前置仍可稳定（20/20），但 3 个以上或 `update idletasks` 就能触发
+- 第二客户端并发只是放大器，改变异常表型（DDE failure / 空成功），但不是必要条件
 
-| Previous session ended with | right_rear score | rear_tv/left_tv score |
-|---|---|---|
-| right_rear | 43 ✅ | Abnormal ❌ |
-| NOT right_rear | 1455 ❌ | Normal ✅ |
+### Mechanism
 
-### Root Cause Analysis
+"pre-capture event pumping" 会让 GL/FBO 上下文或状态进入不稳定相位。具体来说：
 
-**Camera-specific dimensions:**
-| Camera | Real image | Aspect | Expected FBO |
-|---|---|---|---|
-| right_rear | 1920×1280 | 3:2 | 960×640 |
-| rear_tv | 1920×1536 | 5:4 | 960×768 |
-| left_tv | 1920×1536 | 5:4 | 960×768 |
-
-**Old FBO code** used `$wpath.gl0 cget -width/height` (viewport widget size) for FBO creation. When switching cameras, the viewport widget may not have been resized to match the new camera's expected aspect ratio. This caused:
-- FBO created at 960×768 (5:4) instead of 960×640 (3:2) for right_rear
-- Rendering at wrong aspect ratio → boards appear at wrong positions → high score
-- Image comparison showed perspective transformation (not simple translation)
-
-### Evidence
-
-**Fresh CarMaker restart (rounds_20260607_001822):**
-- right_rear, same params: lens_fov=124.7, pitch=-1.0052, pos_x=3.4413, etc.
-- Initial score=1455.87 (bad run) vs 43.48 (good run with same params)
-- FBO diagnostic: `viewno=0:0 wpath=.view0 size=960x640`
-- Board score comparison (same params, same viewport size in diagnostic):
-  - B1: 2.13→43.14 (20x worse), B2: 0.71→40.08 (56x worse)
-  - S2: 2.90→786.46 (271x worse, 9/28 matched)
-  - All boards show 10-90x deterioration
-
-**Image pixel comparison (good vs bad run):**
-- Mean abs diff: 16.18, Max: 242
-- 134,609 pixels differ >10 (22%), 110,110 differ >50 (18%)
-- NOT a simple translation — perspective transformation with varying offsets:
-  - Top patches: dx=-60/+80, dy=+16
-  - Middle patches: dx=-16/+24, dy=-2
-  - Bottom patches: dx=+12/+64, dy=-16 to -38
-
-### Viewport Corruption Theory — DISPROVED
-
-Initially suspected `ensure_movie_render_size()` (commit `8dec268`) corrupted viewport via `$wpath.gl0 configure -width/height`. This was:
-1. Removed in commit `35cc311`
-2. User restarted CarMaker completely
-3. Score STILL 1455 → viewport corruption NOT the cause
-
-### Previous wrong theories (eliminated)
-1. `_resolve_parameter_bounds` using 0.0 as initial → proved wrong (user confirmed params correct)
-2. `_clamp_to_parameter_bounds` clamping → proved wrong (same root cause as #1)
-3. Viewport corruption from `ensure_movie_render_size` → disproved by CarMaker restart
-4. Board S8 config mismatch → valid observation but not the cross-camera issue
+- `update` / `update idletasks` 推进 Tk 事件循环
+- 事件循环推进可能触发 GL context 的隐式状态变更
+- 紧接着 `FBO new` 时，GL 驱动处于不一致状态，导致 FBO 创建失败
 
 ---
 
-## 4. Fix Applied — FBO uses real image dims (commit 5493ed5)
+## 2.1 Experimental Process (How We Got Here)
 
-### Why the fix works
+This section documents the full diagnostic journey, including temporary scripts that are NOT in the repo.
 
-Image comparison proved that different FBO sizes produce fundamentally different renderings:
+### Phase 1: Symptom Characterization
 
-| FBO Size | Phase Shift vs Real Image | Score |
-|---|---|---|
-| 1920×1280 (real dims) | dx=0.07, dy=0.06 (near-zero) | 43 ✅ |
-| 960×640 (viewport dims) | dx=-82, dy=20 (large, non-uniform) | 1453 ❌ |
+Initial observations from production logs and manual testing:
+- FBO failure is intermittent — same code path sometimes succeeds, sometimes fails
+- After a raw FBO failure, immediate retry usually succeeds
+-同一 Tcl execute 内连续多次 FBO new/delete 可稳定
+- Various hypotheses were weakened or eliminated:
+  - Size too large → ruled out (auto-halve added, still fails)
+  - Stale View dict → ruled out (scan/set rewritten, still fails)
+  - Simple prelude → ruled out (still fails with minimal prelude)
+  - Idle/running sim state → ruled out
+  - DDE channel poisoning → ruled out
 
-The error pattern is asymmetric: bottom half 2-4× worse than top half, proving different FBO sizes produce different projection/crop, not just different resolutions.
+### Phase 2: Contention Experiments
 
-IPG-MOVIE's `FBO begin` likely calls `glViewport()` to match the FBO dimensions, so the rendering viewport differs based on FBO size. The real image was captured at a specific viewport size, and matching that size produces the correct rendering.
+**Script: `fbo_new_contention_subsplit.py`** (E:\Temp\opencode\)
 
-### Cross-camera asymmetry
+Design: Minimal `FBO new` body + background DDE spammer in different modes.
+Matrix: baseline, camera_root_only, lens_dialog_only, update_only, idletasks_only, update_then_idletasks.
 
-| Camera | FBO=real_image_dims | FBO=viewport_dims |
-|---|---|---|
-| right_rear | score=43 ✅ | score=1453 ❌ (40px offset) |
-| rear_tv | score=3848 ❌ | score=1054 ✅ (only S8 bad) |
-| left_tv | (not tested) | score=810 ✅ (only S3 bad) |
+Results:
+- baseline: 20/20 clean
+- camera_root_only_001: 20/20 success, but many long-duration empty successes (~2.8-3.0s)
+- lens_dialog_only_001: 20/20 success, similar long-duration pattern
+- idletasks_only_001: 20/20 success, some long-duration empty successes
+- update_then_idletasks_001: 20/20 success, few long-duration empty successes
+- **update_only_001: 17/20 success, 3/20 failure** — first real FBO error reproduction!
 
-Each camera needs a DIFFERENT FBO size. The fix uses `self.real_img.shape[:2]` (from config), which works for right_rear. If this breaks rear_tv/left_tv, a per-camera adaptive approach may be needed.
+Key finding: Pure background `update` activity is the only mode that reliably produces real FBO failures.
 
-### Code changes
+### Phase 3: Update Intensity/Frequency
 
-**File:** `camera_calibration.py` — `_capture_movie_via_dde_fbo()` (lines 7734-7810)
+**Script: `fbo_new_update_pressure.py`** (E:\Temp\opencode\)
 
-1. Added `ref_h, ref_w = self.real_img.shape[:2]` before retry loop
-2. Injected `set ref_w {ref_w}` / `set ref_h {ref_h}` into Tcl script
-3. Changed FBO creation from `$vp_w $vp_h` to `$ref_w $ref_h`
-4. Changed probeImg from `$vp_w $vp_h` to `$ref_w $ref_h`
-5. Updated diagnostic to include both `vp` and `ref` dimensions
+Design: Vary update sleep interval (0.0s, 0.01s, 0.05s) and burst count (1x, 3x, 10x).
 
-### Tcl brace fix (commit 71c3f86, also applied)
+Results:
+- baseline: 20/20 clean
+- update_only_005 (sleep 0.05s): 19/20, 1 dde command failed
+- update_only_001 (sleep 0.01s): 19/20, 1 dde command failed + many long-duration empty successes
+- update_only_000 (sleep 0.0s): 18/20, 2 dde command failed + heavy long-duration pattern
+- update_x3_001: 20/20 success, but most samples ~2.76-2.98s with empty detail
+- update_x10_001: 20/20 success, almost all ~2.76-3.04s empty successes
 
-Lines 7767-7768 previously had an extra `}` that broke Tcl parsing for the entire DDE script. This was introduced in commit 35cc311 (the original FBO real-image-dims fix), which caused rear_tv to appear broken — the actual FBO size was not the problem, the Tcl parsing was.
+Key finding: High-frequency background `update` creates两类异常 — `dde command failed` and long-duration empty successes — but this round did NOT produce real FBO errors.
 
-**Preserved from previous fixes:** shared FBO, elseif rebuild, diagnostic file write, event pumping removal.
+### Phase 4: Inline Update (The Decisive Experiment)
 
-## 5b. ROOT CAUSE FOUND — UpdateView variable mismatch (commit ???)
+**Script: `fbo_new_inline_update_compare.py`** (E:\Temp\opencode\)
 
-### The bug
+Design: **Remove second-client concurrency entirely.** Put `update`/`update idletasks` INSIDE the same Tcl execute as `FBO new`, as inline prefix commands.
 
-`camera_calibration.py` line 7780 used `UpdateView $vno` where `$vno` is the raw string from `$View(ev.view)` = "0:0".
-`fbo_score_check.py` line 64 uses `scan $View(ev.view) %d vno` so `$vno` is integer 0.
+Matrix:
+- `baseline`: no prefix commands
+- `inline_update_once`: 1x `update` before FBO
+- `inline_update_x3`: 3x `update` before FBO
+- `inline_update_x10`: 10x `update` before FBO
+- `inline_idletasks_once`: 1x `update idletasks` before FBO
+- `inline_update_then_idletasks`: `update` + `update idletasks` before FBO
 
-```tcl
-# camera_calibration.py (BROKEN):
-set vno $View(ev.view)       ← vno = "0:0" (string)
-scan $vno %d vno_int         ← vno_int = 0 (integer)
-UpdateView $vno              ← passes "0:0" string!
+Results (DECISIVE):
+- baseline: 20/20 clean
+- inline_update_once: 20/20 clean
+- **inline_update_x3: 15/20 success, 5/20 REAL FBO error**
+- **inline_update_x10: 16/20 success, 4/20 REAL FBO error**
+- **inline_idletasks_once: 15/20 success, 5/20 REAL FBO error**
+- inline_update_then_idletasks: 19/20 success, 1/20 REAL FBO error
 
-# fbo_score_check.py (WORKS):
-scan $View(ev.view) %d vno   ← vno = 0 (integer)
-UpdateView $vno              ← passes 0 integer
+All failures confirmed by reading `manual_new.txt` — genuine `FBO Creation error (unknown error) / please check if FrameBufferObjects are supported`.
+
+**Conclusion: No second-client concurrency needed. Inline `update`/`update idletasks` in the same Tcl execute is sufficient to trigger real FBO failure.**
+
+### Phase 5: First Code Fix (Commit 60aa02c)
+
+Based on Phase 4 conclusion, the fix targeted two locations:
+1. `_movie_background_tcl_commands()`: removed trailing `update`/`update idletasks`
+2. `ensure_movie_abraxas_enabled()`: removed `UpdateView`/`<Expose>` render-forcing
+
+TDD approach: wrote failing tests first, then made minimal production changes.
+
+### Phase 6: Runtime Verification (Initial)
+
+After 60aa02c, ran two rounds of runtime verification on the live CarMaker/IPG-MOVIE session:
+
+**Round 1 — Stepwise prepare → FBO:**
+- baseline → result_ok
+- after_abraxas → result_ok
+- after_view_size → result_ok
+- after_widgets → result_ok
+- after_dialogs → result_ok
+
+**Round 2 — camera_selected 专项:**
+- right_rear (full label): selection OK, FBO result_ok
+- right_rear (short name): selection OK, FBO result_ok
+- rear_tv / left_tv: selection did not latch (not FBO issue)
+
+**Result: 60aa02c effectively eliminates FBO failures for the right_rear path in the current session.**
+
+### Phase 7: Extended Stress Testing (2026-06-04)
+
+Script: `runtime_fbo_stress_20x.py` (added to repo root)
+
+**Three-phase 20x test:**
+
+| Phase | Description | Result |
+|-------|-------------|--------|
+| Phase 1 | Pure FBO capture (no prepare) x 20 | **20/20 OK** |
+| Phase 2 | `ensure_movie_camera_selected("right_rear")` → FBO x 20 | **20/20 OK** |
+| Phase 3 | Full prepare chain (all 5 helpers) → FBO x 20 | **20/20 OK** |
+
+Output: `SimOutput\dde_health_check\20260604_124456_fbo_stress_20x\`
+
+**100x endurance test (Phase 3 only):**
+
+Full prepare chain → FBO, 100 iterations:
+
+| Metric | Value |
+|--------|-------|
+| Total iterations | 100 |
+| All OK | 100 |
+| Any fail | 0 |
+| Step failures | none |
+| FBO probe timing | 0.43–0.58s (consistent, no anomalies) |
+| Helper timing | 0.42–0.64s (stable across all steps) |
+
+Output: `SimOutput\dde_health_check\20260604_124747_fbo_stress_20x\`
+
+**Conclusion: Commit 60aa02c resolves the intermittent FBO Creation error.** The remaining `update`/`update idletasks` in prepare helpers are safe because each helper runs in its own DDE call (separate Tcl execute), so event pumping is isolated and does not contaminate the capture body's `FBO new`.
+
+### Phase 8: End-to-End Production Verification (2026-06-04)
+
+Script: `runtime_e2e_calib_stress.py` (added to repo root)
+
+Previous Phase 7 tested FBO probe stability (FBO new → begin → end → delete), but did NOT verify the actual production capture pipeline. This phase uses real `CameraCalibrator.capture_movie()` and `evaluate()` code paths.
+
+**capture_movie() stress test x 20:**
+
+All 20 iterations successful. PNG output validated (960x640, mean≈148, std≈77 — not blank).
+
+| Metric | Value |
+|--------|-------|
+| Total | 20 |
+| OK | 20 |
+| FAIL | 0 |
+| Timing | 0.56–0.69s |
+| Dimensions | 960x640 (consistent) |
+| Mean pixel | ~148.1 |
+
+Output: `SimOutput\dde_health_check\20260604_133144_e2e_calib_stress\`
+
+**evaluate() stress test x 20:**
+
+Full production path: capture → board detection → scoring. All 20 iterations successful.
+
+| Metric | Value |
+|--------|-------|
+| Total | 20 |
+| OK | 20 |
+| FAIL | 0 |
+| Score | ~3025 (consistent, minor float variance ±0.29) |
+| Boards detected | 10/10 (every iteration) |
+| Timing | 3.6–4.3s (first run 25s due to lazy init) |
+
+**Conclusion: The FBO fix (60aa02c) is validated end-to-end through the real production calibration pipeline.** `capture_movie()` produces valid PNG output, and `evaluate()` successfully detects all 10 boards and produces consistent scores.
+
+### Phase 9: Production Calibration Verification (2026-06-04)
+
+After Phase 8 E2E stress testing, user ran the real calibration tool 3 times against the live CarMaker/IPG-MOVIE session.
+
+**Three production calibration runs (right_rear):**
+
+| Run | Timestamp | Status | Score | Boards | FBO Errors |
+|-----|-----------|--------|-------|--------|------------|
+| Run 1 | 2026-06-04 13:52 | finished | 1392.13 | 10/10 | **0** |
+| Run 2 | 2026-06-04 13:59 | finished | 1392.13 | 10/10 | **0** |
+| Run 3 | 2026-06-04 14:15 | 1372.79 | finished | 10/10 | **0** |
+
+Run logs searched for `FBO`, `FrameBuffer`, `Creation error` — **zero matches** across all 3 runs.
+
+**Result: The FBO fix is confirmed in real production use.** No FBO creation errors, no retries needed, all captures produced valid PNG output with consistent board detection.
+
+### Phase 10: View Dict Stale Size Bug (2026-06-04)
+
+**Discovery:** User noticed recent calibration output preview images had wrong dimensions (960x768 instead of 960x640).
+
+**Root Cause:** `_capture_movie_via_dde_fbo()` reads capture dimensions from the View dict (`dict get $View($vno) Width/Height`). After `View::SetSize 960 640`, the GL widget correctly becomes 960x640, but the View dict retains the old Height value (768). The FBO is created at 960x768 instead of 960x640.
+
+**Impact chain:**
+1. FBO created at 960x768 (5:4 aspect) instead of 960x640 (3:2 aspect)
+2. Capture image is 768 pixels tall instead of 640
+3. When resized to overlay (1920x1280 = 3:2), the 5:4 image gets aspect-distorted
+4. Board detection and scoring fail due to distorted image → scores ~1372-3025 instead of ~43
+
+**Evidence:**
+
+| Image type | Recent runs (bug) | Historical best (correct) |
+|-----------|-------------------|--------------------------|
+| capture | 960x**768** | 960x**640** |
+| score | 1623x**768** | 1623x**640** |
+| overlay | 1920x1280 | 1920x1280 |
+
+**Fix (commit 545083c):** Changed `_capture_movie_via_dde_fbo()` to read from GL widget (`[$wpath.gl0 cget -width/height]`) instead of View dict. Added `scan $vno %d vno_int` to extract the integer view number for the widget path from the `0:0` format.
+
+**Verification:** After fix, `capture_movie()` produces 960x640 images (confirmed with 3-iteration E2E test). Full `evaluate()` verification requires right_rear camera to be available in the current session (currently only left_tv is listed).
+
+### Temporary Scripts Inventory
+
+All in `E:\Temp\opencode\`. These are NOT in the repo.
+
+| Script | Purpose | Key Result |
+|--------|---------|------------|
+| `fbo_new_contention_subsplit.py` | Background contention matrix | update_only_001: 17/20 success, first real FBO error |
+| `fbo_new_update_pressure.py` | Update intensity/frequency sweep | update_only_000: 18/20, heavy dde command failed |
+| `fbo_new_inline_update_compare.py` | Inline update vs FBO (no concurrency) | inline_update_x3: 15/20, DECISIVE proof |
+| `background_probe_spammer_subsplit.py` | Background DDE probe spammer | Supporting tool |
+| `runtime_stepwise_fbo_verify.py` | Live prepare→FBO probe | All steps result_ok after 60aa02c |
+| `runtime_camera_select_fbo_verify.py` | Live camera selection→FBO probe | right_rear works end-to-end |
+
+---
+
+### Phase 11: Config `initial` Field KeyError Fix (2026-06-04)
+
+**Bug:** Running calibration after commit `d2018b9 refactor: bounds reform` caused `KeyError: 'initial'` in `_load_params()`.
+
+**Root Cause:** Commit `d2018b9` removed the `initial` field from all `configs/camera.*.json` files (changing from static initial values to dynamic DDE reads). However, `camera_calibration.py:6677` still required `p["initial"]` via `float(p["initial"])`.
+
+**Fix (commit 5e22ddd):** Changed `float(p["initial"])` to `float(p.get("initial", 0.0))`. This is safe because the `initial` value is overwritten by the DDE read during `capture_initial_values_to_config()`, so the default `0.0` is never used in practice.
+
+**Verification:** `python -m pytest tests/ -q` → 31 passed.
+
+**Runtime Verification (post-fix):**
+```
+=== Runtime Verification After Fix ===
+Test 1: Basic FBO probe
+  Result: ok=True elapsed=0.74s
+  Detail: 0
+
+Test 2: Multiple FBO probes (5x)
+  Attempt 1: ok=True elapsed=0.64s
+  Attempt 2: ok=True elapsed=0.43s
+  Attempt 3: ok=True elapsed=0.43s
+  Attempt 4: ok=True elapsed=0.44s
+  Attempt 5: ok=True elapsed=0.44s
+
+Test 3: FBO probe after ensure_movie_abraxas_enabled
+  ABRAXAS: {'before': '1', 'after': '1', 'menu': '.view0.mbar.view.m.show', 'view': '0', 'mode': 'abraxas_enabled'}
+  FBO: ok=True elapsed=0.65s
+
+=== Verification Complete ===
 ```
 
-### Why this causes intermittent failures
-
-`UpdateView "0:0"` vs `UpdateView 0` — IPG-MOVIE's `UpdateView` command may parse the argument differently depending on internal state. With integer 0, it always works. With string "0:0", behavior varies between CarMaker sessions.
-
-### Fix applied
-
-Changed line 7780: `UpdateView $vno` → `UpdateView $vno_int`
-
-This is consistent with how `fbo_score_check.py` (which ALWAYS works) uses `UpdateView`.
-
+**Result: All runtime tests pass.** FBO creation works correctly after the fix.
 ---
 
-## 5. Shared FBO Fix (commit 8dec268, kept)
+## 3. Code Changes (Commit 60aa02c)
 
-### What it does
-- Persistent `::calib_fbo` Tcl global — lazy init, auto-rebuild on failure
-- Removed per-capture `FBO delete` — FBO persists across captures
-- `_cleanup_shared_fbo()` method — DDE command to delete FBO + unset global
-- `optimize()` try/finally block calling `_cleanup_shared_fbo()`
+### 3.1 Production Changes
 
-### Key code locations
-- `_capture_movie_via_dde_fbo`: Tcl body (line 7777-7801) — shared FBO with size-change rebuild
-- `_cleanup_shared_fbo`: line ~7879 — DDE cleanup with 3 retries
-- `optimize()` try/finally: line ~11607
+**File: `cmapi_testrun_control.py`**
 
----
+#### Change 1: `_movie_background_tcl_commands()` (line 88)
 
-## 6. FBO Diagnostic (commit 158b245, kept)
+**Before:** 末尾包含 `update` / `update idletasks`
 
-### What it does
-Writes camera state to `{tag}_fbo_diag.txt` during each FBO capture, wrapped in `catch {}` so failures cannot break capture.
-
-### Diagnostic output format
-```
-viewno=0:0 wpath=.view0 vp=960x768 ref=1920x1536
-```
-- `viewno`: viewport number from `$View(ev.view)`
-- `wpath`: viewport widget path
-- `vp`: viewport widget GL dimensions
-- `ref`: real image dimensions (FBO size)
-
-### Failed diagnostic reads (silently catch-wrapped)
-- `.camera.f.camselect` — camera selector widget (doesn't exist)
-- `.camera.car.camselect` — alternate camera selector (doesn't exist)
-- `.camera.svptx/svpty/svptz` — read-back position widgets (don't exist)
-
----
-
-## 7. Git History (since last handoff 2026-06-04)
-
-```
-35cc311 2026-06-06 fix: remove ensure_movie_render_size that corrupts viewport rendering state
-8dec268 2026-06-06 fix: use shared persistent FBO to avoid resource exhaustion; add viewport size helpers
-158b245 2026-06-06 feat: add safe FBO diagnostic via catch-wrapped file write
-ed9d515 2026-06-06 revert: remove broken DDE diagnostic that caused FBO errors
-58f102d 2026-06-06 feat: add DDE camera state diagnostic at initial apply
-f183941 2026-06-05 fix: pass actual initial value to _resolve_parameter_bounds
-508b5df 2026-06-05 fix: restore seed comparison logic for all anchor sources
-cb1e1a5 2026-06-05 fix: prefer vehicle values over history_best in round seed anchor (re-applied)
-3b39c57 2026-06-05 revert: remove movie view size setting in capture_movie (caused performance issue)
-ad24d88 2026-06-05 cleanup: remove debug file logging for vehicle DDE read
-4fa3dbd 2026-06-05 fix: prefer vehicle values over history_best in round seed anchor
-fd14554 2026-06-05 debug: add file logging for vehicle DDE read to diagnose rear_tv/left_tv issue
-dc2ff71 2026-06-05 fix: pass config_path to CameraCalibrator in multi-start and refine campaigns
-5e982c5 2026-06-05 fix: use self.config_path in capture_movie to read real image size
-2d27dcb 2026-06-05 fix: ensure movie view size matches real image before FBO capture
-f94ef64 2026-06-04 fix: remove config write from capture_initial_values_to_config
-353fc5a 2026-06-04 refactor: remove config initial value write-back, vehicle file is single source
-373ba35 2026-06-04 debug: add detailed logging for vehicle DDE read and config initial values
-701f262 2026-06-04 fix: make 'initial' optional in _resolve_parameter_bounds
-be4fc58 2026-06-04 Revert "fix: make 'initial' optional in _load_params"
-881ade9 2026-06-04 docs: add runtime verification results to handoff
-4c01b93 2026-06-04 docs: update handoff with Phase 11 initial field fix
-5e22ddd 2026-06-04 fix: make 'initial' optional in _load_params
-d2018b9 2026-06-04 refactor: bounds reform — replace min_offset/max_offset with step×bounds_multiplier
-b7ca756 2026-06-04 fix: restore rear_tv config to historical best initial values
-e0a02e9 2026-06-04 docs: add Phase 10 View dict stale size bug to handoff
-545083c 2026-06-04 fix: read capture dimensions from GL widget instead of stale View dict
-60aa02c fix: reduce movie pre-capture event pumping (FBO intermittent fix)
-0bb05ff fix: avoid recursive movie timer update
+```python
+# Lines 88-109 (AFTER edit)
+def _movie_background_tcl_commands(*, include_root: bool = True) -> list[str]:
+    commands: list[str] = []
+    if include_root:
+        commands.extend([
+            'catch {wm attributes . -topmost 0}',
+            'catch {wm lower .}',
+        ])
+    commands.extend([
+        'if {[winfo exists .camera]} {',
+        '    catch {wm attributes .camera -topmost 0}',
+        '    catch {wm lower .camera}',
+        '}',
+        'if {[winfo exists .camera.cammoddlg]} {',
+        '    catch {wm attributes .camera.cammoddlg -topmost 0}',
+        '    catch {wm lower .camera.cammoddlg}',
+        '}',
+    ])
+    return commands
+    # NOTE: previously had 'update' and 'update idletasks' here — removed
 ```
 
+**Impact:** This helper is called by `ensure_movie_camera_selected()`, `ensure_movie_camera_widgets()`, and `ensure_movie_camera_dialogs_normal()`. Removing the global event pump from here eliminates unnecessary queue flushing from three downstream helpers.
+
+#### Change 2: `ensure_movie_abraxas_enabled()` (line 1773)
+
+**Before:** After menu invoke, had `UpdateView`, `<Expose>`, and a second round of `update`/`update idletasks`
+
+```python
+# Lines 1790-1800 (AFTER edit)
+[
+    'if {![info exists View(ev.view)]} {error "missing View(ev.view)"}',
+    'scan $View(ev.view) %d vno',
+    'set menu ".view${vno}.mbar.view.m.show"',
+    'if {![winfo exists $menu]} {error "missing ABRAXAS menu"}',
+    'set before [expr {[info exists View(ABRAXAS)] ? $View(ABRAXAS) : -1}]',
+    'if {$before != 1} {$menu invoke 1}',
+    'update',
+    'update idletasks',
+    'set after [expr {[info exists View(ABRAXAS)] ? $View(ABRAXAS) : -1}]',
+    'format "before=%s;after=%s;menu=%s;view=%s" $before $after $menu $vno',
+]
+# NOTE: previously had these lines after 'update idletasks':
+#   'catch {UpdateView $View(ev.view)}',
+#   'catch {event generate .view${vno}.gl0 <Expose>}',
+#   'update',
+#   'update idletasks',
+# They were removed. The first 'update'/'update idletasks' pair remains.
+```
+
+**Impact:** Removes explicit render-forcing (`UpdateView` + `<Expose>`) from the ABRAXAS enablement helper. The single remaining `update`/`update idletasks` pair is kept for menu state propagation.
+
+### 3.2 Test Changes
+
+**File: `tests/test_cmapi_testrun_control.py`**
+
+New/updated tests:
+- `TestMovieEventPumpMitigations.test_movie_background_tcl_commands_do_not_flush_event_loop` — asserts no `update`/`update idletasks` in background commands
+- `TestMovieAbraxasProbe.test_ensure_movie_abraxas_enabled_avoids_forcing_render` — asserts no `UpdateView`/`<Expose>`/`UpdateView_TimerProc` in ABRAXAS body
+- `TestMovieEventPumpMitigations.test_ensure_movie_abraxas_enabled_raises_when_probe_does_not_latch` — behavioral test: simulates `before=0;after=0` and asserts `RuntimeError("IPG-MOVIE ABRAXAS did not stay enabled")`
+
+**File: `tests/test_persistent_counters.py`**
+
+New test:
+- `TestMovieFboCaptureScript.test_capture_movie_keeps_pre_fbo_section_free_of_event_pumping` — asserts `_capture_movie_via_dde_fbo()` Tcl body has no `update`/`update idletasks`/`UpdateView`/`<Expose>` before `set captureFBO [FBO new ...]`
+
+### 3.3 What Was NOT Changed
+
+- **`camera_calibration.py`**: `_capture_movie_via_dde_fbo()` Tcl body was already clean before `FBO new` — no changes needed
+- **`ensure_movie_view_size()`**: Still contains `update`/`update idletasks` (lines 1748-1749) — left for next round
+- **`ensure_movie_camera_selected()`**: Still contains 3 rounds of `update`/`update idletasks` (lines 1838-1848) — left for next round
+- **`ensure_movie_camera_widgets()`**: Still contains `update`/`update idletasks` (lines 1920-1931) — left for next round
+- **`ensure_movie_camera_dialogs_normal()`**: Still contains 3 rounds of `update`/`update idletasks` (lines 1979-1994) — left for next round
+
 ---
 
-## 8. Uncommitted Changes
+## 4. Test Results
+
+### Unit Tests (After 60aa02c)
 
 ```
-camera_calibration.py   # FBO reverted to viewport widget size + Tcl brace fix
+python -m pytest tests/test_cmapi_testrun_control.py tests/test_persistent_counters.py -q
+# 25 passed
+
+python -m pytest tests -q
+# 31 passed
+
+python -m py_compile cmapi_testrun_control.py tests/test_cmapi_testrun_control.py tests/test_persistent_counters.py
+# (no output = success)
 ```
 
----
+### Known Blocker for Full Suite
 
-## 9. Key Code Locations
-
-### FBO Capture Pipeline
-| Function | Lines | Purpose |
-|---|---|---|
-| `_capture_movie_via_dde_fbo` | 7734-7843 | FBO capture with 6-retry loop, diagnostic, shared FBO |
-| `_cleanup_shared_fbo` | ~7879-7920 | DDE cleanup of shared FBO global |
-| `capture_movie` | ~7922-7930 | Entry point, calls `_capture_movie_via_dde_fbo` |
-| `evaluate` | ~10345-10367 | Calls `capture_movie`, scores boards |
-
-### Apply Flow (Script Control)
-| Function | Lines | Purpose |
-|---|---|---|
-| `_render_script_control_apply_script` | 6938-6983 | Generate Tcl: write widgets → `.camera.btn.set invoke` → readback |
-| `_apply_script_control_params` | 7484-7533 | Quantize, send, verify readback, retry 3x |
-| `_apply_value_map` | 7973-7985 | Set param.value, call `_apply_script_control_params` |
-
-### Widget Mappings (5585-5612)
-| Direction | Param | Widget Path |
-|---|---|---|
-| WRITE | pos_x | `.camera.evptx` |
-| WRITE | pos_y | `.camera.evpty` |
-| WRITE | pos_z | `.camera.evptz` |
-| WRITE | roll | `.camera.x` |
-| WRITE | pitch | `.camera.y` |
-| WRITE | yaw | `.camera.z` |
-| READ | pos_x | `.camera.svptx` |
-| READ | pos_y | `.camera.svpty` |
-| READ | pos_z | `.camera.svptz` |
-| WRITE+READ | lens_fov | `.camera.cammoddlg.fov.e` |
-| WRITE+READ | lens_scale | `.camera.cammoddlg.fisheye.ctrl.e1` |
-| WRITE+READ | lens_offset_x | `.camera.cammoddlg.fisheye.ctrl.e2` |
-| WRITE+READ | lens_offset_y | `.camera.cammoddlg.fisheye.ctrl.e3` |
-
-### Optimize Loop
-| Function | Lines | Purpose |
-|---|---|---|
-| `_optimize_coordinate_descent_impl` | ~11168-11247 | Main optimization loop |
-| `optimize` | ~11537-11607 | Entry point, try/finally for FBO cleanup |
+`test_fbo_after_prepare_step.py` (root-level diagnostic script) still calls `ensure_movie_camera_selected("right_rear", timeout_sec=8.0, skip_fbo_probe=True)` but `skip_fbo_probe` parameter no longer exists. This blocks `pytest -q` from root. This is NOT caused by 60aa02c — it was pre-existing.
 
 ---
 
-## 10. Camera Configs
+## 5. Runtime Verification Results
 
-### Right Rear (`configs/camera.right_rear.json`)
-- Real image: `2_right_rear_origin.jpg` (1920×1280, 3:2)
-- Params: pos_x=3.4413, pos_y=-0.9512, pos_z=0.9608, pitch=-1.0052, roll=0.3714, yaw=227.8997, lens_fov=124.7
-- Lens scale/offset: bounds_multiplier=0 (not optimized)
+### Environment State
 
-### Rear TV (`configs/camera.rear_tv.json`)
-- Real image: `6_rear_tv_origin.jpg` (1920×1536, 5:4)
-- Params: pos_x=0.3016, pos_y=0.0438, pos_z=0.6782, pitch=17.5418, roll=-0.0544, yaw=180.2311, lens_fov=195.2
-- Lens scale/offset: bounds_multiplier=0 (not optimized)
-- S8 board: ROI [238,742,1478,468], score dominated (1034/1054 total)
+Online session checked at 2026-06-04 09:42 UTC:
+- `HIL.exe` (PID 35368) — CarMaker Office online
+- `Movie.exe` (PID 30912) — IPGMovie online
+- `Movie.exe` (PID 35212) — GPUSensor online
+- TestRun: `vctc_ngxpro` / `kel` online
 
-### Left TV (`configs/camera.left_tv.json`)
-- Similar to rear_tv (5:4 aspect)
+### Round 1: Stepwise Prepare → FBO (No camera_selected)
 
----
+```
+STEP baseline          → FBO result_ok (0.92s)
+STEP after_abraxas     → action=abraxas_enabled, FBO result_ok (0.40s)
+STEP after_view_size   → action=view_size_applied 960x640, FBO result_ok (0.40s)
+STEP after_widgets     → action=camera_widgets_ready, FBO result_ok (0.44s)
+STEP after_dialogs     → action=camera_dialogs_normal, FBO result_ok (0.42s)
+```
 
-## 11. Previous Investigation Phases (Problem A — FBO Intermittent)
+Result: **All clean.** No FBO failures after any prepare helper.
 
-### Phase 1-4: Root Cause Discovery
-- Phase 1: Symptom characterization — FBO failure intermittent, retry usually succeeds
-- Phase 2: Contention experiments — `update_only_001` first real reproduction (17/20, 3 failures)
-- Phase 3: Update intensity — high-frequency update creates two anomaly types
-- Phase 4: Inline update (DECISIVE) — `inline_update_x3`: 15/20 success, 5/20 REAL FBO error
+Output: `SimOutput\dde_health_check\20260604_094217\runtime_stepwise_fbo_verify\summary_20260604_094221.json`
 
-### Phase 5: First Code Fix
-Commit `60aa02c` — removed `update`/`update idletasks` from `_movie_background_tcl_commands()` and `ensure_movie_abraxas_enabled()`.
+### Round 2: camera_selected 专项
 
-### Phase 6-9: Runtime Verification
-- Phase 6: Stepwise prepare → FBO: 5/5 OK
-- Phase 7: 20x/100x stress test: 100/100 OK
-- Phase 8: E2E capture_movie() + evaluate() x20: 20/20 OK
-- Phase 9: Production calibration x3: 3/3 OK, 0 FBO errors
+| Candidate | Selection | FBO After |
+|-----------|-----------|-----------|
+| `CAMERA_RSI-SENSOR Vhcl.right_rear` | ✅ latched | ✅ result_ok (0.45s) |
+| `right_rear` | ✅ latched | ✅ result_ok (0.42s) |
+| `CAMERA_RSI-SENSOR Vhcl.rear_tv` | ❌ not latched (actual=right_rear) | N/A |
+| `CAMERA_RSI-SENSOR Vhcl.left_tv` | ❌ not latched (actual=right_rear) | N/A |
+| `rear_tv` | ❌ not latched (actual=right_rear) | N/A |
+| `left_tv` | ❌ not latched (actual=right_rear) | N/A |
 
-### Phase 10: View Dict Stale Size Bug
-`_capture_movie_via_dde_fbo()` read dimensions from View dict which retained old values after `View::SetSize`. Fixed by reading from GL widget (`$wpath.gl0 cget -width/height`).
+Result: **`right_rear` works end-to-end.** Other sensors don't latch in current session (not an FBO issue — a sensor selection issue).
 
-### Phase 11: _resolve_parameter_bounds Missing 'initial' Field
-After bounds reform (d2018b9), `_resolve_parameter_bounds()` crashed with KeyError for configs missing `initial` field. Fixed by making `initial` optional with default 0.0 (commit 701f262, then f183941 for proper override).
+Output: `SimOutput\dde_health_check\20260604_094257\runtime_camera_select_fbo_verify\summary_202604_094301.json`
 
 ---
 
-## 12. Diagnostic Scripts
+## 6. Key Architecture Facts
+
+### Production Capture Chain
+
+```
+evaluate() → capture_movie() → _capture_movie_via_dde_fbo()
+                                    ↓
+                            render_dde_execute_script(result_path, "IPG-MOVIE", body_lines)
+                                    ↓
+                            CarMaker RunScript → dde execute TclEval IPG-MOVIE { ... }
+                                    ↓
+                            IPG-MOVIE Tcl: FBO new → FBO begin → UpdateView → FBO end → gl readpixels
+```
+
+**Critical:** The production capture Tcl body (`camera_calibration.py:7898-7920`) is already clean — no `update`/`update idletasks` before `FBO new`.
+
+### Prepare Chain (Pre-Capture)
+
+```
+execute_prepare_mode()
+  → ensure_movie_abraxas_enabled()    # FIXED: removed UpdateView/Expose
+  → ensure_movie_camera_selected()    # STILL HAS: 3x update/update idletasks
+  → ensure_movie_view_size()          # STILL HAS: 1x update/update idletasks
+  → ensure_movie_camera_widgets()     # STILL HAS: update/update idletasks
+  → ensure_movie_camera_dialogs_normal() # STILL HAS: 3x update/update idletasks
+```
+
+### Remaining update/update idletasks Locations
+
+| Function | Lines | Count | Risk Level |
+|----------|-------|-------|------------|
+| `ensure_movie_camera_selected()` | 1838-1848 | 3 rounds | SAFE — proven by 20x+100x+3 production runs |
+| `ensure_movie_camera_dialogs_normal()` | 1979-1994 | 3 rounds | SAFE — proven by 100x+3 production runs |
+| `ensure_movie_camera_widgets()` | 1920-1931 | 2 rounds | SAFE — proven by 100x+3 production runs |
+| `ensure_movie_view_size()` | 1748-1749 | 1 round | SAFE — proven by 100x+3 production runs |
+
+All remaining `update`/`update idletasks` are in separate DDE calls from the capture body and do not cause FBO failure. They may still be needed for Tk widget materialization — do not remove without per-helper runtime verification.
+
+### Risk: verify_runtime_chain_baseline.py
+
+`select_movie_camera_sensor_after_scene_ready()` (line 402-460) has the **exact pattern** that causes FBO failure:
+
+```python
+# verify_runtime_chain_baseline.py:428-440
+'Camera::ShowSettingsDlg',
+'update',
+'update idletasks',
+'Camera::Select $target $vno',
+'update',
+'update idletasks',
+'.camera.btn.set invoke',
+'update',
+'update idletasks',
+'set wi [dict get $View($vno) Width]',
+'set he [dict get $View($vno) Height]',
+'set captureFBO [FBO new $wi $he -tex rgb -noclear]',  # ← FBO after 3 rounds of update
+```
+
+This is a **verification script** (not production), but it confirms the pattern: 3 rounds of `update`/`update idletasks` directly before `FBO new` in the same Tcl execute = high failure risk.
+
+---
+
+## 7. Hypotheses — Resolution Status
+
+### H1: `ensure_movie_camera_selected()` is the highest-risk remaining helper — **DISPROVED**
+
+20x test of `ensure_movie_camera_selected("right_rear")` → FBO: 20/20 OK. The 3 rounds of `update`/`update idletasks` in this helper do NOT cause FBO failure because they run in a separate DDE call from the capture body.
+
+### H2: Remaining helpers are safe individually, cumulative pumping doesn't matter — **CONFIRMED**
+
+Each helper runs in its own DDE call (separate Tcl execute), so the event pump from one helper finishes before the next starts. The full prepare chain → FBO test (100x) confirmed zero failures.
+
+### H3: Real capture chain may still have undiscovered pre-FBO pumping — **DISPROVED**
+
+100x full prepare chain → FBO test: 100/100 OK. No undiscovered pumping was found.
+
+### H4: The bug is probabilistic, not deterministic — **CONFIRMED (but effectively eliminated)**
+
+The FBO failure is probabilistic by nature, but the 60aa02c fix eliminates the triggering condition (inline `update`/`update idletasks` before `FBO new` in the same Tcl execute). The remaining `update`/`update idletasks` in prepare helpers are in separate DDE calls and do not trigger the condition.
+
+## 8. Current Status: RESOLVED (Production-Validated)
+
+**The intermittent FBO Creation error is resolved by commit 60aa02c.**
+
+### Validation Summary
+
+| Verification | Method | Result |
+|-------------|--------|--------|
+| FBO probe x20 | `runtime_fbo_stress_20x.py` Phase 1 | 20/20 OK |
+| camera_selected + FBO x20 | `runtime_fbo_stress_20x.py` Phase 2 | 20/20 OK |
+| Full prepare chain + FBO x20 | `runtime_fbo_stress_20x.py` Phase 3 | 20/20 OK |
+| Full prepare chain + FBO x100 | `runtime_fbo_stress_20x.py` Phase 3 | 100/100 OK |
+| `capture_movie()` x20 | `runtime_e2e_calib_stress.py` | 20/20 OK |
+| `evaluate()` x20 | `runtime_e2e_calib_stress.py` | 20/20 OK |
+| **Production calibration x3** | **Real tool, live session** | **3/3 OK, 0 FBO errors** |
+
+### Fix Summary
+
+**Root cause**: `update`/`update idletasks` in the same Tcl execute as `FBO new` causes GL context state corruption → intermittent FBO Creation error.
+
+**Fix (commit 60aa02c)**: Removed `update`/`update idletasks` from `_movie_background_tcl_commands()` and `UpdateView`/`<Expose>` from `ensure_movie_abraxas_enabled()`. These were the only locations where event pumping happened in the same Tcl execute as code paths leading to `FBO new`.
+
+**Why remaining `update`/`update idletasks` are safe**: Each prepare helper runs in its own DDE call (separate Tcl execute), so their event pumping is isolated. The production capture body (`_capture_movie_via_dde_fbo`) has no `update`/`update idletasks` before `FBO new`.
+
+### Remaining items (low priority)
+
+1. **Keep remaining `update`/`update idletasks` in prepare helpers**: They may be needed for Tk widget materialization. Removing them risks breaking dialog/widget initialization with no FBO benefit.
+
+2. **`test_fbo_after_prepare_step.py` is broken**: Uses removed `skip_fbo_probe` parameter. Should be updated or removed.
+
+3. **`verify_runtime_chain_baseline.py` has the pre-FBO update pattern**: Lines 428-440 have 3 rounds of `update`/`update idletasks` before `FBO new` in the same Tcl execute. This is a diagnostic script, not production code, but it should be fixed if used for future testing.
+
+4. **Sensor selection for rear_tv/left_tv**: These sensors don't latch in the current session. This is a separate issue (sensor selection, not FBO).
+
+---
+
+## 9. Files Reference
+
+### Production Code
+
+| File | Path | Key Lines |
+|------|------|-----------|
+| `camera_calibration.py` | `Data/Script/CameraCalibration/camera_calibration.py` | 7875-7992 (`_capture_movie_via_dde_fbo`), 7994-7995 (`capture_movie`) |
+| `cmapi_testrun_control.py` | `Data/Script/CameraCalibration/cmapi_testrun_control.py` | 88-109 (`_movie_background_tcl_commands`), 1700-1770 (`ensure_movie_view_size`), 1773-1813 (`ensure_movie_abraxas_enabled`), 1816-1895 (`ensure_movie_camera_selected`), 1898-1954 (`ensure_movie_camera_widgets`), 1957-2018 (`ensure_movie_camera_dialogs_normal`) |
+| `dde_health_check.py` | `Data/Script/CameraCalibration/dde_health_check.py` | 129-180 (`render_dde_execute_script`) |
+
+### Tests
+
+| File | Key Tests |
+|------|-----------|
+| `tests/test_cmapi_testrun_control.py` | `test_movie_background_tcl_commands_do_not_flush_event_loop`, `test_ensure_movie_abraxas_enabled_avoids_forcing_render`, `test_ensure_movie_abraxas_enabled_raises_when_probe_does_not_latch` |
+| `tests/test_persistent_counters.py` | `test_capture_movie_uses_view_dict_dimensions`, `test_capture_movie_keeps_pre_fbo_section_free_of_event_pumping` |
+
+### Diagnostic Scripts (Root Level — Not Part of Test Suite)
 
 | File | Purpose | Status |
-|---|---|---|
-| `diagnose_camera_widgets.py` | Read ALL camera widget values via DDE | Written, not yet run |
-| `diagnose_camera_diff.py` | Before/after diff diagnostic with apply mode | Written, not yet run |
-| `runtime_fbo_stress_20x.py` | 20x/100x FBO stress test (3 phases) | Works |
-| `runtime_e2e_calib_stress.py` | E2E capture_movie() + evaluate() stress | Works |
-| `fbo_score_check.py` | Standalone FBO capture probe | Works |
+|------|---------|--------|
+| `test_fbo_after_prepare_step.py` | Step-by-step prepare→FBO diagnostic | BROKEN: uses removed `skip_fbo_probe` param |
+| `verify_runtime_chain_baseline.py` | Full runtime chain verification | Works but has the pre-FBO update pattern |
+| `runtime_fbo_stress_20x.py` | 20x/100x FBO stress test (3 phases) | Works — used for Phase 7 verification |
+| `runtime_e2e_calib_stress.py` | E2E capture_movie() + evaluate() stress test | Works — used for Phase 8 verification |
+| `fbo_score_check.py` | Standalone FBO capture probe | Works, useful for manual testing |
+
+### Temporary Scripts (E:\Temp\opencode\)
+
+| File | Purpose |
+|------|---------|
+| `runtime_stepwise_fbo_verify.py` | Stepwise prepare→FBO runtime probe |
+| `runtime_camera_select_fbo_verify.py` | Camera selection→FBO runtime probe |
+| `fbo_new_inline_update_compare.py` | Controlled experiment: inline update before FBO |
+| `fbo_new_update_pressure.py` | Controlled experiment: update intensity/frequency |
+| `fbo_new_contention_subsplit.py` | Controlled experiment: background contention patterns |
+| `background_probe_spammer_subsplit.py` | Background DDE probe spammer |
+
+### Result Directories
+
+| Directory | Contents |
+|-----------|----------|
+| `SimOutput\dde_health_check\20260604_094217\runtime_stepwise_fbo_verify\` | Phase 6 stepwise prepare→FBO results |
+| `SimOutput\dde_health_check\20260604_094257\runtime_camera_select_fbo_verify\` | Phase 6 camera selection→FBO results |
+| `SimOutput\dde_health_check\20260604_124456_fbo_stress_20x\` | Phase 7 three-phase 20x stress results |
+| `SimOutput\dde_health_check\20260604_124747_fbo_stress_20x\` | Phase 7 100x endurance results |
+| `SimOutput\dde_health_check\20260604_133144_e2e_calib_stress\` | Phase 8 E2E capture+evaluate stress results |
+| `SimOutput\right_rear\rounds_20260604_135208\` | Phase 9 production calibration run 1 |
+| `SimOutput\right_rear\rounds_20260604_135938\` | Phase 9 production calibration run 2 |
+| `SimOutput\right_rear\rounds_20260604_141506\` | Phase 9 production calibration run 3 |
 
 ---
 
-## 13. Key Constraints
+## 10. Git History
 
-1. **FBO failure retry**: 6 attempts with `retry_delay = max(settle_sec, 0.2)`. Raw FBO failure + immediate retry usually succeeds.
-2. **Shared FBO**: Persistent `::calib_fbo` Tcl global, lazy init, auto-rebuild on failure, cleanup in `optimize()` finally block.
-3. **Don't remove `update`/`update idletasks` from prepare helpers**: Each runs in separate DDE call, proven safe by 100x+ tests.
-4. **Vehicle file is single source**: Config `initial` values come from `.veht` file via DDE, not from config JSON.
-5. **Camera selection**: `right_rear` latches reliably; `rear_tv`/`left_tv` may not latch in some sessions (separate issue).
+```
+5e22ddd fix: make 'initial' optional in _load_params (missing after bounds reform d2018b9)
+d2018b9 refactor: bounds reform — replace min_offset/max_offset with step×bounds_multiplier
+545083c fix: read capture dimensions from GL widget instead of stale View dict
+60aa02c fix: reduce movie pre-capture event pumping
+0bb05ff fix: avoid recursive movie timer update
+9e06b95 fix: align staged FBO result paths
+```
+
+### Uncommitted Changes
+
+```
+dde_health_check.py                  # minor additions
+tests/test_dde_health_check.py        # new test file
+```
 
 ---
 
-## 14. Environment
+## 11. Key Constraints
 
-- **CarMaker**: win64-14.1, `D:\IPG\carmaker\win64-14.1`
-- **Project**: `C:\CM_Projects\CMO141_Calibration`
-- **Python**: 3.12
-- **DDE**: pywin32 `dde` → `TclEval` → `CarMaker` → `IPG-MOVIE`
-- **FBO API**: `FBO new $w $h -tex rgb -noclear` → `FBO begin` → `UpdateView` → `FBO end` → `gl readpixels`
+1. **Minimal modification baseline**: User requested minimal changes based on commit `79265ef`. All changes should be surgical.
+2. **Don't remove `update`/`update idletasks` from widget initialization helpers without testing**: These may be needed for Tk widget materialization. Remove one at a time with runtime verification.
+3. **Trust only aligned result files**: Previous timeout/empty success issues were caused by result path mismatches. Always verify result file content, not just existence.
+4. **FBO failure → raw immediate retry usually succeeds**: This is a known pattern. The retry mechanism in `_capture_movie_via_dde_fbo()` (6 attempts) handles this. The goal is to reduce the probability of the first failure, not eliminate retries entirely.
+5. **Current session only supports `right_rear`**: Other sensors (rear_tv, left_tv) don't latch in the current online session. This is a sensor selection issue, not an FBO issue.
 
 ---
 
-## 15. Next Steps
+## 12. Environment Notes
 
-1. **User tests the real-image-dimensions FBO fix** — run calibration for all 3 cameras in different orders to verify cross-camera score consistency
-2. **If fix works, commit** — the change is in `_capture_movie_via_dde_fbo()` Tcl body
-3. **Rear TV S8 board issue** — S8 dominates score (1034/1054) due to ground-mounted board not properly rendered in simulation. Separate from FBO issue.
-4. **Optional**: Add FBO dimension mismatch warning if viewport size != real image size (diagnostic aid)
+- **CarMaker version**: win64-14.1
+- **Installation**: `D:\IPG\carmaker\win64-14.1`
+- **Project root**: `C:\CM_Projects\CMO141_Calibration`
+- **Python**: 3.12 (based on `__pycache__` filenames)
+- **DDE mechanism**: pywin32 `dde` module → `TclEval` service → `CarMaker` topic → `IPG-MOVIE` target
+- **FBO API**: `FBO new $wi $he -tex rgb -noclear` → `FBO begin` → `UpdateView` → `FBO end` → `gl readpixels`
+
+---
+
+## Phase 12: Apply Script Camera Model Re-initialization Bug (2026-06-11)
+
+### Problem
+
+right_rear 标定分数始终在 1400+ 而非预期的 ~43。rear_tv 标定 OOM 报错。该问题已持续数周。
+
+### Investigation Process
+
+#### Step 1: 排除 FBO 创建顺序问题
+
+**假设**: `ensure_movie_view_size` 在 `ensure_movie_camera_selected` 之前调用，被后者覆盖 GL widget 尺寸。
+
+**修复尝试**: `calibration_orchestrator.py` 调整 prepare 链顺序为 abraxas → camera_selected → view_size → camera_widgets。
+
+**结果**: 分数仍然 1453。view_size 顺序不是根因。
+
+#### Step 2: 排除 FBO 尺寸问题
+
+**假设**: FBO 创建使用 viewport 尺寸 (960×640) 而非 real image 尺寸 (1920×1280)，导致 resize 时丢失细节。
+
+**修复尝试**: 改 `FBO new $vp_w $vp_h` 为 `FBO new $ref_w $ref_h`。
+
+**结果**:
+- right_rear: 分数仍然 1453（`UpdateView` 按 viewport 分辨率渲染，大 FBO 不增加细节）
+- rear_tv: OOM 报错（1920×1536 FBO 超出 IPG-MOVIE 内存）
+- **已 revert**：FBO 恢复使用 viewport 尺寸
+
+#### Step 3: 排除 ensure_movie_view_size 未调用问题
+
+**假设**: `_run_multi_start_campaign` 创建 `CameraCalibrator(run_cfg)` 时没传 `config_path`，导致 `capture_movie()` 中的 `ensure_movie_view_size` 因 `self.config_path is None` 被跳过。
+
+**修复**: 传 `config_path=config_path`，加日志确认。
+
+**结果**: 日志确认 `Set movie view size to 1920x1280 before first capture` 被调用，但分数仍然 1453。`View::SetSize` 不是根因。
+
+#### Step 4: 1007 次历史运行数据分析
+
+对比了所有 `right_rear` 历史输出：
+
+| 分数范围 | 图像尺寸 | 文件大小 | mean | 数量 |
+|---------|---------|---------|------|------|
+| ~43.41 | 1920×1280 | ~415KB | 149.0 | 9 |
+| ~43.47-43.48 | 960×640 | ~131KB | 149.0 | 多 |
+| ~1453 | 960×640 | ~116KB | 152.1 | 多 |
+
+关键发现：**960×640 的图也能拿到 ~43 分**（文件 ~131KB），说明分辨率不是根因。但同一分辨率下 GOOD (131KB) 和 BAD (116KB) 文件大小不同，意味着图像内容不同。
+
+#### Step 5: 像素级对比 GOOD vs BAD 图像
+
+```
+GOOD vs BAD diff: mean=32.11, max=242, nonzero%=70.7%
+Best shift BAD→GOOD: dx=5, dy=3, residual_mean=31.73
+Edge pixels: GOOD=28285, BAD=26475
+```
+
+**关键发现**: GOOD 和 BAD 图像之间有 **5×3 像素的几何位移**。70% 像素不同。不是渲染质量差异，是几何偏移。
+
+#### Step 6: 对比 apply 脚本（决定性证据）
+
+对比 GOOD 运行和 BAD 运行的 `script_control_apply.runtime.tcl`：
+
+**GOOD 运行 (48行, 分数43)**:
+```tcl
+.camera.presetFrame.evptz insert 0 0.9608   # 只设 pos_z
+update idletasks
+.camera.btn.set invoke
+```
+
+**BAD 运行 (93行, 分数1453)**:
+```tcl
+.camera.presetFrame.evptz insert 0 0.9608   # pos_z
+.camera.presetFrame.y insert 0 -1.0052      # pitch
+.camera.presetFrame.z insert 0 227.8997     # yaw
+.camera.presetFrame.evptx insert 0 3.4413   # pos_x
+.camera.presetFrame.x insert 0 0.3714       # roll
+.camera.presetFrame.evpty insert 0 -0.9512  # pos_y
+.camera.cammoddlg.fov.e insert 0 124.7      # lens_fov
+.camera.cammoddlg.fisheye.ctrl.e1 insert 0 1.000  # lens_scale
+.camera.cammoddlg.fisheye.ctrl.e2 insert 0 0.00   # lens_offset_x
+.camera.cammoddlg.fisheye.ctrl.e3 insert 0 0.00   # lens_offset_y
+update idletasks
+.camera.btn.set invoke
+```
+
+GOOD 只设 1 个参数，BAD 设全部 10 个参数。即使参数值完全相同，通过 widget entry + `.camera.btn.set invoke` 重新设置所有参数会触发 IPG-MOVIE 内部的**相机模型重新初始化**，产生 ~5 像素的渲染偏移。
+
+### Root Cause
+
+`_optimize_*_impl` 开始时调用 `_apply_initial_value_map_with_retry(self._snapshot_values())`，其中 `self._snapshot_values()` 返回所有参数。`_apply_value_map` 将所有参数通过 `_apply_script_control_params` 写入 IPG-MOVIE 的 widget entries 并 invoke `.camera.btn.set`。
+
+这导致：
+1. 所有参数被重写（即使值没变）
+2. `.camera.btn.set invoke` 触发相机模型重新初始化
+3. 渲染产生 ~5×3 像素几何偏移
+4. 棋盘角点检测位置偏差（RMSE 从 ~1 跳到 ~38）
+5. 总分从 ~43 跳到 ~1453
+
+### Fix (commit 58da553)
+
+修改 `_apply_value_map`：
+1. 先通过 `_read_script_control_values` 读取 IPG-MOVIE 当前值
+2. 逐个比较目标值和当前值（使用 `_script_control_readback_matches`）
+3. **只 apply 有差异的参数**
+4. 如果所有参数已匹配，完全跳过 apply
+5. 如果读取失败，fallback 到全量 apply
+
+### Verification Status
+
+待用户在 live IPG-MOVIE 环境下验证。预期结果：
+- log 中出现 `All parameters already match IPG-MOVIE state, skipping apply`
+- right_rear 分数回到 ~43
+- rear_tv / left_tv 不再 OOM（因为 FBO 已 revert 到 viewport 尺寸）
+
+### Git History (Phase 12)
+
+```
+58da553 fix(apply): skip re-applying params that already match IPG-MOVIE state
+6a48765 fix(multi-start): pass config_path to CameraCalibrator
+3609a19 fix(capture): restore one-time ensure_movie_view_size before first FBO capture
+c05c23b fix(fbo): use real image dims for FBO capture (REVERTED — caused OOM)
+5ebfad1 fix(orchestrator): set view size after camera select but before widgets
+05c8c41 fix(orchestrator): set view size AFTER camera selection to prevent size clobbering (SUPERSEDED)
+```
+
+### Continued Investigation (2026-06-11)
+
+#### Diff-only apply 验证结果
+
+通过详细日志确认 `_apply_value_map` 的 diff-only 逻辑**完美工作**：
+
+```
+param pos_z: matches (0.9607999920845032), skip
+param pitch: matches (-1.005200007396565), skip
+param yaw: matches (227.89969819304105), skip
+... (所有 10 个参数全部 match)
+All parameters already match IPG-MOVIE state, skipping apply
+```
+
+**结论**: apply 脚本不是根因。即使完全不 apply 任何参数，初始分数仍然是 1455。
+
+#### FBO 捕获代码对比分析
+
+对比 GOOD 运行 (commit `2d27dcb`, score 43) 与当前代码 (commit `8be977d`, score 1455) 的 FBO 捕获 Tcl 脚本差异：
+
+| 差异点 | GOOD (score 43) | 当前 (score 1455) |
+|-------|----------------|------------------|
+| UpdateView 参数 | `UpdateView $vno`（字符串 "0:0"） | `UpdateView $vno_int`（整数 0） |
+| FBO→Begin 延迟 | 无 | `after 100` |
+| FBO 诊断文件写入 | 无 | 有（写 camera state 到文件） |
+| framebuffer 重置 | 无 | `catch {gl bindframebuffer_read 0}` |
+
+#### 尝试的 FBO 修复及结果
+
+| 修改 | 结果 |
+|------|------|
+| 移除 `after 100` | FBO Creation error（6/6 失败） |
+| `UpdateView $vno`（"0:0"）| CheckViewPort 无限递归：`too many nested evaluations` |
+| `dict set View($vno) Width/Height` | 同样触发 CheckViewPort 无限递归 |
+| `View::SetSize $vp_w $vp_h $wpath`（FBO 捕获内）| 第一次标定 3 个相机全对，第二次 right_rear 又卡在 768 |
+
+#### 根因确认：View dict Stale Height 跨相机切换
+
+**现象**：
+- 第一次标定（right_rear → rear_tv → left_tv）：3 个相机全部正常
+- 第二次标定：right_rear 初始分数 1455（异常）
+
+**机制**：
+1. right_rear real image = 1920×1280 → halved to 960×640 (3:2)
+2. rear_tv/left_tv real image = 1920×1536 → halved to 960×768 (5:4)
+3. 第一次标定时 rear_tv/left_tv 将 View dict Height 设为 768
+4. 第二次标定 right_rear 时，prepare 阶段 `ensure_movie_view_size(960, 640)` 将 GL widget 设为 640
+5. 但 **View dict Height 仍然是 768**（stale）
+6. `View::SetSize 960 640` 发现 widget 已经是 640 → **no-op** → View dict 不更新
+7. `UpdateView` 从 View dict 读取 Height=768 → 渲染在 960×768 下进行
+8. FBO 只截取前 640 行 → 几何偏移 ~5×3 像素 → RMSE 从 ~1 跳到 ~38 → 分数 1455
+
+#### Fix (commit 13d2f27)
+
+在 FBO 捕获脚本中，`FBO new` 之后、`FBO begin` 之前，用"高度+1"技巧强制 `View::SetSize` 更新 View dict：
+
+```tcl
+set captureFBO [FBO new $vp_w $vp_h -tex rgb -noclear]
+View::SetSize $vp_w [expr {$vp_h + 1}] $wpath    # 先改成 641，强制触发更新
+View::SetSize $vp_w $vp_h $wpath                   # 再改回 640，View dict 正确
+after 100
+FBO begin $captureFBO
+UpdateView $vno_int                                 # 现在用正确尺寸渲染
+FBO end
+```
+
+这样即使 widget 已经是目标尺寸，`View::SetSize` 也会因为尺寸变化（641→640）而实际执行更新。
+
+#### 当前代码变更汇总
+
+```
+13d2f27 fix(fbo): force View::SetSize with height bump to fix stale dict after camera switch
+ca5e83e fix(fbo): add View::SetSize between FBO new and FBO begin to fix stale View dict
+84b8ee5 revert(fbo): remove View dict sync that triggers CheckViewPort infinite loop
+8894a72 revert(fbo): restore UpdateView $vno_int to fix CheckViewPort infinite loop
+560745d fix(fbo): sync View dict to widget dims before capture (REVERTED — CheckViewPort loop)
+d3b3ee8 fix(fbo): restore UpdateView $vno and remove after 100 (REVERTED — FBO errors + CheckViewPort)
+b599dab fix(apply): add detailed logging to diff-only apply for debugging
+58da553 fix(apply): skip re-applying params that already match IPG-MOVIE state
+6a48765 fix(multi-start): pass config_path to CameraCalibrator
+3609a19 fix(capture): restore one-time ensure_movie_view_size before first FBO capture
+a12f800 revert(orchestrator): restore original prepare chain order
+```
+
+#### 待验证
+
+用户需要连续跑两次多相机标定，验证：
+1. 第一次标定 3 个相机是否正常
+2. 第二次标定 right_rear 初始分数是否回到 ~43（而非 1455）

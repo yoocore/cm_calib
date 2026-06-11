@@ -6958,10 +6958,10 @@ class CameraCalibrator:
 
         body_lines.extend(
             [
-                'update idletasks',
+                'update',
                 'if {![winfo exists .camera.btn.set]} {error "missing widget .camera.btn.set"}',
                 '.camera.btn.set invoke',
-                'update idletasks',
+                'update',
                 'set result {}',
             ]
         )

@@ -7999,15 +7999,21 @@ class CameraCalibrator:
                     actual = current.get(param.name)
                     if actual is None:
                         changed_params.append(param)
+                        print(f"  param {param.name}: not readable from IPG-MOVIE, will apply")
                         continue
                     read_decimals = self.SCRIPT_CONTROL_READ_DECIMALS.get(param.name, param.decimals)
                     if not self._script_control_readback_matches(expected, actual, param.decimals, read_decimals):
                         changed_params.append(param)
+                        print(f"  param {param.name}: differs (expected={expected}, actual={actual}), will apply")
+                    else:
+                        print(f"  param {param.name}: matches ({actual}), skip")
                 if changed_params:
+                    print(f"Applying {len(changed_params)} changed params: {[p.name for p in changed_params]}")
                     self._apply_script_control_params(changed_params)
                 else:
                     print("All parameters already match IPG-MOVIE state, skipping apply")
-            except Exception:
+            except Exception as exc:
+                print(f"Warning: diff-only apply failed ({exc}), falling back to full apply")
                 self._apply_script_control_params(touched_params)
         if touched:
             time.sleep(self.settle_sec)

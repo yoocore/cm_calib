@@ -7731,19 +7731,18 @@ class CameraCalibrator:
             f"raw={raw_w}x{raw_h}, real={ref_w}x{ref_h}"
         )
 
-    def _capture_movie_via_dde_fbo(self, tag: str) -> Path:
+    def _capture_movie_via_dde(self, tag: str) -> Path:
         out_path = self.output_dir / f"{tag}.png"
 
         try:
             import win32ui  # noqa: F401
             import dde  # type: ignore
         except Exception as exc:
-            raise RuntimeError("movie dde_fbo capture requires pywin32 DDE support") from exc
+            raise RuntimeError("movie dde capture requires pywin32 DDE support") from exc
 
         last_runtime_error: Optional[RuntimeError] = None
         attempt_count = 6
         retry_delay = max(self.script_control_settle_sec, 0.2)
-        ref_h, ref_w = self.real_img.shape[:2]
         for attempt in range(attempt_count):
             attempt_no = attempt + 1
             attempt_started = time.perf_counter()
@@ -7761,39 +7760,17 @@ class CameraCalibrator:
                     "set wpath \".view$vno_int\"",
                     "set vp_w [$wpath.gl0 cget -width]",
                     "set vp_h [$wpath.gl0 cget -height]",
-                    f"set ref_w {ref_w}",
-                    f"set ref_h {ref_h}",
-                    "# --- FBO diagnostic: write camera state to file ---",
-                    "catch {",
-                    f"    set _dfh [open \"{(self.output_dir / f'{tag}_fbo_diag.txt').as_posix()}\" w]",
-                    "    puts $_dfh \"viewno=$vno wpath=$wpath vp=${vp_w}x${vp_h} ref=${ref_w}x${ref_h}\"",
-                    "    catch { set _cs .camera.f.camselect; if {[winfo exists $_cs]} { puts $_dfh \"camsel=[$_cs cget -value]\" } }",
-                    "    catch { set _cs2 .camera.car.camselect; if {[winfo exists $_cs2]} { puts $_dfh \"camsel_car=[$_cs2 cget -value]\" } }",
-                    "    catch { foreach {_l _p} {px .camera.svptx py .camera.svpty pz .camera.svptz} { if {[winfo exists $_p]} { puts $_dfh \"$_l=[$_p get]\" } } }",
-                    "    flush $_dfh; close $_dfh",
-                    "}",
-                    "# --- fresh FBO per capture (viewport dims) ---",
-                    "set captureFBO [FBO new $vp_w $vp_h -tex rgb -noclear]",
+                    "# --- render to default framebuffer, read pixels directly ---",
                     "View::SetSize $vp_w [expr {$vp_h + 1}] $wpath",
                     "View::SetSize $vp_w $vp_h $wpath",
                     "after 100",
-                    "set update_rc [catch {",
-                    "    FBO begin $captureFBO",
-                    "    UpdateView $vno_int",
-                    "    FBO end",
-                    "} update_msg]",
-                    "catch {FBO end}",
-                    "if {$update_rc != 0} {",
-                    "    catch {FBO delete $captureFBO}",
-                    "    error $update_msg",
-                    "}",
+                    "UpdateView $vno_int",
                     "catch {image delete probeImg}",
                     "image create photo probeImg -width $vp_w -height $vp_h",
-                    "gl bindframebuffer_read $captureFBO",
+                    "gl bindframebuffer_read 0",
                     "gl readpixels 0 0 probeImg",
                     f'probeImg write "{out_path.as_posix()}" -format png',
                     "catch {gl bindframebuffer_read 0}",
-                    "catch {FBO delete $captureFBO}",
                 ],
             )
             script_path.write_text(script_text, encoding="utf-8")
@@ -7808,7 +7785,7 @@ class CameraCalibrator:
                 conv.ConnectTo(self.script_control_dde_service, self.script_control_dde_topic)
                 conv.Exec(f"RunScript {{{script_path.as_posix()}}}")
             except Exception as exc:
-                attempt_runtime_error = RuntimeError(f"movie dde_fbo RunScript failed: {exc}")
+                attempt_runtime_error = RuntimeError(f"movie dde RunScript failed: {exc}")
             finally:
                 if server is not None:
                     try:
@@ -7824,7 +7801,7 @@ class CameraCalibrator:
                         if self._is_script_control_result_complete(text):
                             rc, msg = self._parse_script_control_result_text(text)
                             if rc != 0:
-                                attempt_runtime_error = RuntimeError(f"movie dde_fbo capture failed: {msg}")
+                                attempt_runtime_error = RuntimeError(f"movie dde capture failed: {msg}")
                                 break
                             self._log_dde_retry_event(
                                 "movie_capture",
@@ -7841,7 +7818,7 @@ class CameraCalibrator:
                     time.sleep(0.05)
 
             if attempt_runtime_error is None:
-                attempt_runtime_error = RuntimeError("Timed out waiting for movie dde_fbo capture result")
+                attempt_runtime_error = RuntimeError("Timed out waiting for movie dde capture result")
             last_runtime_error = attempt_runtime_error
             retry_sleep_sec = retry_delay * attempt_no if attempt < attempt_count - 1 else None
             self._log_dde_retry_event(
@@ -7864,7 +7841,7 @@ class CameraCalibrator:
         if last_runtime_error is not None:
             self._record_dde_operation_failure(last_runtime_error, "movie_capture")
             raise last_runtime_error
-        final_error = RuntimeError("Timed out waiting for movie dde_fbo capture result")
+        final_error = RuntimeError("Timed out waiting for movie dde capture result")
         self._record_dde_operation_failure(final_error, "movie_capture")
         raise final_error
 
@@ -7882,52 +7859,7 @@ class CameraCalibrator:
             except Exception as exc:
                 print(f"Warning: could not set movie view size: {exc}")
             self._movie_view_size_initialized = True
-        return self._capture_movie_via_dde_fbo(tag)
-
-    # --- Shared FBO cleanup ---
-    def _cleanup_shared_fbo(self) -> None:
-        """Delete the shared FBO global in IPG-MOVIE via DDE (best-effort)."""
-        try:
-            import dde as _dde  # type: ignore
-        except Exception:
-            return
-        body = [
-            "catch {FBO delete $::calib_fbo}",
-            "unset -nocomplain ::calib_fbo",
-            "ok",
-        ]
-        for attempt in range(3):
-            result_path = self.output_dir / f"cleanup_fbo_{attempt}.txt"
-            _unlink_if_exists(result_path)
-            script_text = render_dde_execute_script(result_path, "IPG-MOVIE", body)
-            script_path = self.output_dir / f"cleanup_fbo_{attempt}.tcl"
-            script_path.write_text(script_text, encoding="utf-8")
-            srv = None
-            try:
-                srv = _dde.CreateServer()
-                srv.Create(f"CalibFboCleanup.{uuid.uuid4().hex}")
-                conv = _dde.CreateConversation(srv)
-                conv.ConnectTo(self.script_control_dde_service, self.script_control_dde_topic)
-                conv.Exec(f"RunScript {{{script_path.as_posix()}}}")
-            except Exception:
-                pass
-            finally:
-                if srv is not None:
-                    try:
-                        srv.Shutdown()
-                    except Exception:
-                        pass
-            deadline = time.time() + self.script_control_timeout_sec
-            while time.time() < deadline:
-                if result_path.exists():
-                    text = result_path.read_text(encoding="utf-8", errors="replace").strip()
-                    if "ok" in text.lower():
-                        _unlink_if_exists(result_path)
-                        return
-                    break
-                time.sleep(0.1)
-            time.sleep(0.5 * (attempt + 1))
-        print("Warning: could not clean up shared FBO (non-fatal)")
+        return self._capture_movie_via_dde(tag)
 
     def _snapshot_values(self) -> Dict[str, float]:
         return {p.name: p.value for p in self.params}
@@ -11627,20 +11559,17 @@ class CameraCalibrator:
         return result
 
     def optimize(self) -> dict:
-        try:
-            if self.optimizer_mode == "bayesian":
+        if self.optimizer_mode == "bayesian":
+            return self._optimize_bayesian()
+        elif self.optimizer_mode == "auto":
+            if _OPTUNA_AVAILABLE:
+                print("Using Bayesian optimizer (optuna available)")
                 return self._optimize_bayesian()
-            elif self.optimizer_mode == "auto":
-                if _OPTUNA_AVAILABLE:
-                    print("Using Bayesian optimizer (optuna available)")
-                    return self._optimize_bayesian()
-                else:
-                    print("Using coordinate_descent optimizer (optuna not available)")
-                    return self._optimize_coordinate_descent()
             else:
+                print("Using coordinate_descent optimizer (optuna not available)")
                 return self._optimize_coordinate_descent()
-        finally:
-            self._cleanup_shared_fbo()
+        else:
+            return self._optimize_coordinate_descent()
 
 
 def parse_args() -> argparse.Namespace:

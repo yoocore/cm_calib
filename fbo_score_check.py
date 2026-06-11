@@ -64,8 +64,21 @@ def _build_capture_body_lines(capture_path: Path, *, stage: str) -> list[str]:
         'set wpath ".view$vno"',
         "set wi [$wpath.gl0 cget -width]",
         "set he [$wpath.gl0 cget -height]",
-        "set captureFBO [FBO new $wi $he -tex rgb -noclear]",
     ]
+    if stage == "nofbo":
+        body_lines.extend([
+            "UpdateView $vno",
+            "after 100",
+            "catch {image delete probeImg}",
+            "image create photo probeImg -width $wi -height $he",
+            "gl bindframebuffer_read 0",
+            "gl readpixels 0 0 probeImg",
+            f'probeImg write "{capture_path.as_posix()}" -format png',
+            "catch {gl bindframebuffer_read 0}",
+            'puts "captured=${wi}x${he}"',
+        ])
+        return body_lines
+    body_lines.append("set captureFBO [FBO new $wi $he -tex rgb -noclear]")
     if stage == "new":
         body_lines.extend([
             'puts "stage=new;status=ok"',
@@ -93,7 +106,7 @@ def _build_capture_body_lines(capture_path: Path, *, stage: str) -> list[str]:
             "catch {FBO delete $captureFBO}",
         ])
         return body_lines
-    if stage not in {"update", "readpixels"}:
+    if stage not in {"update", "readpixels", "nofbo"}:
         raise ValueError(f"Unsupported FBO capture stage: {stage}")
     if stage == "update":
         body_lines.extend([
@@ -243,10 +256,15 @@ def main():
     msg = state.get("msg", "")
     print(msg)
 
-    # Capture FBO
-    print("\n--- Capturing FBO ---")
+    # Capture FBO (supports --stage nofbo / readpixels / ...)
+    import sys as _sys
+    _capture_stage = "readpixels"
+    for i, _arg in enumerate(_sys.argv[1:], 1):
+        if _arg == "--stage" and i < len(_sys.argv) - 1:
+            _capture_stage = _sys.argv[i + 1]
+    print(f"\n--- Capturing ({_capture_stage}) ---")
     try:
-        capture_path = capture_fbo(OUTPUT_DIR)
+        capture_path = capture_fbo(OUTPUT_DIR, stage=_capture_stage)
         print(f"Captured: {capture_path}")
     except Exception as e:
         print(f"FBO capture failed: {e}")

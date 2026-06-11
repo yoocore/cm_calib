@@ -7761,6 +7761,8 @@ class CameraCalibrator:
                     "set vp_w [$wpath.gl0 cget -width]",
                     "set vp_h [$wpath.gl0 cget -height]",
                     "# --- render to default framebuffer, read pixels directly ---",
+                    "# --- cancel pending UpdateView_TimerProc to avoid CheckViewPort recursion ---",
+                    "after cancel UpdateView_TimerProc",
                     "View::SetSize $vp_w [expr {$vp_h + 1}] $wpath",
                     "View::SetSize $vp_w $vp_h $wpath",
                     "after 100",

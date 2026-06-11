@@ -7774,6 +7774,7 @@ class CameraCalibrator:
                     "}",
                     "# --- fresh FBO per capture (viewport dims) ---",
                     "set captureFBO [FBO new $vp_w $vp_h -tex rgb -noclear]",
+                    "View::SetSize $vp_w $vp_h $wpath",
                     "after 100",
                     "set update_rc [catch {",
                     "    FBO begin $captureFBO",

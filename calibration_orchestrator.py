@@ -268,6 +268,8 @@ def _prepare_runtime_for_camera(
         running_timeout_sec=float(args.bootstrap_running_timeout_sec),
         idle_timeout_sec=float(args.bootstrap_idle_timeout_sec),
     )
+    # --- bootstrap's internal sync_gui re-registers CheckViewPort, so re-disable ---
+    cmctrl.disable_checkviewport_recursion()
     # --- Step 3: Cancel movie's internal UpdateView timer (set by StartSim/StopSim) ---
     cmctrl.cancel_movie_updateview_timer(timeout_sec=10.0)
     # --- Step 4: Ensure IPG-Movie is alive ---

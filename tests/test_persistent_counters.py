@@ -550,7 +550,7 @@ class TestMovieFboCaptureScript:
                 calib._capture_movie_via_dde("probe")
 
         body_lines = captured["body_lines"]
-        fbo_new_index = body_lines.index("    set __captureFBO [FBO new $vp_w $vp_h -tex rgb -noclear]")
+        fbo_new_index = body_lines.index("        set __captureFBO [FBO new $vp_w $vp_h -tex rgb -noclear]")
         pre_fbo_lines = body_lines[:fbo_new_index]
         # after cancel is NOT update — it's safe
         assert "update" not in pre_fbo_lines

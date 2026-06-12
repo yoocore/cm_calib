@@ -238,6 +238,14 @@ def _prepare_runtime_for_camera(
     config_path: Path,
     movie_view_size: tuple[int, int] | None = None,
 ) -> dict[str, Any]:
+    # --- Step 0: Force-sync Movie view size BEFORE any IPG-MOVIE state change ---
+    # Prevents CheckViewPort recursion when sensor activation/TestRun load triggers IPG-MOVIE.
+    if movie_view_size is not None:
+        view_width, view_height = movie_view_size
+        try:
+            cmctrl.ensure_movie_view_size(view_width, view_height, timeout_sec=10.0)
+        except Exception as exc:
+            print(f"Warning: could not sync movie view size (Step 0): {exc}")
     # --- Step 1: Activate sensor & sync TestRun in CarMaker GUI ---
     vehicle_path, vehicle_key = cmctrl.resolve_vehicle_path(project_root, testrun_rel_path)
     activation = cmctrl.activate_single_vehicle_sensor(vehicle_path, camera_name)

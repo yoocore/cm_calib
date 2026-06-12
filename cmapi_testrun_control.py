@@ -1779,7 +1779,8 @@ def ensure_movie_view_size(
                 '} else {',
                 '    set wpath ".view0"',
                 '}',
-                # --- height bump forces View::SetSize to execute (bypasses no-op guard) ---
+                '# --- cancel pending C++ timer, then force sync View dict via height bump ---',
+                'after cancel UpdateView_TimerProc',
                 f"View::SetSize {target_width} [expr {{{target_height} + 1}}] $wpath",
                 f"View::SetSize {target_width} {target_height} $wpath",
                 'update',

@@ -250,7 +250,7 @@ def _prepare_runtime_for_camera(
     vehicle_path, vehicle_key = cmctrl.resolve_vehicle_path(project_root, testrun_rel_path)
     activation = cmctrl.activate_single_vehicle_sensor(vehicle_path, camera_name)
     selected_testrun = cmctrl.sync_gui_testrun_selection(project_root, testrun_rel_path)
-    # --- sync_gui re-initializes IPG-MOVIE (re-registers CheckViewPort), so re-disable ---
+    # --- sync_gui re-initializes IPG-MOVIE (re-registers CheckViewPort), so re-guard ---
     cmctrl.disable_checkviewport_recursion()
     # --- Step 1.5: Sync Movie view size BEFORE bootstrap SIM_START ---
     if movie_view_size is not None:
@@ -268,7 +268,7 @@ def _prepare_runtime_for_camera(
         running_timeout_sec=float(args.bootstrap_running_timeout_sec),
         idle_timeout_sec=float(args.bootstrap_idle_timeout_sec),
     )
-    # --- bootstrap's internal sync_gui re-registers CheckViewPort, so re-disable ---
+    # --- bootstrap's internal sync_gui re-registers CheckViewPort, so re-guard ---
     cmctrl.disable_checkviewport_recursion()
     # --- Step 3: Cancel movie's internal UpdateView timer (set by StartSim/StopSim) ---
     cmctrl.cancel_movie_updateview_timer(timeout_sec=10.0)
@@ -283,7 +283,7 @@ def _prepare_runtime_for_camera(
             project_root=project_root,
             carmaker_pid=carmaker_pid,
         )
-        # --- Movie restart re-registers CheckViewPort, re-disable ---
+        # --- Movie restart re-registers CheckViewPort, re-guard ---
         cmctrl.disable_checkviewport_recursion()
     # --- Step 5: Wait for Movie scene ready ---
     movie_scene = cmctrl.wait_for_movie_scene_ready(
@@ -320,6 +320,9 @@ def _prepare_runtime_for_camera(
             settle_sec=float(args.health_check_settle_sec),
         )
         health_classification = _classify_health_or_raise(health_summary)
+
+    # --- Install delete-trace on CheckViewPort for auto-re-guard on unknown re-registrations ---
+    cmctrl.wrap_checkviewport()
 
     return {
         "vehicle_path": str(vehicle_path),
@@ -370,10 +373,10 @@ def _reuse_existing_runtime_for_camera(
         )
 
     selected_testrun = cmctrl.sync_gui_testrun_selection(project_root, testrun_rel_path)
-    # --- sync_gui re-initializes IPG-MOVIE (re-registers CheckViewPort), so re-disable ---
+    # --- sync_gui re-initializes IPG-MOVIE (re-registers CheckViewPort), so re-guard ---
     cmctrl.disable_checkviewport_recursion()
-    # --- Install persistent View::SetSize trace to auto-sync View() dict (belt-and-suspenders) ---
-    cmctrl.install_view_sync_trace()
+    # --- Install re-entrant guard on CheckViewPort + delete-trace for persistence ---
+    cmctrl.wrap_checkviewport()
     abraxas = cmctrl.ensure_movie_abraxas_enabled(timeout_sec=float(args.health_check_timeout_sec))
     camera_selection = cmctrl.ensure_movie_camera_selected(
         f"CAMERA_RSI-SENSOR Vhcl.{camera_name}",

@@ -1302,19 +1302,85 @@ def cancel_movie_updateview_timer(*, timeout_sec: float = 10.0) -> None:
         print(f"Warning: cancel Movie UpdateView timer failed (non-fatal): {exc}")
 
 
+def wrap_checkviewport(*, timeout_sec: float = 10.0) -> None:
+    """Install a re-entrant guard on IPG-MOVIE's CheckViewPort Tcl proc and
+    a delete-trace to auto-reinstall the guard whenever IPG-MOVIE
+    re-registers the proc via Tcl_Eval.
+
+    The guard renames the original CheckViewPort to CheckViewPort_saved and
+    installs a wrapper that uses a per-widget re-entrant flag to prevent
+    infinite recursion. The 'trace add command CheckViewPort delete' fires
+    on proc re-registration and schedules an 'after 0 ::ReGuardCheckViewPort'
+    to re-wrap the new CheckViewPort before any pending timer fires.
+
+    Idempotent: checks body content for a marker string to detect already-guarded state.
+    Non-fatal on failure.
+    """
+    output_dir = default_output_dir()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        body_lines = [
+            '# --- Define re-guard proc (idempotent, redefinition is safe) ---',
+            'proc ::ReGuardCheckViewPort {} {',
+            '    if {[info commands CheckViewPort] eq ""} { return }',
+            '    set __body [info body CheckViewPort]',
+            '    if {[string first "CheckViewPort_running" $__body] >= 0} { return }',
+            '    catch {rename CheckViewPort_saved {}}',
+            '    catch {rename CheckViewPort CheckViewPort_saved}',
+            '    if {[info commands CheckViewPort] ne ""} { return }',
+            '    proc CheckViewPort {wv} {',
+            '        global CheckViewPort_running',
+            '        if {[info exists CheckViewPort_running($wv)] && $CheckViewPort_running($wv)} { return }',
+            '        set CheckViewPort_running($wv) 1',
+            '        if {[catch {CheckViewPort_saved $wv} err]} {',
+            '            Log::Debug big "CheckViewPort error: $err"',
+            '        }',
+            '        set CheckViewPort_running($wv) 0',
+            '    }',
+            '}',
+            '# --- Define delete trace handler (schedules re-guard after recreation) ---',
+            'proc ::OnCheckViewPortDelete {name op} {',
+            '    catch {after 0 ::ReGuardCheckViewPort}',
+            '}',
+            '# --- Remove stale trace, install new one ---',
+            'catch {trace remove command CheckViewPort delete ::OnCheckViewPortDelete}',
+            'trace add command CheckViewPort delete ::OnCheckViewPortDelete',
+            '# --- Initial guard application ---',
+            '::ReGuardCheckViewPort',
+        ]
+        result = run_check_attempt(
+            name="wrap_checkviewport",
+            service="TclEval",
+            topic="CarMaker",
+            output_dir=output_dir,
+            script_text=render_dde_execute_script(
+                output_dir / "wrap_checkviewport.txt",
+                "IPG-MOVIE",
+                body_lines,
+            ),
+            timeout_sec=timeout_sec,
+        )
+        if not result.get("ok"):
+            print(f"Warning: could not wrap CheckViewPort (non-fatal): {result.get('detail')}")
+        else:
+            print("Wrapped CheckViewPort with re-entrant guard + auto-reinstall delete-trace")
+    except Exception as exc:
+        print(f"Warning: wrap CheckViewPort failed (non-fatal): {exc}")
+
+
 def disable_checkviewport_recursion(*, timeout_sec: float = 10.0) -> None:
-    """Replace IPG-MOVIE's CheckViewPort Tcl proc with a no-op to prevent
-    infinite recursion ('too many nested evaluations') during the entire
-    prepare + capture cycle.
+    """Install a re-entrant guard on IPG-MOVIE's CheckViewPort Tcl proc to prevent
+    infinite recursion ('too many nested evaluations') during the prepare+capture
+    cycle. Unlike wrap_checkviewport(), this does NOT install the delete-trace;
+    call wrap_checkviewport() separately for that.
 
-    CheckViewPort is called by IPG-MOVIE's C++ code whenever UpdateView fires
-    (e.g. during SIM_START, widget resize, or async callbacks). When the View
-    dict is stale (cross-camera switch), CheckViewPort detects a size mismatch,
-    calls View::SetSize (which is a no-op because the widget is already correct),
-    then recurses infinitely.
+    The guard renames the original CheckViewPort to CheckViewPort_saved and
+    installs a wrapper that uses a per-widget re-entrant flag (CheckViewPort_running($wv))
+    to prevent infinite recursion. The original CheckViewPort is still called
+    normally when not re-entering.
 
-    This function renames the original to CheckViewPort_saved and installs a
-    no-op. Call restore_checkviewport() when done to put it back.
+    Idempotent: if CheckViewPort is already guarded (body contains "CheckViewPort_running"),
+    this is a no-op.
 
     Non-fatal on failure: IPG-MOVIE may not be ready yet, or CheckViewPort may
     not exist in this version.
@@ -1331,8 +1397,37 @@ def disable_checkviewport_recursion(*, timeout_sec: float = 10.0) -> None:
                 output_dir / "disable_checkviewport_recursion.txt",
                 "IPG-MOVIE",
                 [
-                    "catch {rename CheckViewPort CheckViewPort_saved}",
-                    "proc CheckViewPort {wv} {}",
+                    '# --- Define re-guard proc if not already defined ---',
+                    'if {[info procs ::ReGuardCheckViewPort] eq ""} {',
+                    '    proc ::ReGuardCheckViewPort {} {',
+                    '        if {[info commands CheckViewPort] eq ""} { return }',
+                    '        set __body [info body CheckViewPort]',
+                    '        if {[string first "CheckViewPort_running" $__body] >= 0} { return }',
+                    '        catch {rename CheckViewPort_saved {}}',
+                    '        catch {rename CheckViewPort CheckViewPort_saved}',
+                    '        if {[info commands CheckViewPort] ne ""} { return }',
+                    '        proc CheckViewPort {wv} {',
+                    '            global CheckViewPort_running',
+                    '            if {[info exists CheckViewPort_running($wv)] && $CheckViewPort_running($wv)} { return }',
+                    '            set CheckViewPort_running($wv) 1',
+                    '            if {[catch {CheckViewPort_saved $wv} err]} {',
+                    '                Log::Debug big "CheckViewPort error: $err"',
+                    '            }',
+                    '            set CheckViewPort_running($wv) 0',
+                    '        }',
+                    '    }',
+                    '}',
+                    '# --- Define delete trace handler ---',
+                    'if {[info procs ::OnCheckViewPortDelete] eq ""} {',
+                    '    proc ::OnCheckViewPortDelete {name op} {',
+                    '        catch {after 0 ::ReGuardCheckViewPort}',
+                    '    }',
+                    '}',
+                    '# --- Install/ensure delete trace ---',
+                    'catch {trace remove command CheckViewPort delete ::OnCheckViewPortDelete}',
+                    'trace add command CheckViewPort delete ::OnCheckViewPortDelete',
+                    '# --- Apply guard ---',
+                    '::ReGuardCheckViewPort',
                 ],
             ),
             timeout_sec=timeout_sec,
@@ -1397,28 +1492,10 @@ def install_view_sync_trace(*, timeout_sec: float = 10.0) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     try:
         body_lines = [
-            '# --- Remove stale trace (idempotent) ---',
-            'catch {trace remove execution View::SetSize leave ::ViewSyncAfterSetSize}',
-            'catch {rename ::ViewSyncAfterSetSize {}}',
-            '# --- Define the dict-sync callback ---',
-            'proc ::ViewSyncAfterSetSize {cmd op argList resultCode result} {',
-            '    if {[info exists ::View(ev.view)]} {',
-            '        set key $::View(ev.view)',
-            '        if {[info exists ::View($key)]} {',
-            '            scan $key %d wno',
-            '            set wpath ".view${wno}"',
-            '            if {[winfo exists $wpath.gl0]} {',
-            '                set actual_w [winfo width $wpath.gl0]',
-            '                set actual_h [winfo height $wpath.gl0]',
-            '                if {$actual_w > 0 && $actual_h > 0} {',
-            '                    set ::View($key) [dict replace $::View($key) Width $actual_w Height $actual_h]',
-            '                }',
-            '            }',
-            '        }',
-            '    }',
-            '}',
-            '# --- Install trace on View::SetSize (C++ command, persists across Tcl_Eval) ---',
-            'trace add execution View::SetSize leave ::ViewSyncAfterSetSize',
+            '# --- install_view_sync_trace is DEPRECATED ---',
+            '# View::SetSize is a Tcl proc, not a C++ command; trace lost on redefinition.',
+            '# CheckViewPort does not read View() dict; the dict-sync trace was irrelevant.',
+            '# Use wrap_checkviewport() instead (re-entrant guard + delete-trace).',
         ]
         result = run_check_attempt(
             name="install_view_sync_trace",
@@ -1456,6 +1533,7 @@ def remove_view_sync_trace(*, timeout_sec: float = 10.0) -> None:
                 output_dir / "remove_view_sync_trace.txt",
                 "IPG-MOVIE",
                 [
+                    '# --- remove_view_sync_trace is DEPRECATED. Still cleans up stale traces. ---',
                     'catch {trace remove execution View::SetSize leave ::ViewSyncAfterSetSize}',
                     'catch {rename ::ViewSyncAfterSetSize {}}',
                 ],
@@ -1960,33 +2038,40 @@ def ensure_movie_view_size(
                 '    # from the dict, detects a discrepancy, calls View::SetSize again,',
                 '    # and enters infinite recursion.',
                 f"    if {{[info exists View($wno)]}} {{ set ::View($wno) [dict replace $::View($wno) Width {target_width} Height {target_height}] }}",
-                '# --- Install persistent trace on View::SetSize to auto-sync View() dict ---',
-                '# after ANY future View::SetSize call (not just this one).',
-                '# The trace on a C++ command persists across Tcl proc redefinitions,',
-                '# so IPG-MOVIE re-registering CheckViewPort does not disable this guard.',
-                'catch {trace remove execution View::SetSize leave ::ViewSyncAfterSetSize}',
-                'catch {rename ::ViewSyncAfterSetSize {}}',
-                'proc ::ViewSyncAfterSetSize {cmd op argList resultCode result} {',
-                '    if {[info exists ::View(ev.view)]} {',
-                '        set key $::View(ev.view)',
-                '        if {[info exists ::View($key)]} {',
-                '            scan $key %d wno',
-                '            set wpath ".view${wno}"',
-                '            if {[winfo exists $wpath.gl0]} {',
-                '                set actual_w [winfo width $wpath.gl0]',
-                '                set actual_h [winfo height $wpath.gl0]',
-                '                if {$actual_w > 0 && $actual_h > 0} {',
-                '                    set ::View($key) [dict replace $::View($key) Width $actual_w Height $actual_h]',
-                '                }',
-                '            }',
-                '        }',
-                '    }',
-                '}',
-                'trace add execution View::SetSize leave ::ViewSyncAfterSetSize',
+
                 '} finally {',
                 '    catch {rename CheckViewPort {}}',
                 '    catch {rename CheckViewPort_saved CheckViewPort}',
                 '}',
+                '# --- Re-guard CheckViewPort (re-entrant wrapper + delete trace) ---',
+                '# Define helper procs once, then apply guard.',
+                'if {[info procs ::ReGuardCheckViewPort] eq ""} {',
+                '    proc ::ReGuardCheckViewPort {} {',
+                '        if {[info commands CheckViewPort] eq ""} { return }',
+                '        set __body [info body CheckViewPort]',
+                '        if {[string first "CheckViewPort_running" $__body] >= 0} { return }',
+                '        catch {rename CheckViewPort_saved {}}',
+                '        catch {rename CheckViewPort CheckViewPort_saved}',
+                '        if {[info commands CheckViewPort] ne ""} { return }',
+                '        proc CheckViewPort {wv} {',
+                '            global CheckViewPort_running',
+                '            if {[info exists CheckViewPort_running($wv)] && $CheckViewPort_running($wv)} { return }',
+                '            set CheckViewPort_running($wv) 1',
+                '            if {[catch {CheckViewPort_saved $wv} err]} {',
+                '                Log::Debug big "CheckViewPort error: $err"',
+                '            }',
+                '            set CheckViewPort_running($wv) 0',
+                '        }',
+                '    }',
+                '}',
+                'if {[info procs ::OnCheckViewPortDelete] eq ""} {',
+                '    proc ::OnCheckViewPortDelete {name op} {',
+                '        catch {after 0 ::ReGuardCheckViewPort}',
+                '    }',
+                '}',
+                'catch {trace remove command CheckViewPort delete ::OnCheckViewPortDelete}',
+                'trace add command CheckViewPort delete ::OnCheckViewPortDelete',
+                '::ReGuardCheckViewPort',
                 'update',
                 'set wi [$wpath.gl0 cget -width]',
                 'set he [$wpath.gl0 cget -height]',

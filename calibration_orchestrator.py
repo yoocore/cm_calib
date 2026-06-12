@@ -368,6 +368,8 @@ def _reuse_existing_runtime_for_camera(
         )
 
     selected_testrun = cmctrl.sync_gui_testrun_selection(project_root, testrun_rel_path)
+    # --- sync_gui re-initializes IPG-MOVIE (re-registers CheckViewPort), so re-disable ---
+    cmctrl.disable_checkviewport_recursion()
     abraxas = cmctrl.ensure_movie_abraxas_enabled(timeout_sec=float(args.health_check_timeout_sec))
     camera_selection = cmctrl.ensure_movie_camera_selected(
         f"CAMERA_RSI-SENSOR Vhcl.{camera_name}",

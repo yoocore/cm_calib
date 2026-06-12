@@ -1773,9 +1773,12 @@ def ensure_movie_view_size(
             output_dir / f"{probe_name}.txt",
             "IPG-MOVIE",
             [
-                'if {![info exists View(ev.view)]} {error "missing View(ev.view)"}',
-                'scan $View(ev.view) %d wno',
-                'set wpath ".view$wno"',
+                'if {[info exists View(ev.view)]} {',
+                '    scan $View(ev.view) %d wno',
+                '    set wpath ".view$wno"',
+                '} else {',
+                '    set wpath ".view0"',
+                '}',
                 # --- height bump forces View::SetSize to execute (bypasses no-op guard) ---
                 f"View::SetSize {target_width} [expr {{{target_height} + 1}}] $wpath",
                 f"View::SetSize {target_width} {target_height} $wpath",

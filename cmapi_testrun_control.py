@@ -1377,6 +1377,99 @@ def restore_checkviewport(*, timeout_sec: float = 10.0) -> None:
         print(f"Warning: restore CheckViewPort failed (non-fatal): {exc}")
 
 
+def install_view_sync_trace(*, timeout_sec: float = 10.0) -> None:
+    """Install a Tcl execution trace on View::SetSize that auto-syncs the View()
+    dict after every View::SetSize call.
+
+    The trace fires when View::SetSize completes, reads the actual widget
+    dimensions, and updates View($key) Width/Height to match. This prevents the
+    mismatch that causes CheckViewPort recursion ('too many nested evaluations')
+    regardless of which code path calls View::SetSize.
+
+    The trace is attached to View::SetSize (a C++ command, not a Tcl proc), so it
+    PERSISTS across IPG-MOVIE re-registering CheckViewPort via Tcl_Eval. This makes
+    it fundamentally more robust than the disable-checkviewport approach which
+    must catch every re-registration point.
+
+    Non-fatal on failure.
+    """
+    output_dir = default_output_dir()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        body_lines = [
+            '# --- Remove stale trace (idempotent) ---',
+            'catch {trace remove execution View::SetSize leave ::ViewSyncAfterSetSize}',
+            'catch {rename ::ViewSyncAfterSetSize {}}',
+            '# --- Define the dict-sync callback ---',
+            'proc ::ViewSyncAfterSetSize {cmd op argList resultCode result} {',
+            '    if {[info exists ::View(ev.view)]} {',
+            '        set key $::View(ev.view)',
+            '        if {[info exists ::View($key)]} {',
+            '            scan $key %d wno',
+            '            set wpath ".view${wno}"',
+            '            if {[winfo exists $wpath.gl0]} {',
+            '                set actual_w [winfo width $wpath.gl0]',
+            '                set actual_h [winfo height $wpath.gl0]',
+            '                if {$actual_w > 0 && $actual_h > 0} {',
+            '                    set ::View($key) [dict replace $::View($key) Width $actual_w Height $actual_h]',
+            '                }',
+            '            }',
+            '        }',
+            '    }',
+            '}',
+            '# --- Install trace on View::SetSize (C++ command, persists across Tcl_Eval) ---',
+            'trace add execution View::SetSize leave ::ViewSyncAfterSetSize',
+        ]
+        result = run_check_attempt(
+            name="install_view_sync_trace",
+            service="TclEval",
+            topic="CarMaker",
+            output_dir=output_dir,
+            script_text=render_dde_execute_script(
+                output_dir / "install_view_sync_trace.txt",
+                "IPG-MOVIE",
+                body_lines,
+            ),
+            timeout_sec=timeout_sec,
+        )
+        if not result.get("ok"):
+            print(f"Warning: could not install View::SetSize trace (non-fatal): {result.get('detail')}")
+        else:
+            print("Installed persistent View::SetSize trace to auto-sync View() dict")
+    except Exception as exc:
+        print(f"Warning: install View::SetSize trace failed (non-fatal): {exc}")
+
+
+def remove_view_sync_trace(*, timeout_sec: float = 10.0) -> None:
+    """Remove the View::SetSize trace and cleanup the callback proc.
+    Non-fatal on failure.
+    """
+    output_dir = default_output_dir()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        result = run_check_attempt(
+            name="remove_view_sync_trace",
+            service="TclEval",
+            topic="CarMaker",
+            output_dir=output_dir,
+            script_text=render_dde_execute_script(
+                output_dir / "remove_view_sync_trace.txt",
+                "IPG-MOVIE",
+                [
+                    'catch {trace remove execution View::SetSize leave ::ViewSyncAfterSetSize}',
+                    'catch {rename ::ViewSyncAfterSetSize {}}',
+                ],
+            ),
+            timeout_sec=timeout_sec,
+        )
+        if not result.get("ok"):
+            print(f"Warning: could not remove View::SetSize trace (non-fatal): {result.get('detail')}")
+        else:
+            print("Removed View::SetSize trace")
+    except Exception as exc:
+        print(f"Warning: remove View::SetSize trace failed (non-fatal): {exc}")
+
+
 async def start_or_reuse_carmaker_for_open_movie(
     cm_install: Path,
     host: str,
@@ -1867,6 +1960,29 @@ def ensure_movie_view_size(
                 '    # from the dict, detects a discrepancy, calls View::SetSize again,',
                 '    # and enters infinite recursion.',
                 f"    if {{[info exists View($wno)]}} {{ set ::View($wno) [dict replace $::View($wno) Width {target_width} Height {target_height}] }}",
+                '# --- Install persistent trace on View::SetSize to auto-sync View() dict ---',
+                '# after ANY future View::SetSize call (not just this one).',
+                '# The trace on a C++ command persists across Tcl proc redefinitions,',
+                '# so IPG-MOVIE re-registering CheckViewPort does not disable this guard.',
+                'catch {trace remove execution View::SetSize leave ::ViewSyncAfterSetSize}',
+                'catch {rename ::ViewSyncAfterSetSize {}}',
+                'proc ::ViewSyncAfterSetSize {cmd op argList resultCode result} {',
+                '    if {[info exists ::View(ev.view)]} {',
+                '        set key $::View(ev.view)',
+                '        if {[info exists ::View($key)]} {',
+                '            scan $key %d wno',
+                '            set wpath ".view${wno}"',
+                '            if {[winfo exists $wpath.gl0]} {',
+                '                set actual_w [winfo width $wpath.gl0]',
+                '                set actual_h [winfo height $wpath.gl0]',
+                '                if {$actual_w > 0 && $actual_h > 0} {',
+                '                    set ::View($key) [dict replace $::View($key) Width $actual_w Height $actual_h]',
+                '                }',
+                '            }',
+                '        }',
+                '    }',
+                '}',
+                'trace add execution View::SetSize leave ::ViewSyncAfterSetSize',
                 '} finally {',
                 '    catch {rename CheckViewPort {}}',
                 '    catch {rename CheckViewPort_saved CheckViewPort}',

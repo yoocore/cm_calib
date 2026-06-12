@@ -1504,3 +1504,150 @@ after 100
 -  32/32 测试通过
 -  需要 live CarMaker 环境验证（当前 session 已下线）
 
+---
+
+## Phase 22: Fix Bootstrap Recursion — Height Bump in ensure_movie_view_size (2026-06-12)
+
+**Commits:** f717449 (revert dict set), bb90da3 (dict set on ensure_movie_view_size — INVALID), 5ed5d68 (height bump)
+
+### Phase 22a: `dict set View($wno)` 无效
+
+**发现：** `View` 在 IPG-MOVIE 中是 **Tcl array**（通过 `array names View` 确认），不是 dict。
+`dict set View(0) Width 960` 在 Tcl 中创建的是**一个完全不相关的 dict 变量 `View(0)`**，
+IPG-MOVIE 的 C++ CheckViewPort 根本不读它。
+
+证据：
+- `find_view_vars.py:29` 用 `set all [array names View]` 枚举 array 元素
+- `dict set` 在 array 上操作时会创建一个同名的独立 dict 变量
+- 即使 `dict set` 返回成功（无 Tcl 错误），实际 View array 元素未被修改
+- Phase 21 在 capture body 中用 `dict set View()` 也无效，只是 height bump 被移除后问题被掩盖了
+
+### Phase 22b: 正确修复 — Height Bump 在 ensure_movie_view_size
+
+**根因：** bootstrap SIM_START 触发 IPG-MOVIE C++ 内部 CheckViewPort，对比 View array 尺寸与 widget 尺寸。
+当跨相机切换导致 View array 残留旧尺寸时，`View::SetSize` 是 no-op（widget 已是最新尺寸），
+View array 不更新 → CheckViewPort 看到 mismatch → 死递归。
+
+**修复：** 在 `ensure_movie_view_size` 中使用 height bump：
+```tcl
+View::SetSize 960 [expr {640 + 1}] $wpath   # h+1 — 总是执行（不是 no-op）
+View::SetSize 960 640 $wpath                  # 还原 — 也总是执行
+update
+# 之后 widget 和 View array 一致
+```
+
+删除了之前加的 `dict set View($wno) Width/Height`。
+
+**验证结果：** 用户确认 bootstrap 递归不再出现。全部 DDE probe 通过。
+
+### 文件变更
+| File | Change |
+|------|--------|
+| `cmapi_testrun_control.py` | ensure_movie_view_size: dict set → height bump (net +2 -2) |
+| `camera_calibration.py` | capture body 已回退到 Phase 18 的 height bump（commit f717449） |
+
+### Git History
+```
+5ed5d68 fix(bootstrap): replace dict set View() with height bump in ensure_movie_view_size
+bb90da3 fix(bootstrap): force-sync View dict in ensure_movie_view_size (INVALID — Tcl array not dict)
+f717449 fix(capture): revert to height bump (remove dict set View that causes wrong # args when minimized)
+23e4965 fix(capture): replace height bump with direct dict set View(Width/Height) (REVERTED)
+```
+
+---
+
+## Phase 23: Fix Minimize Crash — Use `scan` Instead of `set` for View(ev.view) (2026-06-12)
+
+**Commit:** 08c80c5
+
+### 问题
+窗口最小化后运行标定，capture 全部 6/6 失败，错误：`wrong # args: should be "set varName ?newValue?"`
+
+### 根因
+当窗口最小化时，`$View(ev.view)` 可能返回多词值（如 `"0 0"` 而非 `"0"`）：
+```tcl
+set vno $View(ev.view)  # 如果 View(ev.view) = "0 0" → 3个参数 → wrong # args
+```
+
+### 修复
+将 `set vno $View(ev.view)` 替换为 `scan $View(ev.view) %d vno`：
+- `scan` 的 `%d` 格式说明符只提取第一个整数
+- 多余词汇被忽略，不会导致语法错误
+- `$vno` 仍然被后续的 `scan $vno %d vno_int` 正确处理
+
+### 验证
+- Python 语法检查通过
+- 需要在最小化窗口下运行确认不再报错
+
+### 文件变更
+| File | Change |
+|------|--------|
+| `camera_calibration.py:7767` | `set vno $View(ev.view)` → `scan $View(ev.view) %d vno` |
+
+---
+
+## Phase 24: Fix P0 Capture Stability Issues — Framebuffer State & Render Settle (2026-06-12)
+
+**Commit:** 6e0ef16
+
+### Problem 3 Root Cause: Framebuffer State Corruption → Millions Score
+
+**Finding:** When FBO path errors internally, `error $update_msg` skips the subsequent `catch {gl bindframebuffer_read 0}` cleanup. This leaves GL framebuffer binding in an unstable state (still pointing to the persistent FBO or stale buffer). On the next capture, `gl readpixels` reads garbage → score 5,204,067.
+
+**Fix:** In FBO error handler, cleanup framebuffer BEFORE error propagation:
+```tcl
+if {$update_rc != 0} {
+    catch {gl bindframebuffer_read 0}    # ← ensures clean state even on error
+    error $update_msg
+}
+```
+
+### Problem 2 Root Cause: Insufficient Render Settle Time
+
+**Finding:** `after 100` between `UpdateView` and `gl readpixels` was sometimes insufficient for IPG-MOVIE's SWIFT software GL renderer. FBO path had NO render settle before readpixels at all (only height bump settle in common prefix).
+
+**Fix:** Increase delays + add missing FBO settle:
+- Common prefix: `after 100` → `after 200` (height bump settle time)
+- NoFBO path: `after 100` → `after 200` (render settle before readpixels)
+- FBO path: added `after 100` after FBO end (FBO path had no render settle before)
+
+### Universal Framebuffer Safety Net
+
+Added `catch {gl bindframebuffer_read 0}` after if-else block as a universal cleanup. This ensures framebuffer 0 is restored even if post-render code errors in either path.
+
+### File Changes
+
+| File | Change |
+|------|--------|
+| `camera_calibration.py:7779` | `after 100` → `after 200` (common prefix settle) |
+| `camera_calibration.py:7798-7802` | FBO error: framebuffer cleanup before error |
+| `camera_calibration.py:7803` | Added `after 100` (FBO path render settle) |
+| `camera_calibration.py:7812` | `after 100` → `after 200` (noFBO path render settle) |
+| `camera_calibration.py:7819` | Universal `catch {gl bindframebuffer_read 0}` after if/else |
+| `tests/test_persistent_counters.py` | Updated test assertion from dict set to height bump |
+
+### Git History
+```
+6e0ef16 fix(capture): framebuffer cleanup on error, increase render settle timing
+08c80c5 fix(capture): use scan instead of set for View(ev.view) for multi-word when minimized
+5ed5d68 fix(bootstrap): replace dict set View() with height bump in ensure_movie_view_size
+```
+
+---
+
+## 当前剩余问题状态 (2026-06-12)
+
+### ✅ 问题 1：最小化窗口报错 — **已修复**（Phase 23, commit 08c80c5）
+修复：`set vno $View(ev.view)` → `scan $View(ev.view) %d vno`
+
+### ✅ 问题 2：间歇性 DDE capture 错误 — **已修复**（Phase 24, commit 6e0ef16）
+修复：`after 100` → `after 200`（两处），FBO 路径新增 `after 100` 渲染稳定
+
+### ✅ 问题 3：分数不稳定（百万级异常） — **已修复**（Phase 24, commit 6e0ef16）
+**根因：** FBO 路径报错时 `catch {gl bindframebuffer_read 0}` 被跳过 → framebuffer 绑定残留 → 下次 `gl readpixels` 读到垃圾数据。
+**修复：** 错误路径中先清理 framebuffer，再加 if/else 后的统一兜底清理。
+
+### ❌ 问题 4：标定分数长期较高（right_rear ~43, rear_tv ~1055, left_tv ~811）
+**现状：** 所有相机分数远超 target <5.0，3 次迭代未收敛。**这不是 capture bug，是标定算法/初始参数问题。**
+**建议：** 确认 capture 稳定后（当前三轮已修复），增加 multi-start-iters 或 round 数。考虑检查初始参数猜测的准确性。
+

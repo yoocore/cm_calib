@@ -1,8 +1,9 @@
 # IPG-MOVIE Intermittent FBO Failure - Progress Handoff
 
-> Last updated: 2026-06-11
-> Latest commit: 18566e3 fix(fbo): use default framebuffer capture, remove FBO entirely
+> Last updated: 2026-06-12
+> Latest commit: unified persistent FBO (Phase 15) — single persistent FBO path removed dual-mode noFBO/FBO
 > Previous major fix: e0c858b fix(ensure_movie_view_size): remove update idletasks
+
 > Author: Bytes (OpenCode agent)
 
 ---
@@ -1029,3 +1030,128 @@ probeImg write /path/to/output.png -format png
 | `camera_calibration.py` | -94/+17 (net -77): FBO removed, default FB capture |
 | `fbo_score_check.py` | +24: noFBO stage + --stage CLI arg |
 | `_test_nofbo_multi.py` | deleted (investigation test) |
+
+---
+
+## Phase 14b: Dual-mode Capture (noFBO + persistent FBO fallback)
+
+**Commit:** `04213b6` Phase 14b: Dual-mode capture - noFBO (visible) / persistent FBO (minimized)
+
+### 问题
+NoFBO capture 在窗口可见时工作正常，但窗口最小化后台定标时 default framebuffer 不可读，
+导致空白抓图。需要 FBO fallback。
+
+### 方案
+Dual-mode: capture Tcl body 内检测 `wm state` → iconic 时用 persistent FBO，否则用 noFBO：
+
+```tcl
+set _top [winfo toplevel $wpath]
+if {[wm state $_top] eq {iconic}} {
+    # persistent FBO (created once, reused, never deleted)
+    if {![info exists __captureFBO]} {
+        set __captureFBO [FBO new $vp_w $vp_h -tex rgb -noclear]
+    } elseif {$__captureFBO_w != $vp_w || $__captureFBO_h != $vp_h} {
+        catch {FBO delete $__captureFBO}
+        set __captureFBO [FBO new $vp_w $vp_h -tex rgb -noclear]
+    }
+    FBO begin $__captureFBO; UpdateView $vno_int; FBO end
+    gl bindframebuffer_read $__captureFBO; gl readpixels 0 0 probeImg
+} else {
+    # noFBO: render to default framebuffer, read pixels directly
+    UpdateView $vno_int; after 100
+    gl bindframebuffer_read 0; gl readpixels 0 0 probeImg
+}
+```
+
+### 与之前方案的关键区别
+1. **FBO 永不 delete**（除非 viewport 尺寸变了才重建）— 没有 create/delete 循环就不会耗尽 GL FBO 池
+2. **没有 height bump**（`View::SetSize h+1 → h`）— 因为不再依赖于 View dict，直接从 `$wpath.gl0 cget` 读尺寸
+3. **没有 `_cleanup_persistent_fbo()`** — 之前实现有 bug（`RunScript` 传 inline 代码而不是文件路径），
+   且不必要：GL context 销毁时 persistent FBO 自动释放
+4. **不在 ensure_movie_camera_selected 中做 FBO probe** — 避免 GL 状态污染
+
+### 移除的代码
+| 项目 | 原因 |
+|------|------|
+| `_cleanup_shared_fbo()` | 不再需要 cleanup，GL context 销毁时自动释放 |
+| `finally:` 中的 cleanup 调用 | 同上 |
+| `View::SetSize` height bump | 不再需要，直接读 `$wpath.gl0 cget` |
+| `_resize_movie_viewport` (removed earlier) | 已移除的功能 |
+
+---
+
+## Phase 15: Unified Persistent FBO (2026-06-12)
+
+### Problem
+Dual-mode capture（Phase 14b, commit 04213b6）使用 `wm state` 检测窗口状态决定 capture 路径：
+- 窗口可见 → noFBO（default framebuffer）
+- 窗口最小化 → persistent FBO
+
+`wm state` 检测不可靠 — noFBO 在窗口被覆盖、半屏、后台时也产生错误像素。
+用户无法确保 IPG-MOVIE 窗口始终在前台（尤其是多相机自动定标时）。
+
+### 方案
+移除 dual-mode/noFBO 分支，统一使用 persistent FBO 单一路径：
+
+```tcl
+# --- persistent FBO offscreen capture (works regardless of window state) ---
+# cancel pending UpdateView timer to avoid CheckViewPort recursion
+after cancel UpdateView_TimerProc
+# create or reuse persistent FBO
+if {![info exists __captureFBO]} {
+    set __captureFBO [FBO new $vp_w $vp_h -tex rgb -noclear]
+    set __captureFBO_w $vp_w
+    set __captureFBO_h $vp_h
+} elseif {$__captureFBO_w != $vp_w || $__captureFBO_h != $vp_h} {
+    catch {FBO delete $__captureFBO}
+    set __captureFBO [FBO new $vp_w $vp_h -tex rgb -noclear]
+    set __captureFBO_w $vp_w
+    set __captureFBO_h $vp_h
+}
+# render to FBO with proper settling time
+set update_rc [catch {
+    FBO begin $__captureFBO
+    UpdateView $vno_int
+    after 100
+    FBO end
+} update_msg]
+catch {FBO end}
+if {$update_rc != 0} {error $update_msg}
+catch {image delete probeImg}
+image create photo probeImg -width $vp_w -height $vp_h
+gl bindframebuffer_read $__captureFBO
+gl readpixels 0 0 probeImg
+probeImg write "..." -format png
+catch {gl bindframebuffer_read 0}
+```
+
+### 关键变更
+| 项目 | 之前 (Phase 14b) | 现在 (Phase 15) |
+|------|-----------------|-----------------|
+| capture 路径 | dual-mode (noFBO + FBO) | 统一 persistent FBO |
+| 窗口状态检测 | `wm state` if/else | 无 — 始终 FBO |
+| `UpdateView_TimerProc` 取消 | 无 | `after cancel UpdateView_TimerProc` |
+| `after 100` 位置 | 仅在 noFBO 路径 | 在 `UpdateView` 后、`FBO end` 前（FBO 路径也有） |
+
+### 为什么这些变更正确
+1. **FBO 永不 delete** — 创建后复用直到 viewport 尺寸变化，避免 SWIFT GL 驱动的 FBO 池耗尽
+2. **`after cancel UpdateView_TimerProc`** — 防止 `UpdateView_TimerProc` 在 capture 期间触发，
+   避免 CheckViewPort → UpdateView 递归（此逻辑在 04213b6 的 dual-mode 重写中被丢失）
+3. **`after 100` 在 FBO end 之前** — 保证 FBO 渲染完成后再 `gl readpixels`，
+   之前 minimized-FBO 路径没有这个延迟，可能在部分渲染的 FBO 上读取
+4. **尺寸从 widget 读取** — `$wpath.gl0 cget -width/-height` 而不是 View dict，避免 stale dict 问题
+
+### 移除的代码
+| 项目 | 原因 |
+|------|------|
+| `wm state $_top` 检测 | 不再需要分支 |
+| noFBO 分支（`gl bindframebuffer_read 0` 路径） | 统一使用 FBO |
+| `set _top [winfo toplevel $wpath]` | FBO 路径不需要窗口引用 |
+
+### 文件变更
+| File | Diff |
+|------|------|
+| `camera_calibration.py:7763-7791` | dual-mode → unified persistent FBO (-34/+25) |
+
+### 验证
+需要在 live CarMaker/IPG-MOVIE 环境下测试 5 次连续定标运行（三个相机全部通过）。

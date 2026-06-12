@@ -1,7 +1,7 @@
 # IPG-MOVIE Intermittent FBO Failure - Progress Handoff
 
 > Last updated: 2026-06-12
-> Latest commit: a02262e fix(orchestrator): cancel UpdateView_TimerProc after bootstrap (Phase 19 — INEFFECTIVE)
+> Latest commit: 09da9e6 fix(orchestrator): sync movie view size before bootstrap to prevent CheckViewPort recursion
 > Previous major fix: e0c858b fix(ensure_movie_view_size): remove update idletasks
 
 > Author: Bytes (OpenCode agent)
@@ -1366,4 +1366,49 @@ if {[wm state] eq {iconic}} {  # dual-mode: FBO / noFBO
 ```
 **Scene init (SIM_START 时)** — 未修复 ❌
 `after cancel UpdateView_TimerProc` 对 C++ 内部回调无效。错误在场景初始化时已经发生。
+
+---
+
+## Phase 20: Sync View Dict Before SIM_START — Fix CheckViewPort Recursion (2026-06-12)
+
+**Commit:** 09da9e6
+
+### Problem
+Phase 19 确认 `after cancel UpdateView_TimerProc` 对 C++ 内部回调无效。
+CheckViewPort 递归的根本原因是 **SIM_START 时 IPG-MOVIE 内部调 UpdateView 时 View dict 与 widget 尺寸不一致**。
+
+### Root Cause（修正后）
+```
+跨相机切换 → View dict 残留上一个相机的 Height（如 left_tv→right_rear: 768→640）
+→ SIM_START (bootstrap) → IPG-MOVIE C++ 内部调 UpdateView → UpdateView_TimerProc (C++)
+→ CheckViewPort 检测 View dict Height ≠ widget Height → 递归 → too many nested evaluations
+```
+此前 `ensure_movie_view_size` 在 Step 5 调用，在 bootstrap Step 2 的 SIM_START 之后，来不及。
+
+### Fix
+在 `_prepare_runtime_for_camera()` 中，在 **Step 2 (bootstrap) 之前** 调用 `ensure_movie_view_size`：
+
+```python
+# calibration_orchestrator.py:245-253
+# --- Step 1.5: Sync Movie view size BEFORE bootstrap SIM_START ---
+if movie_view_size is not None:
+    view_width, view_height = movie_view_size
+    try:
+        cmctrl.ensure_movie_view_size(view_width, view_height, timeout_sec=10.0)
+    except Exception as exc:
+        # Non-fatal: Movie may not have View(ev.view) yet before bootstrap;
+        # Step 5 will re-apply after Movie is fully ready
+        print(f"Warning: could not sync movie view size before bootstrap: {exc}")
+```
+
+`ensure_movie_view_size` 发送 `View::SetSize`（同时改 widget 和 View dict），不调 UpdateView，安全。
+
+### 防御纵深
+- **Step 1.5**（新）：bootstrap 之前尝试同步 View dict，非致命（失败则 Step 5 兜底）
+- **Step 5**（已有）：bootstrap 后 `wait_for_movie_scene_ready` 完成后再次同步
+- **capture body**（已有）：`after cancel UpdateView_TimerProc` + `View::SetSize` height bump + `after 100` 保护 capture 自身
+
+### 验证
+- 单元测试 32/32 passed
+- 需要在 live CarMaker 下验证 SIM_START 后 KEL 日志不再出现 `UpdateView_TimerProc call error`
 

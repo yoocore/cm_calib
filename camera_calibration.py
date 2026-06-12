@@ -7764,7 +7764,7 @@ class CameraCalibrator:
                 [
                     "# --- diagnostic: log View() before any set that might fail with multi-word return ---",
                     "puts $__copilot_remote_out \"DIAG_PRE: View(ev.view)='$View(ev.view)'\"",
-                    "set vno $View(ev.view)",
+                    "scan $View(ev.view) %d vno",
                     "scan $vno %d vno_int",
                     "set wpath \".view$vno_int\"",
                     "set vp_w [$wpath.gl0 cget -width]",

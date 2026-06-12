@@ -160,3 +160,31 @@ class TestMovieEventPumpMitigations:
 
         with pytest.raises(RuntimeError, match="ABRAXAS did not stay enabled"):
             cmctrl.ensure_movie_abraxas_enabled()
+
+
+class TestCheckViewPortRecursionGuard:
+    def test_disable_sends_rename_to_noop(self, cmctrl, monkeypatch, tmp_path):
+        captured = _capture_body_lines(monkeypatch, cmctrl, tmp_path, "ok")
+        cmctrl.disable_checkviewport_recursion()
+        body_lines = captured["body_lines"]
+        assert "catch {rename CheckViewPort CheckViewPort_saved}" in body_lines
+        assert "proc CheckViewPort {wv} {}" in body_lines
+
+    def test_restore_sends_rename_back(self, cmctrl, monkeypatch, tmp_path):
+        captured = _capture_body_lines(monkeypatch, cmctrl, tmp_path, "ok")
+        cmctrl.restore_checkviewport()
+        body_lines = captured["body_lines"]
+        assert "catch {rename CheckViewPort {}}" in body_lines
+        assert "catch {rename CheckViewPort_saved CheckViewPort}" in body_lines
+
+    def test_disable_is_non_fatal_on_dde_failure(self, cmctrl, monkeypatch, tmp_path):
+        monkeypatch.setattr(cmctrl, "default_output_dir", lambda: tmp_path)
+        monkeypatch.setattr(cmctrl, "render_dde_execute_script", lambda *a, **kw: "script")
+        monkeypatch.setattr(cmctrl, "run_check_attempt", lambda *a, **kw: {"ok": False, "detail": "timeout"})
+        cmctrl.disable_checkviewport_recursion()
+
+    def test_restore_is_non_fatal_on_dde_failure(self, cmctrl, monkeypatch, tmp_path):
+        monkeypatch.setattr(cmctrl, "default_output_dir", lambda: tmp_path)
+        monkeypatch.setattr(cmctrl, "render_dde_execute_script", lambda *a, **kw: "script")
+        monkeypatch.setattr(cmctrl, "run_check_attempt", lambda *a, **kw: {"ok": False, "detail": "timeout"})
+        cmctrl.restore_checkviewport()

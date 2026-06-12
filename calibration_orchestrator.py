@@ -527,39 +527,46 @@ def main() -> None:
             config_path = _resolve_config_path(config_dir, camera_name)
             movie_view_size = _load_movie_view_size(config_path)
             _emit_event(task_id, "camera_prepare_started", camera=camera_name, config_path=str(config_path))
-            if camera_name == cameras[0] and args.skip_prepare_for_first_camera:
-                runtime_state = _reuse_existing_runtime_for_camera(
-                    args,
-                    project_root,
-                    testrun_rel_path,
-                    camera_name,
-                    config_path,
+            # --- Disable CheckViewPort recursion for entire prepare+capture cycle ---
+            # Prevents "too many nested evaluations" during SIM_START, widget resize,
+            # and async C++ callbacks that fire between our individual DDE calls.
+            cmctrl.disable_checkviewport_recursion()
+            try:
+                if camera_name == cameras[0] and args.skip_prepare_for_first_camera:
+                    runtime_state = _reuse_existing_runtime_for_camera(
+                        args,
+                        project_root,
+                        testrun_rel_path,
+                        camera_name,
+                        config_path,
+                    )
+                else:
+                    runtime_state = _prepare_runtime_for_camera(
+                        args,
+                        project_root,
+                        testrun_rel_path,
+                        camera_name,
+                        config_path,
+                        movie_view_size=movie_view_size,
+                    )
+                _emit_event(
+                    task_id,
+                    "camera_prepare_finished",
+                    camera=camera_name,
+                    selected_sensor=runtime_state["activation"]["selected_sensor_name"],
+                    vehicle_path=runtime_state["vehicle_path"],
+                    carmaker_pid=runtime_state["carmaker_pid"],
+                    reused_existing_runtime=bool(runtime_state.get("reused_existing_runtime")),
                 )
-            else:
-                runtime_state = _prepare_runtime_for_camera(
-                    args,
-                    project_root,
-                    testrun_rel_path,
-                    camera_name,
-                    config_path,
-                    movie_view_size=movie_view_size,
-                )
-            _emit_event(
-                task_id,
-                "camera_prepare_finished",
-                camera=camera_name,
-                selected_sensor=runtime_state["activation"]["selected_sensor_name"],
-                vehicle_path=runtime_state["vehicle_path"],
-                carmaker_pid=runtime_state["carmaker_pid"],
-                reused_existing_runtime=bool(runtime_state.get("reused_existing_runtime")),
-            )
 
-            calibration_summary = _run_single_camera_process(
-                task_id=task_id,
-                camera_name=camera_name,
-                command=_build_camera_command(args, config_path),
-                working_dir=Path(__file__).resolve().parent,
-            )
+                calibration_summary = _run_single_camera_process(
+                    task_id=task_id,
+                    camera_name=camera_name,
+                    command=_build_camera_command(args, config_path),
+                    working_dir=Path(__file__).resolve().parent,
+                )
+            finally:
+                cmctrl.restore_checkviewport()
             per_camera_results.append(
                 {
                     "camera": camera_name,

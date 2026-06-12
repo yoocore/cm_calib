@@ -1302,6 +1302,81 @@ def cancel_movie_updateview_timer(*, timeout_sec: float = 10.0) -> None:
         print(f"Warning: cancel Movie UpdateView timer failed (non-fatal): {exc}")
 
 
+def disable_checkviewport_recursion(*, timeout_sec: float = 10.0) -> None:
+    """Replace IPG-MOVIE's CheckViewPort Tcl proc with a no-op to prevent
+    infinite recursion ('too many nested evaluations') during the entire
+    prepare + capture cycle.
+
+    CheckViewPort is called by IPG-MOVIE's C++ code whenever UpdateView fires
+    (e.g. during SIM_START, widget resize, or async callbacks). When the View
+    dict is stale (cross-camera switch), CheckViewPort detects a size mismatch,
+    calls View::SetSize (which is a no-op because the widget is already correct),
+    then recurses infinitely.
+
+    This function renames the original to CheckViewPort_saved and installs a
+    no-op. Call restore_checkviewport() when done to put it back.
+
+    Non-fatal on failure: IPG-MOVIE may not be ready yet, or CheckViewPort may
+    not exist in this version.
+    """
+    output_dir = default_output_dir()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        result = run_check_attempt(
+            name="disable_checkviewport_recursion",
+            service="TclEval",
+            topic="CarMaker",
+            output_dir=output_dir,
+            script_text=render_dde_execute_script(
+                output_dir / "disable_checkviewport_recursion.txt",
+                "IPG-MOVIE",
+                [
+                    "catch {rename CheckViewPort CheckViewPort_saved}",
+                    "proc CheckViewPort {wv} {}",
+                ],
+            ),
+            timeout_sec=timeout_sec,
+        )
+        if not result.get("ok"):
+            print(f"Warning: could not disable CheckViewPort (non-fatal): {result.get('detail')}")
+        else:
+            print("Disabled CheckViewPort recursion guard for prepare+capture cycle")
+    except Exception as exc:
+        print(f"Warning: disable CheckViewPort failed (non-fatal): {exc}")
+
+
+def restore_checkviewport(*, timeout_sec: float = 10.0) -> None:
+    """Restore IPG-MOVIE's original CheckViewPort proc after the prepare+capture
+    cycle. Undoes disable_checkviewport_recursion().
+
+    Non-fatal on failure.
+    """
+    output_dir = default_output_dir()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        result = run_check_attempt(
+            name="restore_checkviewport",
+            service="TclEval",
+            topic="CarMaker",
+            output_dir=output_dir,
+            script_text=render_dde_execute_script(
+                output_dir / "restore_checkviewport.txt",
+                "IPG-MOVIE",
+                [
+                    "catch {rename CheckViewPort {}}",
+                    "catch {rename CheckViewPort_saved CheckViewPort}",
+                ],
+            ),
+            timeout_sec=timeout_sec,
+        )
+        if not result.get("ok"):
+            print(f"Warning: could not restore CheckViewPort (non-fatal): {result.get('detail')}")
+        else:
+            print("Restored CheckViewPort to original implementation")
+    except Exception as exc:
+        print(f"Warning: restore CheckViewPort failed (non-fatal): {exc}")
+
+
 async def start_or_reuse_carmaker_for_open_movie(
     cm_install: Path,
     host: str,

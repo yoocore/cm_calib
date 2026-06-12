@@ -7771,6 +7771,9 @@ class CameraCalibrator:
                     "set vp_h [$wpath.gl0 cget -height]",
                     "# --- diagnostic: log raw Tcl values for debugging ---",
                     "puts $__copilot_remote_out \"DIAG: vno='$vno' wpath='$wpath' vp_w='$vp_w' vp_h='$vp_h'\"",
+                    "# --- diagnostic: log wm state before branching ---",
+                    "set _top [winfo toplevel $wpath]",
+                    "puts $__copilot_remote_out \"DIAG_WM_STATE: [wm state $_top]\"",
                     "# --- Temporarily replace CheckViewPort with no-op during height bump ---",
                     "try {",
                     "    catch {rename CheckViewPort CheckViewPort_saved}",
@@ -7782,7 +7785,6 @@ class CameraCalibrator:
                     "    catch {rename CheckViewPort_saved CheckViewPort}",
                     "}",
                     "after 200",
-                    "set _top [winfo toplevel $wpath]",
                     "if {[wm state $_top] eq {iconic}} {",
                     "    # --- window minimized: use persistent FBO (offscreen) ---",
                     "    if {![info exists __captureFBO]} {",
@@ -7801,7 +7803,9 @@ class CameraCalibrator:
                     "        FBO end",
                     "    } update_msg]",
                     "    catch {FBO end}",
+                    "    puts $__copilot_remote_out \"DIAG_BRANCH: iconic\"",
                     "    if {$update_rc != 0} {",
+                    "        puts $__copilot_remote_out \"DIAG_ERROR: $update_msg\"",
                     "        catch {gl bindframebuffer_read 0}",
                     "        catch {FBO delete $__captureFBO}",
                     "        catch {unset __captureFBO}",
@@ -7815,12 +7819,14 @@ class CameraCalibrator:
                     "        gl readpixels 0 0 probeImg",
                     "    } read_msg]",
                     "    if {$read_rc != 0} {",
+                    "        puts $__copilot_remote_out \"DIAG_ERROR: $read_msg\"",
                     "        catch {FBO delete $__captureFBO}",
                     "        catch {unset __captureFBO}",
                     "        error $read_msg",
                     "    }",
                     f'probeImg write "{out_path.as_posix()}" -format png',
                     "} else {",
+                    "    puts $__copilot_remote_out \"DIAG_BRANCH: normal\"",
                     "    # --- window visible: noFBO, render to default framebuffer ---",
                     "    UpdateView $vno_int",
                     "    after 200",
@@ -7890,8 +7896,9 @@ class CameraCalibrator:
                 detail=attempt_runtime_error,
                 retry_sleep_sec=retry_sleep_sec,
             )
-            _unlink_if_exists(script_path)
-            _unlink_if_exists(result_path)
+            # Keep files for debugging when capture fails
+            # _unlink_if_exists(script_path)
+            # _unlink_if_exists(result_path)
             if retry_sleep_sec is not None:
                 if self._runtime_error_needs_dde_recovery_probe(attempt_runtime_error):
                     if self._wait_for_dde_service_recovery():

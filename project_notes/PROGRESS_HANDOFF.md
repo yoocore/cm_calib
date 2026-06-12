@@ -1,7 +1,7 @@
 # IPG-MOVIE Intermittent FBO Failure - Progress Handoff
 
 > Last updated: 2026-06-12
-> Latest commit: Phase 16 — improved dual-mode (after cancel + after 100 in both paths)
+> Latest commit: 987b71b fix(capture): restore View::SetSize height bump to prevent stale View dict CheckViewPort recursion
 > Previous major fix: e0c858b fix(ensure_movie_view_size): remove update idletasks
 
 > Author: Bytes (OpenCode agent)
@@ -1138,3 +1138,45 @@ df5b2cc fix(capture): unified persistent FBO (REVERTED — laptop screen fails)
 - 单元测试 31/31 passed
 - 笔记本屏幕上 orchestration 运行 1 轮（right_rear → rear_tv → left_tv）正常
 - 扩展显示器上需要额外验证
+
+---
+
+## Phase 17: Restore Height Bump — Fix CheckViewPort Recursion (2026-06-12)
+
+**Commit:** 987b71b
+
+### Problem
+CheckViewPort "too many nested evaluations" 频繁出现。
+
+### Root Cause
+Phase 14b 错误地移除了 height bump trick（`View::SetSize h+1 → h`），理由是
+"尺寸从 widget cget 读取，不再需要 View dict"。但 `UpdateView` 内部仍然读取 View dict。
+
+多相机切换后，View dict 保留上一个相机的 Height（如 left_tv 的 768），
+当前 widget 已是新相机的 640。`UpdateView` 调用时，IPG-MOVIE 内部的 `CheckViewPort`
+检测到 View dict Height ≠ widget Height → 递归调用 `UpdateView` → too many nested evaluations。
+
+### Fix
+在 `after cancel UpdateView_TimerProc` 之后加入 height bump：
+
+```tcl
+after cancel UpdateView_TimerProc  # cancel pending timer (prevented recursion during height bump itself)
+View::SetSize $vp_w [expr {$vp_h + 1}] $wpath  # set to h+1, force View dict update
+View::SetSize $vp_w $vp_h $wpath              # restore h, View dict now correct
+# then dual-mode if/else with UpdateView...
+```
+
+### 为什么这次修复是对的
+1. `after cancel UpdateView_TimerProc` **已经存在**（Phase 16）— 防止 height bump 期间 pending timer 触发 CheckViewPort
+2. height bump **强制** View::SetSize 实际执行（就算 widget 已经是目标尺寸，h+1 也会触发更新）
+3. 之后 View dict 和 widget 一致，`UpdateView` 不再触发 CheckViewPort 递归
+
+### 文件变更
+| File | Change |
+|------|--------|
+| `camera_calibration.py:7763-7769` | 加入 height bump（2 行）在 after cancel 之后、if/else 之前 |
+| `tests/test_persistent_counters.py` | 新增 `test_capture_movie_has_height_bump_before_update_view` |
+
+### 验证
+- 单元测试 32/32 passed（新增 1 个测试验证 height bump 存在且顺序正确）
+- 需要在 live CarMaker 环境下验证 CheckViewPort 错误不再出现

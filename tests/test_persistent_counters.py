@@ -562,3 +562,31 @@ class TestMovieFboCaptureScript:
         assert any("FBO end" in l for l in body_lines)
         assert any("after 100" in l for l in body_lines)
         assert any("UpdateView $vno_int" in l for l in body_lines)
+
+    def test_capture_movie_has_height_bump_before_update_view(self, tmp_path):
+        """Verify View::SetSize height bump is present to prevent stale View dict CheckViewPort recursion."""
+        cfg = _make_minimal_cfg(tmp_path)
+        with patch.object(CameraCalibrator, "_materialize_custom_maker_templates"):
+            with patch.object(CameraCalibrator, "_load_custom_templates", return_value={}):
+                calib = CameraCalibrator(cfg)
+
+        captured = {}
+
+        def _capture_script(_result_path, _target_topic, body_lines, **_kwargs):
+            captured["body_lines"] = list(body_lines)
+            raise RuntimeError("stop after capture")
+
+        with patch("camera_calibration.render_dde_execute_script", side_effect=_capture_script):
+            with pytest.raises(RuntimeError, match="stop after capture"):
+                calib._capture_movie_via_dde("probe")
+
+        body_lines = captured["body_lines"]
+        # height bump: View::SetSize h+1 then h, before FBO new
+        height_bump_1 = [l for l in body_lines if "View::SetSize $vp_w [expr {$vp_h + 1}]" in l]
+        height_bump_2 = [l for l in body_lines if "View::SetSize $vp_w $vp_h $wpath" in l]
+        assert len(height_bump_1) == 1, f"Expected 1 height+1 line, got {len(height_bump_1)}"
+        assert len(height_bump_2) == 1, f"Expected 1 height-restore line, got {len(height_bump_2)}"
+        # after cancel must come BEFORE height bump
+        cancel_idx = next(i for i, l in enumerate(body_lines) if "after cancel UpdateView_TimerProc" in l)
+        bump_idx = next(i for i, l in enumerate(body_lines) if "View::SetSize $vp_w [expr {$vp_h + 1}]" in l)
+        assert cancel_idx < bump_idx, "after cancel must come before height bump"

@@ -1682,6 +1682,97 @@ Step 2 (SIM_START) 触发 IPG-MOVIE 内部 CheckViewPort → View dict 未被同
 
 ---
 
+## Phase 26: Global CheckViewPort Disable — Fix Recursion Across Entire Prepare+Capture Cycle (2026-06-12)
+
+**Commit:** 00cc01b
+
+### Problem
+
+即使 Phase 22/25 在 `ensure_movie_view_size` 和 capture body 中分别加了 `rename CheckViewPort` 保护，
+用户仍然频繁看到 `ERROR: too many nested evaluations (infinite loop?)` + `CheckViewPort` 递归栈。
+
+### Root Cause
+
+`rename CheckViewPort` 只在**单个 DDE execute 内**有效。DDE 返回后 CheckViewPort 立即恢复原状。
+
+但 `CheckViewPort` 的触发来源不仅限于我们的 DDE 调用：
+
+```
+SIM_START (Step 2, 通过 CarMaker API 触发，不是 DDE 到 IPG-MOVIE)
+  → IPG-MOVIE C++ 内部调 UpdateView
+    → CheckViewPort（此时已恢复原状！）
+      → View dict Height ≠ widget Height
+      → 递归 → too many nested evaluations
+```
+
+同理，`ensure_movie_abraxas_enabled`、`ensure_movie_camera_selected`、`ensure_movie_camera_widgets`、
+`ensure_movie_camera_dialogs_normal` 等 prepare helpers 中的 `update`/`update idletasks`
+也可能在各自的 DDE execute 内触发 CheckViewPort（这些 helper 没有 rename 保护）。
+
+**核心问题**：per-call rename 只保护了 2 个点（ensure_movie_view_size + capture body），
+但 CheckViewPort 可以在 prepare+capture 周期的**任何时刻**被 C++ 回调或事件处理触发。
+
+### Fix
+
+在 `calibration_orchestrator.py` 的每个相机 prepare + capture 周期外包裹全局 disable/restore：
+
+```python
+# calibration_orchestrator.py:529-567
+cmctrl.disable_checkviewport_recursion()  # 全局 disable
+try:
+    runtime_state = _prepare_runtime_for_camera(...)  # Steps 0-8
+    calibration_summary = _run_single_camera_process(...)  # capture + optimize
+finally:
+    cmctrl.restore_checkviewport()  # 恢复
+```
+
+**新增函数（cmapi_testrun_control.py）：**
+
+| 函数 | 作用 |
+|------|------|
+| `disable_checkviewport_recursion()` | DDE → IPG-MOVIE: `rename CheckViewPort CheckViewPort_saved` + `proc CheckViewPort {wv} {}` |
+| `restore_checkviewport()` | DDE → IPG-MOVIE: `rename CheckViewPort {}` + `rename CheckViewPort_saved CheckViewPort` |
+
+两个函数均为非致命（失败时只打 warn），与 `cancel_movie_updateview_timer` 同模式。
+
+### 与之前方案的关键区别
+
+| 方案 | 保护范围 | 是否覆盖 SIM_START | 是否覆盖 prepare helpers |
+|------|---------|-------------------|------------------------|
+| Phase 22: per-call rename in ensure_movie_view_size | 单个 DDE execute | ❌ | ❌ |
+| Phase 25: per-call rename in capture body | 单个 DDE execute | ❌ | ❌ |
+| **Phase 26: global disable/restore** | **整个 prepare+capture 周期** | **✅** | **✅** |
+
+### 防御纵深
+
+- **全局 disable**（Phase 26）：覆盖 SIM_START、所有 prepare helpers、capture 全周期
+- **per-call rename**（Phase 22/25）：仍保留在 ensure_movie_view_size 和 capture body 中，作为兜底
+  （如果全局 disable 失败，per-call rename 仍保护关键操作）
+- **height bump**（Phase 22）：仍保留在 ensure_movie_view_size 中，确保 View dict 与 widget 一致
+
+### 文件变更
+
+| File | Change |
+|------|--------|
+| `cmapi_testrun_control.py` | 新增 `disable_checkviewport_recursion()` + `restore_checkviewport()` |
+| `calibration_orchestrator.py` | 每个相机周期包裹 `disable` / `restore`（try/finally） |
+| `tests/test_cmapi_testrun_control.py` | 新增 `TestCheckViewPortRecursionGuard`（4 个测试） |
+
+### 验证
+
+- 36/36 测试通过（新增 4 个）
+- 需要在 live CarMaker 环境下验证 KEL 日志不再出现 `UpdateView_TimerProc call error: too many nested evaluations`
+
+### Git History
+
+```
+00cc01b fix(bootstrap): globally disable CheckViewPort during entire prepare+capture cycle
+dfa96a9 fix(bootstrap): temporarily replace CheckViewPort with no-op during height bump
+da042d7 fix(bootstrap): add after cancel + Step 0 sync before any IPG-MOVIE activation
+```
+
+---
+
 ## 当前剩余问题状态 (2026-06-12)
 
 ### ✅ 问题 1：最小化窗口报错 — **已修复**（Phase 23, commit 08c80c5）
@@ -1693,6 +1784,10 @@ Step 2 (SIM_START) 触发 IPG-MOVIE 内部 CheckViewPort → View dict 未被同
 ### ✅ 问题 3：分数不稳定（百万级异常） — **已修复**（Phase 24, commit 6e0ef16）
 **根因：** FBO 路径报错时 `catch {gl bindframebuffer_read 0}` 被跳过 → framebuffer 绑定残留 → 下次 `gl readpixels` 读到垃圾数据。
 **修复：** 错误路径中先清理 framebuffer，再加 if/else 后的统一兜底清理。
+
+### ✅ 问题 5：CheckViewPort 递归 "too many nested evaluations" — **已修复**（Phase 26, commit 00cc01b）
+**根因：** per-call `rename CheckViewPort` 只保护单个 DDE execute，SIM_START 和 C++ 异步回调在 DDE 调用之间触发递归。
+**修复：** 在整个 prepare+capture 周期全局 disable CheckViewPort（`rename` → no-op），finally 块恢复。
 
 ### ❌ 问题 4：标定分数长期较高（right_rear ~43, rear_tv ~1055, left_tv ~811）
 **现状：** 所有相机分数远超 target <5.0，3 次迭代未收敛。**这不是 capture bug，是标定算法/初始参数问题。**

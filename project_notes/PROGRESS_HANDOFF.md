@@ -1,7 +1,7 @@
 # IPG-MOVIE Intermittent FBO Failure - Progress Handoff
 
-> Last updated: 2026-06-12
-> Latest commit: 23e4965 fix(capture): replace height bump with direct dict set View(Width/Height)
+> Last updated: 2026-06-13
+> Latest commit: e5c230b fix(bootstrap): sync Tcl View() dict after height bump to prevent CheckViewPort recursion
 > Previous major fix: e0c858b fix(ensure_movie_view_size): remove update idletasks
 
 > Author: Bytes (OpenCode agent)
@@ -1785,9 +1785,29 @@ da042d7 fix(bootstrap): add after cancel + Step 0 sync before any IPG-MOVIE acti
 **根因：** FBO 路径报错时 `catch {gl bindframebuffer_read 0}` 被跳过 → framebuffer 绑定残留 → 下次 `gl readpixels` 读到垃圾数据。
 **修复：** 错误路径中先清理 framebuffer，再加 if/else 后的统一兜底清理。
 
-### ✅ 问题 5：CheckViewPort 递归 "too many nested evaluations" — **已修复**（Phase 26, commit 00cc01b）
-**根因：** per-call `rename CheckViewPort` 只保护单个 DDE execute，SIM_START 和 C++ 异步回调在 DDE 调用之间触发递归。
-**修复：** 在整个 prepare+capture 周期全局 disable CheckViewPort（`rename` → no-op），finally 块恢复。
+### ✅ 问题 5：CheckViewPort 递归 "too many nested evaluations" — **已修复**（Phase 27, commits d7fdad6 / cfc828a / e5c230b）
+**根因：** `View::SetSize` 只更新 C++ 内部状态和 OpenGL widget 实际大小，但**从不更新 Tcl 侧的 `View()` 字典**。CheckViewPort 读取的是 `$::View($key)` 字典。之后 CheckViewPort 被触发（通过 C++ 定时器、StartSim、或 sensor 激活）时，读到字典中的旧 Width/Height，发现与 widget 实际大小不匹配 → 调用 `View::SetSize` 去"修正" → 触发 UpdateView → 又调用 CheckViewPort → **无限递归**。错误信息：
+```
+ERROR: too many nested evaluations (infinite loop?)
+procedure "CheckViewPort" line 3: "Log::Debug big  "CheckViewPort $wv...""
+procedure "CheckViewPort" line 15: "CheckViewPort $wv"
+```
+
+**修复：**
+
+1. **（e5c230b）核心修复：** `ensure_movie_view_size` 的 height bump 后同步 `View()` 字典：
+   ```tcl
+   if {[info exists View($wno)]} {
+       set ::View($wno) [dict replace $::View($wno) Width $w Height $h]
+   }
+   ```
+   让 CheckViewPort 再也找不到不匹配，递归就不可能发生。
+
+2. **（d7fdad6）** `_prepare_runtime_for_camera` 中 `sync_gui_testrun_selection` 后和 `restart_gui_movie_for_send_recovery` 后再次调用 `disable_checkviewport_recursion()`——因为 sync_gui 和 Movie 重启时 IPG-MOVIE 会通过 C++ `Tcl_Eval("proc CheckViewPort {...}")` 重新注册 CheckViewPort，覆盖外层的 disable no-op。
+
+3. **（cfc828a）** `_reuse_existing_runtime_for_camera` 的 `sync_gui_testrun_selection` 后同样处理。
+
+**涉及文件：** `calibration_orchestrator.py`, `cmapi_testrun_control.py`
 
 ### ❌ 问题 4：标定分数长期较高（right_rear ~43, rear_tv ~1055, left_tv ~811）
 **现状：** 所有相机分数远超 target <5.0，3 次迭代未收敛。**这不是 capture bug，是标定算法/初始参数问题。**

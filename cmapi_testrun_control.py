@@ -1270,6 +1270,38 @@ def wait_for_carmaker_tcleval_ready(
     raise RuntimeError(f"Timed out waiting for CarMaker TclEval readiness: {last_detail}")
 
 
+def cancel_movie_updateview_timer(*, timeout_sec: float = 10.0) -> None:
+    """Send 'after cancel UpdateView_TimerProc' to IPG-MOVIE to prevent
+    CheckViewPort recursion when the 30s internal timer fires after
+    bootstrap (StartSim/StopSim).
+
+    Non-fatal on failure: timer may have already fired, or IPG-MOVIE may
+    not be ready for DDE communication yet. The capture body also has its
+    own 'after cancel UpdateView_TimerProc' as a fallback.
+    """
+    output_dir = default_output_dir()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        result = run_check_attempt(
+            name="cancel_movie_updateview_timer",
+            service="TclEval",
+            topic="CarMaker",
+            output_dir=output_dir,
+            script_text=render_dde_execute_script(
+                output_dir / "cancel_movie_updateview_timer.txt",
+                "IPG-MOVIE",
+                ["after cancel UpdateView_TimerProc"],
+            ),
+            timeout_sec=timeout_sec,
+        )
+        if not result.get("ok"):
+            print(f"Warning: could not cancel Movie UpdateView timer (non-fatal): {result.get('detail')}")
+        else:
+            print("Canceled Movie UpdateView_TimerProc before timer fire")
+    except Exception as exc:
+        print(f"Warning: cancel Movie UpdateView timer failed (non-fatal): {exc}")
+
+
 async def start_or_reuse_carmaker_for_open_movie(
     cm_install: Path,
     host: str,

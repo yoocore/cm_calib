@@ -1,7 +1,7 @@
 # IPG-MOVIE Intermittent FBO Failure - Progress Handoff
 
 > Last updated: 2026-06-12
-> Latest commit: Phase 18 — move after 100 before UpdateView to fix CheckViewPort recursion
+> Latest commit: Phase 19 — cancel UpdateView_TimerProc after bootstrap before timer fires
 > Previous major fix: e0c858b fix(ensure_movie_view_size): remove update idletasks
 
 > Author: Bytes (OpenCode agent)
@@ -1264,3 +1264,44 @@ if {[wm state $top] eq {iconic}} {
 }
 # common suffix: gl readpixels -> write PNG -> gl bindframebuffer_read 0
 ```
+
+---
+
+## Phase 19: Cancel UpdateView_TimerProc After Bootstrap (2026-06-12)
+
+### Problem
+bootstrap_testrun_for_movie_via_cmapi_sync 内的 StartSim/StopSim 触发 IPG-MOVIE 内部 30s 定时器（UpdateView_TimerProc）。
+当定时器在 30s 后触发时，View dict 已经过期 → CheckViewPort 递归 → "too many nested evaluations"。
+
+KEL 日志时间线证实：
+- 13:13:32 — StartSim/StopSim (bootstrap)
+- **13:14:02** — 30s 后定时器触发：`UpdateView_TimerProc call error: too many nested evaluations`
+- 13:15:33 — wait_for_movie_scene_ready 完成
+- 13:15:36 — capture 执行（太晚了，错误 #1 已被 94s 破坏了状态）
+
+此前，capture 体内的 `after cancel UpdateView_TimerProc` 在 13:15:36 执行，但定时器早在 13:14:02 已经触发。
+
+### Fix
+在 `calibration_orchestrator.py` 的 `bootstrap_testrun_for_movie_via_cmapi_sync` 之后立即添加 `cancel_movie_updateview_timer()` 调用，
+在定时器触发之前就取消它。
+
+**函数：** `cmapi_testrun_control.py:cancel_movie_updateview_timer()`
+- 通过 DDE（`run_check_attempt` + `render_dde_execute_script`）向 IPG-MOVIE 发送 `after cancel UpdateView_TimerProc`
+- 非致命（失败时只打 warn）：定时器可能已经触发，或 IPG-MOVIE 尚未就绪
+- 超时 10 秒
+
+**调用位置：** calibration_orchestrator.py 作为新的 Step 3（bootstrap Step 2 之后、ensure movie alive Step 4 之前）
+
+### 防御纵深
+即使 Step 3 的 cancel 失败，capture 体内的 `after cancel UpdateView_TimerProc` 仍然存在作为兜底。
+但后者只有在定时器尚未触发时才有效。Step 3 的 cancel 确保在定时器触发 **之前** 就取消。
+
+### 文件变更
+| File | Change |
+|------|--------|
+| `cmapi_testrun_control.py:1273` | 新增 `cancel_movie_updateview_timer()` 函数 |
+| `calibration_orchestrator.py:252-253` | 新增 Step 3：调用 cancel |
+
+### 验证
+- 单元测试 32/32 passed
+- 需要在 live CarMaker 下验证 `UpdateView_TimerProc call error` 不再出现在 KEL 日志中

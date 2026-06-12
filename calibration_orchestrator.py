@@ -249,7 +249,9 @@ def _prepare_runtime_for_camera(
         running_timeout_sec=float(args.bootstrap_running_timeout_sec),
         idle_timeout_sec=float(args.bootstrap_idle_timeout_sec),
     )
-    # --- Step 3: Ensure IPG-Movie is alive ---
+    # --- Step 3: Cancel movie's internal UpdateView timer (set by StartSim/StopSim) ---
+    cmctrl.cancel_movie_updateview_timer(timeout_sec=10.0)
+    # --- Step 4: Ensure IPG-Movie is alive ---
     # Strategy:
     #   GPUSensor present → Movie keeps running throughout bootstrap, nothing to do
     #   No GPUSensor     → bootstrap already quit stale Movie; launch a fresh one
@@ -260,7 +262,7 @@ def _prepare_runtime_for_camera(
             project_root=project_root,
             carmaker_pid=carmaker_pid,
         )
-    # --- Step 4: Wait for Movie scene ready ---
+    # --- Step 5: Wait for Movie scene ready ---
     movie_scene = cmctrl.wait_for_movie_scene_ready(
         cm_install=args.cm_install.resolve(),
         movie_apphost=str(args.movie_apphost),
@@ -269,7 +271,7 @@ def _prepare_runtime_for_camera(
         timeout_sec=float(args.movie_settle_sec),
         poll_interval_sec=float(args.movie_ready_poll_sec),
     )
-    # --- Step 5: Configure Movie for this camera ---
+    # --- Step 6: Configure Movie for this camera ---
     if movie_view_size is not None:
         view_width, view_height = movie_view_size
         applied_view = cmctrl.ensure_movie_view_size(view_width, view_height)
@@ -284,9 +286,9 @@ def _prepare_runtime_for_camera(
     )
     movie_scene["camera_name"] = str(camera_selection.get("current") or movie_scene.get("camera_name") or "")
     camera_widgets = cmctrl.ensure_movie_camera_widgets(timeout_sec=float(args.health_check_timeout_sec))
-    # --- Step 6: Capture initial parameter values ---
+    # --- Step 7: Capture initial parameter values ---
     config_initial_capture = cmctrl.capture_initial_values_to_config(config_path)
-    # --- Step 7: Health check ---
+    # --- Step 8: Health check ---
     health_classification: Optional[dict[str, Any]] = None
     if args.health_check_after_switch:
         health_summary = cmctrl.run_movie_send_health_check(

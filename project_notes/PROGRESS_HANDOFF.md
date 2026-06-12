@@ -1,7 +1,7 @@
 # IPG-MOVIE Intermittent FBO Failure - Progress Handoff
 
 > Last updated: 2026-06-12
-> Latest commit: Phase 19 — cancel UpdateView_TimerProc after bootstrap before timer fires
+> Latest commit: a02262e fix(orchestrator): cancel UpdateView_TimerProc after bootstrap (Phase 19 — INEFFECTIVE)
 > Previous major fix: e0c858b fix(ensure_movie_view_size): remove update idletasks
 
 > Author: Bytes (OpenCode agent)
@@ -1305,3 +1305,65 @@ KEL 日志时间线证实：
 ### 验证
 - 单元测试 32/32 passed
 - 需要在 live CarMaker 下验证 `UpdateView_TimerProc call error` 不再出现在 KEL 日志中
+
+### 失效结论（2026-06-12 追加）
+
+KEL 日志分析 + codegraph 二进制搜索证实 Phase 19 的修复 **无效**：
+
+**证据 1：KEL 日志时间线矛盾**
+```
+13:40:14 — SIM_START
+13:40:16 — after cancel UpdateView_TimerProc 执行（rc=0, 成功返回）
+13:40:18 — 仍然出现 "UpdateView_TimerProc call error: too many nested evaluations"
+```
+cancel 成功后 2s 仍然报错，说明 cancel 没有实际效果。
+
+**证据 2：UpdateView_TimerProc 是 C++ 内部回调，不是 Tcl after 定时器**
+通过 codegraph 二进制搜索确认 UpdateView_TimerProc 是 `Movie.exe` 内部的 C++ 过程。
+`after cancel` 只能取消通过 Tcl `after` 命令注册的定时器，对 C++ 内部回调返回 rc=0 但不做任何事。
+
+**证据 3：错误时间线与 30s 定时器不符**
+KEL 日志显示错误发生在 SIM_START 后仅 **4s**（不是 30s）。说明错误是同步触发的——
+SIM_START → IPG-MOVIE C++ 内部调 UpdateView → UpdateView_TimerProc (C++) → CheckViewPort → 递归。
+
+### 真正机制（修正）
+```
+SIM_START (bootstrap / scene init)
+  → IPG-MOVIE C++ 内部调 UpdateView
+    → 调 UpdateView_TimerProc（C++ 回调，不是 Tcl timer）
+      → 调 CheckViewPort
+        → 检测 View dict Height ≠ widget Height（跨相机残留）
+        → 无限递归 → "too many nested evaluations" → IPG-MOVIE 可能卡死
+```
+这个流程在 capture body 执行之前就发生了。capture body 内的 `after cancel UpdateView_TimerProc` + height bump + `after 100`
+保护 capture 本身，但不保护 SIM_START 期间的 CheckViewPort 递归。
+
+### 历史参考：最早的同根因修复
+查 git 历史最早的 CheckViewPort 递归修复在 commit `fbc79ec`（2026-06-01, 作者 liuke）：
+```diff
+- $wpath.gl0 configure -width {target_w} -height {target_h}
++ View::SetSize {target_w} {target_h} $wpath
+```
+当时的问题是 `_resize_movie_viewport` 用 `.gl0 configure` 直接改 widget 尺寸但不更新 View dict
+→ CheckViewPort 检测 mismatch → 递归。修复方式是改用 `View::SetSize`（同时更新 widget 和 View dict）。
+与现在的问题是**同一个根因**：View dict 与 widget 尺寸不一致。
+
+### Phase 19 方向性结论
+Phase 19 尝试在 bootstrap 之后提前 cancel 是错误的方向。真正需要的是确保 SIM_START 触发 UpdateView 之前
+View dict 已经与 widget 尺寸一致。
+
+### 当前代码状态
+
+**capture body (camera_calibration.py:7765-7813)** — 已受保护 ✅
+```
+after cancel UpdateView_TimerProc
+View::SetSize w h+1 path
+View::SetSize w h path
+after 100
+if {[wm state] eq {iconic}} {  # dual-mode: FBO / noFBO
+    UpdateView ...
+}
+```
+**Scene init (SIM_START 时)** — 未修复 ❌
+`after cancel UpdateView_TimerProc` 对 C++ 内部回调无效。错误在场景初始化时已经发生。
+

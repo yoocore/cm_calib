@@ -1,7 +1,7 @@
 # IPG-MOVIE Intermittent FBO Failure - Progress Handoff
 
 > Last updated: 2026-06-12
-> Latest commit: 987b71b fix(capture): restore View::SetSize height bump to prevent stale View dict CheckViewPort recursion
+> Latest commit: Phase 18 — move after 100 before UpdateView to fix CheckViewPort recursion
 > Previous major fix: e0c858b fix(ensure_movie_view_size): remove update idletasks
 
 > Author: Bytes (OpenCode agent)
@@ -1180,3 +1180,87 @@ View::SetSize $vp_w $vp_h $wpath              # restore h, View dict now correct
 ### 验证
 - 单元测试 32/32 passed（新增 1 个测试验证 height bump 存在且顺序正确）
 - 需要在 live CarMaker 环境下验证 CheckViewPort 错误不再出现
+
+---
+
+## Phase 18: Move after 100 Before UpdateView — Fix CheckViewPort Recursion (2026-06-12)
+
+### Problem
+Phase 17 (height bump) in live CarMaker still triggers CheckViewPort recursion:
+
+```
+ERROR: too many nested evaluations (infinite loop?)
+procedure "CheckViewPort" line 3:
+   "Log::Debug big  "CheckViewPort $wv...""
+procedure "CheckViewPort" line 15:
+```
+
+### Root Cause
+Phase 12 (commit 13d2f27, the first working height bump) had `after 100` between height bump and UpdateView:
+
+```
+View::SetSize h+1 -> h
+after 100         # height bump settle
+FBO begin
+UpdateView          # by now widget is actually resized
+```
+
+Phase 17 moved `after 100` AFTER UpdateView (for render settling), but the height bump changes View dict, and widget resize is apparently deferred. Without `after 100` event processing, the widget remains at the old size, and `UpdateView` calls `CheckViewPort` which detects mismatch -> recursion.
+
+### Fix
+Move `after 100` between height bump and UpdateView in both paths:
+
+**FBO path (minimized):**
+```
+FBO begin $__captureFBO
+after 100                 # height bump settle
+UpdateView $vno_int
+FBO end
+```
+
+**noFBO path (visible):**
+```
+after 100                 # height bump settle
+UpdateView $vno_int
+after 100                 # render settle
+```
+
+**Common prefix (unchanged):**
+```
+after cancel UpdateView_TimerProc
+View::SetSize $vp_w [expr {$vp_h + 1}] $wpath
+View::SetSize $vp_w $vp_h $wpath
+```
+
+### Key Lesson
+Phase 12's `after 100` between height bump and UpdateView was NOT for render settling — it was for **height bump settling** (letting Tk actually execute the widget resize). Removing this gap creates a transient window where widget and View dict are inconsistent, triggering CheckViewPort recursion.
+
+### File Changes
+| File | Change |
+|------|--------|
+| `camera_calibration.py:7782-7785` (FBO path) | moved `after 100` between `FBO begin` and `UpdateView` |
+| `camera_calibration.py:7796-7799` (noFBO path) | added `after 100` before `UpdateView` (kept second for render settle) |
+
+### Code Architecture (Phase 18 Final)
+```
+# --- common prefix ---
+after cancel UpdateView_TimerProc  # prevent pending timer from triggering CheckViewPort
+View::SetSize w h+1 path          # force View dict sync (height bump)
+View::SetSize w h   path          # restore correct height
+
+# --- dual-mode (wm state detection) ---
+if {[wm state $top] eq {iconic}} {
+    # FBO path — works even when window minimized
+    if {![info exists __captureFBO]} { FBO new ... }
+    FBO begin $__captureFBO
+    after 100        # height bump settle
+    UpdateView       # render to FBO
+    FBO end
+} else {
+    # noFBO path — visible window, read from default framebuffer
+    after 100        # height bump settle
+    UpdateView       # render to default framebuffer
+    after 100        # render settle
+}
+# common suffix: gl readpixels -> write PNG -> gl bindframebuffer_read 0
+```

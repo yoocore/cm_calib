@@ -504,6 +504,10 @@ def _is_aruco_family_board_type(board_type: str) -> bool:
     return str(board_type).strip().lower() in {"aruco", "charuco"}
 
 
+def _is_apriltag_board_type(board_type: str) -> bool:
+    return str(board_type).strip().lower() == "apriltag"
+
+
 def _preprocess_auto_template_match_image(
     gray_image: np.ndarray,
     binary_threshold: int,
@@ -5500,6 +5504,7 @@ class BoardProfile:
     template_crop: Optional[Tuple[int, int, int, int]] = None
     aruco_dictionary: str = "DICT_4X4_50"
     marker_length_ratio: float = 0.7
+    tag_family: str = "tagStandard41h12"
 
 
 @dataclass
@@ -7780,10 +7785,10 @@ class CameraCalibrator:
                     "    }",
                     "    set update_rc [catch {",
                     "        FBO begin $__captureFBO",
-                    "        UpdateView $vno_int",
                     "        after 100",
+                    "        UpdateView $vno_int",
                     "        FBO end",
-                    "    } update_msg]",
+                    "    } update_msg]"
                     "    catch {FBO end}",
                     "    if {$update_rc != 0} {error $update_msg}",
                     "    catch {image delete probeImg}",
@@ -7794,6 +7799,7 @@ class CameraCalibrator:
                     "    catch {gl bindframebuffer_read 0}",
                     "} else {",
                     "    # --- window visible: noFBO, render to default framebuffer ---",
+                    "    after 100",
                     "    UpdateView $vno_int",
                     "    after 100",
                     "    catch {image delete probeImg}",

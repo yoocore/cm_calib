@@ -250,7 +250,9 @@ def _prepare_runtime_for_camera(
     vehicle_path, vehicle_key = cmctrl.resolve_vehicle_path(project_root, testrun_rel_path)
     activation = cmctrl.activate_single_vehicle_sensor(vehicle_path, camera_name)
     selected_testrun = cmctrl.sync_gui_testrun_selection(project_root, testrun_rel_path)
-    # --- Step 1.5: Sync Movie view size BEFORE bootstrap SIM_START (prevent CheckViewPort recursion) ---
+    # --- sync_gui re-initializes IPG-MOVIE (re-registers CheckViewPort), so re-disable ---
+    cmctrl.disable_checkviewport_recursion()
+    # --- Step 1.5: Sync Movie view size BEFORE bootstrap SIM_START ---
     if movie_view_size is not None:
         view_width, view_height = movie_view_size
         try:
@@ -279,6 +281,8 @@ def _prepare_runtime_for_camera(
             project_root=project_root,
             carmaker_pid=carmaker_pid,
         )
+        # --- Movie restart re-registers CheckViewPort, re-disable ---
+        cmctrl.disable_checkviewport_recursion()
     # --- Step 5: Wait for Movie scene ready ---
     movie_scene = cmctrl.wait_for_movie_scene_ready(
         cm_install=args.cm_install.resolve(),

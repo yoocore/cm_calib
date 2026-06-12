@@ -1635,6 +1635,53 @@ Added `catch {gl bindframebuffer_read 0}` after if-else block as a universal cle
 
 ---
 
+## Phase 25: Fix Fresh Start CheckViewPort Recursion (2026-06-12)
+
+**Commit:** 163e91b
+
+### Problem
+新启动 CarMaker 后立即运行标定，`ensure_movie_view_size` 在 Step 1.5 中因 `View(ev.view)` 还没准备好而报错：
+```tcl
+if {![info exists View(ev.view)]} {error "missing View(ev.view)"}
+```
+Orchestrator 将错误视为非致命（`except Exception: print warning`），跳过 Step 1.5。
+Step 2 (SIM_START) 触发 IPG-MOVIE 内部 CheckViewPort → View dict 未被同步 → Height mismatch → 死递归。
+
+### Root Cause
+`ensure_movie_view_size` 的 `View(ev.view)` 检查在 startup 时过于严格。`View(ev.view)` 在 IPG-MOVIE 完全初始化后才可用，但这个初始化可能发生在 TestRun 加载之后。Step 1.5 在 Step 1 (load TestRun) 之后立即执行，此时 `View(ev.view)` 尚未创建。
+
+但 widget `.view0` 实际上已经存在（IPG-MOVIE 默认创建）。
+
+### Fix
+将严格检查改为 fallback：
+```python
+# Before (errors if View(ev.view) not ready):
+'if {![info exists View(ev.view)]} {error "missing View(ev.view)"}',
+'scan $View(ev.view) %d wno',
+'set wpath ".view$wno"',
+
+# After (falls back to .view0 if not ready):
+'if {[info exists View(ev.view)]} {',
+'    scan $View(ev.view) %d wno',
+'    set wpath ".view$wno"',
+'} else {',
+'    set wpath ".view0"',
+'}',
+```
+
+即使回退到 `.view0`，height bump 仍然执行，View dict 仍然被同步。
+
+### File Changes
+| File | Change |
+|------|--------|
+| `cmapi_testrun_control.py:1776-1782` | `View(ev.view)` 不存在时 fallback 到 `.view0` 而非报错 |
+
+### Verification
+- 32/32 tests passed
+- 需要在 fresh CarMaker 环境下验证 bootstrap 不再出现 CheckViewPort 递归
+
+---
+
 ## 当前剩余问题状态 (2026-06-12)
 
 ### ✅ 问题 1：最小化窗口报错 — **已修复**（Phase 23, commit 08c80c5）

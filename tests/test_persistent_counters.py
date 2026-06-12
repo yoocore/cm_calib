@@ -529,7 +529,7 @@ class TestMovieFboCaptureScript:
         body_lines = captured["body_lines"]
         assert "set vp_w [$wpath.gl0 cget -width]" in body_lines
         assert "set vp_h [$wpath.gl0 cget -height]" in body_lines
-        assert "set vno $View(ev.view)" in body_lines
+        assert "scan $View(ev.view) %d vno" in body_lines
         assert "scan $vno %d vno_int" in body_lines
         assert "dict get" not in " ".join(body_lines)
 
@@ -563,8 +563,8 @@ class TestMovieFboCaptureScript:
         assert any("after 100" in l for l in body_lines)
         assert any("UpdateView $vno_int" in l for l in body_lines)
 
-    def test_capture_movie_has_dict_set_view_before_update_view(self, tmp_path):
-        """Verify dict set View($vno) Width/Height syncs View dict directly, bypassing View::SetSize no-op."""
+    def test_capture_movie_has_height_bump_before_update_view(self, tmp_path):
+        """Verify height bump (View::SetSize h+1 then h) forces View dict sync, bypassing View::SetSize no-op."""
         cfg = _make_minimal_cfg(tmp_path)
         with patch.object(CameraCalibrator, "_materialize_custom_maker_templates"):
             with patch.object(CameraCalibrator, "_load_custom_templates", return_value={}):
@@ -581,12 +581,12 @@ class TestMovieFboCaptureScript:
                 calib._capture_movie_via_dde("probe")
 
         body_lines = captured["body_lines"]
-        # dict set View(): replaces height bump to avoid View::SetSize no-op
-        dict_set_w = [l for l in body_lines if "dict set View($vno) Width $vp_w" in l]
-        dict_set_h = [l for l in body_lines if "dict set View($vno) Height $vp_h" in l]
-        assert len(dict_set_w) == 1, f"Expected 1 dict set Width line, got {len(dict_set_w)}"
-        assert len(dict_set_h) == 1, f"Expected 1 dict set Height line, got {len(dict_set_h)}"
-        # after cancel must come BEFORE dict set
+        # height bump: View::SetSize h+1 then h (forces View dict sync, bypasses no-op guard)
+        bump1 = [l for l in body_lines if "View::SetSize $vp_w [expr {$vp_h + 1}]" in l]
+        bump2 = [l for l in body_lines if "View::SetSize $vp_w $vp_h $wpath" in l]
+        assert len(bump1) == 1, f"Expected 1 height bump+1 line, got {len(bump1)}"
+        assert len(bump2) == 1, f"Expected 1 height bump restore line, got {len(bump2)}"
+        # after cancel must come BEFORE height bump
         cancel_idx = next(i for i, l in enumerate(body_lines) if "after cancel UpdateView_TimerProc" in l)
-        dictset_idx = next(i for i, l in enumerate(body_lines) if "dict set View($vno) Width $vp_w" in l)
-        assert cancel_idx < dictset_idx, "after cancel must come before dict set View()"
+        bump1_idx = next(i for i, l in enumerate(body_lines) if "View::SetSize $vp_w [expr {$vp_h + 1}]" in l)
+        assert cancel_idx < bump1_idx, "after cancel must come before height bump"

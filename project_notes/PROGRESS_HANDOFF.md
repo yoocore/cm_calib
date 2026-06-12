@@ -1,7 +1,7 @@
 # IPG-MOVIE Intermittent FBO Failure - Progress Handoff
 
 > Last updated: 2026-06-13
-> Latest commit: 7971dd1 fix(bootstrap): re-disable CheckViewPort after bootstrap completes
+> Latest commit: 3197d14 fix(movie): install persistent View::SetSize trace to auto-sync View() dict
 > Previous major fix: e0c858b fix(ensure_movie_view_size): remove update idletasks
 
 > Author: Bytes (OpenCode agent)
@@ -1785,7 +1785,7 @@ da042d7 fix(bootstrap): add after cancel + Step 0 sync before any IPG-MOVIE acti
 **根因：** FBO 路径报错时 `catch {gl bindframebuffer_read 0}` 被跳过 → framebuffer 绑定残留 → 下次 `gl readpixels` 读到垃圾数据。
 **修复：** 错误路径中先清理 framebuffer，再加 if/else 后的统一兜底清理。
 
-### ✅ 问题 5：CheckViewPort 递归 "too many nested evaluations" — **已修复**（Phase 27, commits d7fdad6 / cfc828a / e5c230b / 7971dd1）
+### ✅ 问题 5：CheckViewPort 递归 "too many nested evaluations" — **已修复**（Phase 27, commits d7fdad6 / cfc828a / e5c230b / 7971dd1 / 3197d14）
 **根因：** `View::SetSize` 只更新 C++ 内部状态和 OpenGL widget 实际大小，但**从不更新 Tcl 侧的 `View()` 字典**。CheckViewPort 读取的是 `$::View($key)` 字典。之后 CheckViewPort 被触发（通过 C++ 定时器、StartSim、或 sensor 激活）时，读到字典中的旧 Width/Height，发现与 widget 实际大小不匹配 → 调用 `View::SetSize` 去"修正" → 触发 UpdateView → 又调用 CheckViewPort → **无限递归**。错误信息：
 ```
 ERROR: too many nested evaluations (infinite loop?)
@@ -1807,6 +1807,8 @@ procedure "CheckViewPort" line 15: "CheckViewPort $wv"
 
 3. **（cfc828a）** `_reuse_existing_runtime_for_camera` 的 `sync_gui_testrun_selection` 后同样处理。
 4. **（7971dd1）** `bootstrap_testrun_for_movie_via_cmapi` 内部第 1205 行也调用了一次 `sync_gui_testrun_selection`（重新注册 CheckViewPort），所以 Step 2（bootstrap）返回后也加一次 re-disable。
+
+5. **（3197d14）** **根本性修复**：在 `View::SetSize`（C++ 命令）上安装 Tcl execution trace，每次 `View::SetSize` 调用完成后自动读取实际 widget 尺寸并同步 View() dict。该 trace 附着在 C++ 命令上，跨 Tcl proc 重定义（IPG-MOVIE 的 `Tcl_Eval`）依然存活。这样无论哪条代码路径调用 `View::SetSize` → dict 自动同步 → CheckViewPort 读取正确值 → 永无 mismatch → 永不递归。同时提供 `install_view_sync_trace()` / `remove_view_sync_trace()` 函数。
 
 **涉及文件：** `calibration_orchestrator.py`, `cmapi_testrun_control.py`
 

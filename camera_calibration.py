@@ -6226,6 +6226,7 @@ class CameraCalibrator:
                 "custom_maker",
                 "aruco",
                 "charuco",
+                "apriltag",
             }:
                 raise ValueError(f"Unsupported board_type for {board_id}: {board_type}")
 
@@ -6307,6 +6308,7 @@ class CameraCalibrator:
                     template_crop=self._read_crop_box(board.get("template_crop")),
                     aruco_dictionary=aruco_dictionary,
                     marker_length_ratio=marker_length_ratio,
+                    tag_family=str(board.get("tag_family", "tagStandard41h12")).strip(),
                 )
             )
         return boards
@@ -8114,7 +8116,7 @@ class CameraCalibrator:
             max_auto_padding = int(round(max(image_h, image_w) * 0.65))
             auto_paddings: List[int] = []
 
-            if board.board_type == "checkerboard" or _is_aruco_family_board_type(board.board_type):
+            if board.board_type == "checkerboard" or _is_aruco_family_board_type(board.board_type) or _is_apriltag_board_type(board.board_type):
                 auto_paddings.extend(
                     [
                         max(120, int(round(base_span * 1.5))),
@@ -8990,6 +8992,89 @@ class CameraCalibrator:
             error_message="aruco markers not detected",
         )
 
+    _APRILTAG_FAMILY_CANDIDATES = (
+        "tagStandard41h12",
+        "tag36h11",
+        "tag25h9",
+        "tag16h5",
+    )
+
+    @staticmethod
+    def _flatten_apriltag_detections(
+        detections: list,
+        offset: Tuple[int, int],
+    ) -> np.ndarray:
+        if not detections:
+            return np.empty((0, 2), dtype=np.float32)
+        ordered = sorted(detections, key=lambda d: d.tag_id)
+        points: List[np.ndarray] = []
+        for det in ordered:
+            corners = np.asarray(det.corners, dtype=np.float32).reshape(-1, 2)
+            if corners.shape[0] < 4:
+                continue
+            points.append(corners)
+        if not points:
+            return np.empty((0, 2), dtype=np.float32)
+        all_points = np.concatenate(points, axis=0)
+        all_points[:, 0] += float(offset[0])
+        all_points[:, 1] += float(offset[1])
+        return all_points.astype(np.float32)
+
+    def _create_apriltag_detector(self, tag_family: str) -> object:
+        try:
+            from pupil_apriltags import Detector
+        except ImportError:
+            raise RuntimeError(
+                "pupil_apriltags is not installed. "
+                "Install it with: pip install pupil_apriltags"
+            )
+        return Detector(families=tag_family)
+
+    def _detect_apriltag(self, gray_image: np.ndarray, board: BoardProfile) -> DetectionResult:
+        eval_image = self._prepare_eval_image(gray_image)
+        roi_attempts = self._detect_roi_padding_attempts(board)
+
+        tag_family = str(board.tag_family or "").strip()
+        auto_detect_family = not tag_family or tag_family.lower() == "auto"
+        family_candidates = (
+            list(self._APRILTAG_FAMILY_CANDIDATES) if auto_detect_family else [tag_family]
+        )
+
+        for family in family_candidates:
+            try:
+                detector = self._create_apriltag_detector(family)
+            except Exception:
+                if auto_detect_family:
+                    continue
+                raise
+
+            for padding in roi_attempts:
+                roi_img, offset = self._extract_roi(eval_image, board.roi, padding=padding)
+                detections = detector.detect(roi_img)
+                ordered_points = self._flatten_apriltag_detections(detections, offset)
+                if ordered_points.shape[0] == 0:
+                    continue
+                return DetectionResult(
+                    board_id=board.board_id,
+                    success=True,
+                    point_count=int(ordered_points.shape[0]),
+                    ordered_points=ordered_points,
+                    board_type=board.board_type,
+                    roi_used=board.roi,
+                    detector="apriltag",
+                )
+
+        return DetectionResult(
+            board_id=board.board_id,
+            success=False,
+            point_count=0,
+            ordered_points=np.empty((0, 2), dtype=np.float32),
+            board_type=board.board_type,
+            roi_used=board.roi,
+            detector="apriltag",
+            error_message="apriltag markers not detected",
+        )
+
     def _detect_charuco(self, gray_image: np.ndarray, board: BoardProfile) -> DetectionResult:
         if board.board_size is None:
             return DetectionResult(
@@ -9332,6 +9417,8 @@ class CameraCalibrator:
             return self._detect_aruco(gray_image, board)
         if board.board_type == "charuco":
             return self._detect_charuco(gray_image, board)
+        if _is_apriltag_board_type(board.board_type):
+            return self._detect_apriltag(gray_image, board)
         if _is_custom_marker_board_type(board.board_type):
             return self._detect_custom_groundmaker(gray_image, board)
         return DetectionResult(

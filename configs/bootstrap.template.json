@@ -58,6 +58,15 @@
                 "aruco_dictionary": "DICT_4X4_50",
                 "min_detected_points": 8
             }
+        },
+        {
+            "detected_group": "AT",
+            "board": {
+                "board_type": "apriltag",
+                "weight": 1.0,
+                "tag_family": "tagStandard41h12",
+                "min_detected_points": 8
+            }
         }
     ]
 }

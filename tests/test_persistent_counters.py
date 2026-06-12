@@ -586,7 +586,10 @@ class TestMovieFboCaptureScript:
         bump2 = [l for l in body_lines if "View::SetSize $vp_w $vp_h $wpath" in l]
         assert len(bump1) == 1, f"Expected 1 height bump+1 line, got {len(bump1)}"
         assert len(bump2) == 1, f"Expected 1 height bump restore line, got {len(bump2)}"
-        # after cancel must come BEFORE height bump
-        cancel_idx = next(i for i, l in enumerate(body_lines) if "after cancel UpdateView_TimerProc" in l)
+        # CheckViewPort rename must come BEFORE height bump
+        rename_idx = next(i for i, l in enumerate(body_lines) if "catch {rename CheckViewPort CheckViewPort_saved}" in l)
         bump1_idx = next(i for i, l in enumerate(body_lines) if "View::SetSize $vp_w [expr {$vp_h + 1}]" in l)
-        assert cancel_idx < bump1_idx, "after cancel must come before height bump"
+        assert rename_idx < bump1_idx, "CheckViewPort rename must come before height bump"
+        # restore must come after height bump
+        restore_idx = next(i for i, l in enumerate(body_lines) if "rename CheckViewPort_saved CheckViewPort" in l)
+        assert restore_idx > bump1_idx, "CheckViewPort restore must come after height bump"

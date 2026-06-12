@@ -1,7 +1,7 @@
 # IPG-MOVIE Intermittent FBO Failure - Progress Handoff
 
 > Last updated: 2026-06-12
-> Latest commit: 09da9e6 fix(orchestrator): sync movie view size before bootstrap to prevent CheckViewPort recursion
+> Latest commit: 23e4965 fix(capture): replace height bump with direct dict set View(Width/Height)
 > Previous major fix: e0c858b fix(ensure_movie_view_size): remove update idletasks
 
 > Author: Bytes (OpenCode agent)
@@ -1411,4 +1411,96 @@ if movie_view_size is not None:
 ### 验证
 - 单元测试 32/32 passed
 - 需要在 live CarMaker 下验证 SIM_START 后 KEL 日志不再出现 `UpdateView_TimerProc call error`
+
+---
+
+## Phase 21: Direct `dict set View()` — Replace Height Bump (2026-06-12)
+
+**Commit:** 23e4965
+
+### Problem
+Phase 17-20 的 height bump trick（`View::SetSize h+1 -> h` + `after 100`）虽然有效，但有根本性的时序脆弱性：
+
+- **Problem B**: 多相机切换后，Widget 已是最新尺寸 -> `View::SetSize` 是空操作 -> View dict 不更新 -> `UpdateView` -> `CheckViewPort` 发现 dict != widget -> 递归
+- **Problem C**: Height bump (h+1->h) 强制触发 dict 更新，但 `after 100` 的位置决定成败。Phase 12 在 height bump 和 UpdateView **之间**放 `after 100` 成功；Phase 17 移走就失败；Phase 18 放回又成功。
+
+### 三个运行分析（2026-06-12）
+所有 3 个运行都包含 Phase 20（14:06 提交的 Step 1.5 `ensure_movie_view_size` before SIM_START）。但结果仍然完全不同：
+
+| 运行 | 时间 | 结果 | 说明 |
+|------|------|------|------|
+| 1 | 14:17 (`141729`) | 3/3 相机全部完成 | right_rear score=43.48（历史最佳）。**无** CheckViewPort 错误。 |
+| 2 | 14:32 (`143210`) | right_rear 中途退出 | `board=1000000`（空白捕获）。`per_camera=[]`，相机 2/3 未跑到。 |
+| 3 | 14:47 (`144722`) | right_rear 挂掉 + **递归弹窗** | 同样是空白捕获 + CheckViewPort 递归弹窗。相机 2/3 未跑到。 |
+
+**关键结论**：
+- Run 1 成功不是因为 Phase 20，而是因为窗口状态健康，View dict 恰好正确
+- Run 2-3 因为窗口状态不健康（blank capture），且 Run 3 触发了 CheckViewPort 递归
+- Phase 20 没有测试到真正出错的场景——Run 2-3 中 camera 1 在 board detection 阶段就挂了，根本没到需要 Step 1.5 保护的地步
+
+### 分析延伸：CheckViewPort 的真正触发条件
+根据用户分析：
+1. `UpdateView` 内部调 `CheckViewPort`
+2. `CheckViewPort` 比较 View dict 和 widget 的尺寸
+3. **如果相等** -> 正常返回
+4. **如果不相等**（dict 是旧的 Height）-> `CheckViewPort` 调 `View::SetSize` 去同步
+5. 但 `View::SetSize` 发现 widget 已是最新 -> **空操作** -> dict 仍然不对 -> `CheckViewPort` 再次调 `View::SetSize` -> 无限递归
+
+Height bump 通过临时改成 h+1 确保 `View::SetSize` **不是空操作**，从而"疏通"整个链路。但 `after 100` 的位置对它很敏感。
+
+### Fix: 直接写 Tcl dict
+不再依赖 `View::SetSize` 的迂回路径，**直接写 Tcl View dict**：
+
+```tcl
+dict set View($vno) Width $vp_w
+dict set View($vno) Height $vp_h
+after 100
+```
+
+**为什么这样更可靠**：
+1. `dict set` 直接修改 Tcl dict 结构，**不经过 `View::SetSize` C++ 逻辑**
+2. 不受 widget 尺寸和 `View::SetSize` 空操作问题的影响
+3. 不需要 height bump 的时序技巧
+4. `after 100` 只用于渲染稳定（不再是 height bump settle）
+5. 语法通过 codegraph 验证：`dict get $View($vno) Width/Height` 已在 6+ 文件中使用，确认 View 是标准 Tcl dict
+
+### 具体变更
+**File: `camera_calibration.py:7765-7813`**（capture body）
+
+| 位置 | 旧代码（height bump） | 新代码（`dict set View()`） |
+|------|---------------------|---------------------------|
+| common prefix | `View::SetSize h+1` / `View::SetSize h` + `after 100` | `dict set View(...) Width/Height` + `after 100` |
+| FBO path | `FBO begin` / `after 100` / `UpdateView` | 不变 |
+| noFBO path | `after 100` / `UpdateView` / `after 100` | 不变 |
+
+**删除的代码**：
+- `View::SetSize $vp_w [expr {$vp_h + 1}] $wpath`（height bump）
+- `View::SetSize $vp_w $vp_h $wpath`（restore）
+- FBO path 在 `FBO begin` 之前的一个多余 `after 100`
+- noFBO path 在 `UpdateView` 之前的一个多余 `after 100`（与 common prefix 重复）
+
+### 风险
+- **未知**: IPG-MOVIE 的 C++ 侧是否有 View dict 的影子副本？如果渲染用影子尺寸，不崩溃但画面可能不对
+- **未知**: `CheckViewPort` 读 Tcl View dict 还是 C++ 内部尺寸
+- 需要 live CarMaker 环境验证
+
+### 文件变更
+| File | Change |
+|------|--------|
+| `camera_calibration.py` | capture body: height bump -> `dict set View()` |
+| `tests/test_persistent_counters.py` | update test assertion to expect `dict set View()` |
+
+### Git History
+```
+23e4965 fix(capture): replace height bump with direct dict set View(Width/Height)
+09da9e6 fix(orchestrator): sync movie view size before bootstrap SIM_START
+987b71b fix(capture): restore height bump to fix CheckViewPort recursion (Phase 17)
+46fdbff fix(capture): improved dual-mode -- after cancel + after 100 in both paths
+04213b6 Phase 14b: Dual-mode capture - noFBO (visible) / persistent FBO (minimized)
+```
+
+### 验证
+-  `py_compile` syntax check passed
+-  32/32 测试通过
+-  需要 live CarMaker 环境验证（当前 session 已下线）
 

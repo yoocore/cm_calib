@@ -70,6 +70,7 @@ class CmSettingsPanel(QGroupBox):
     testrun_changed = Signal(str)
     precheck_clicked = Signal()
     generate_config_clicked = Signal()
+    wizard_clicked = Signal()
     camera_selection_changed = Signal()
 
     def __init__(self, parent: QWidget | None = None):
@@ -95,6 +96,7 @@ class CmSettingsPanel(QGroupBox):
 
         self.precheck_button = QPushButton("Check Inputs")
         self.generate_config_button = QPushButton("Generate Configs")
+        self.wizard_button = QPushButton("Board Wizard")
         self._generate_configs_ready = False
         self.generate_config_button.setEnabled(False)
 
@@ -111,6 +113,7 @@ class CmSettingsPanel(QGroupBox):
         self.testrun_browse_button.clicked.connect(self._browse_testrun)
         self.precheck_button.clicked.connect(self.precheck_clicked.emit)
         self.generate_config_button.clicked.connect(self.generate_config_clicked.emit)
+        self.wizard_button.clicked.connect(self.wizard_clicked.emit)
         self.project_root_edit.editingFinished.connect(
             lambda: self.project_root_changed.emit(self.project_root_edit.text())
         )
@@ -142,6 +145,7 @@ class CmSettingsPanel(QGroupBox):
         precheck_layout.setContentsMargins(0, 0, 0, 0)
         precheck_layout.addWidget(self.precheck_button)
         precheck_layout.addWidget(self.generate_config_button)
+        precheck_layout.addWidget(self.wizard_button)
 
         self.project_group = _SectionGroup("Project Inputs", self)
         project_layout = QVBoxLayout(self.project_group)

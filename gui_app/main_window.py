@@ -116,6 +116,7 @@ class MainWindow(QMainWindow):
         self.calibration_panel.stop_button.clicked.connect(self._stop_calibration)
         self.cm_settings_panel.precheck_clicked.connect(self._run_precheck)
         self.cm_settings_panel.generate_config_clicked.connect(self._generate_configs)
+        self.cm_settings_panel.wizard_clicked.connect(self._open_board_wizard)
         self.calibration_panel.prepare_clicked.connect(self._prepare_runtime)
         self.calibration_panel.status_query_clicked.connect(self._query_runtime_status)
         self.cm_settings_panel.project_root_changed.connect(self._on_project_root_changed)
@@ -579,6 +580,11 @@ class MainWindow(QMainWindow):
         finally:
             self.cm_settings_panel.generate_config_button.setText("Generate Configs")
             self.cm_settings_panel.generate_config_button.setEnabled(True)
+
+    def _open_board_wizard(self) -> None:
+        from gui_app.widgets.bootstrap_wizard import BootstrapWizardDialog
+        dialog = BootstrapWizardDialog(self)
+        dialog.exec()
 
     def _query_runtime_status(self) -> None:
         try:

@@ -1776,10 +1776,10 @@ def ensure_movie_view_size(
                 'if {![info exists View(ev.view)]} {error "missing View(ev.view)"}',
                 'scan $View(ev.view) %d wno',
                 'set wpath ".view$wno"',
+                # --- height bump forces View::SetSize to execute (bypasses no-op guard) ---
+                f"View::SetSize {target_width} [expr {{{target_height} + 1}}] $wpath",
                 f"View::SetSize {target_width} {target_height} $wpath",
                 'update',
-                f"dict set View($wno) Width {target_width}",
-                f"dict set View($wno) Height {target_height}",
                 'set wi [$wpath.gl0 cget -width]',
                 'set he [$wpath.gl0 cget -height]',
                 'format "width=%s;height=%s;widget=%s" $wi $he $wpath',

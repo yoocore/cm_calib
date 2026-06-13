@@ -563,6 +563,52 @@ class TestMovieFboCaptureScript:
         assert any("after 100" in l for l in body_lines)
         assert any("UpdateView $vno_int" in l for l in body_lines)
 
+    def test_capture_movie_has_update_after_height_bump_to_stabilize_gl_context(self, tmp_path):
+        """Verify 'update' appears after height bump try-finally and before UpdateView.
+
+        Without this 'update', the GL context remains unstable after 2x View::SetSize
+        resize, and IPG-MOVIE's internal UpdateView fails with 'FBO error: id not mapped'.
+        Single 'update' is safe (Phase 4 data: 1x update = 20/20 clean).
+        """
+        cfg = _make_minimal_cfg(tmp_path)
+        with patch.object(CameraCalibrator, "_materialize_custom_maker_templates"):
+            with patch.object(CameraCalibrator, "_load_custom_templates", return_value={}):
+                calib = CameraCalibrator(cfg)
+
+        captured = {}
+
+        def _capture_script(_result_path, _target_topic, body_lines, **_kwargs):
+            captured["body_lines"] = list(body_lines)
+            raise RuntimeError("stop after capture")
+
+        with patch("camera_calibration.render_dde_execute_script", side_effect=_capture_script):
+            with pytest.raises(RuntimeError, match="stop after capture"):
+                calib._capture_movie_via_dde("probe")
+
+        body_lines = captured["body_lines"]
+        # Find key line indices to verify ordering
+        hb_finally_end = next(i for i, l in enumerate(body_lines) if "rename CheckViewPort_saved CheckViewPort" in l)
+        update_idx = next(i for i, l in enumerate(body_lines) if l.strip() == "update")
+
+        # IMPORTANT: There are 2 wm state occurrences:
+        #   1. DIAG_WM_STATE: diagnostic BEFORE height bump (earlier index)
+        #   2. if {[wm state $_top] eq {iconic}}: the actual branch check AFTER update
+        # We need to find the SECOND one (the branch condition).
+        wm_check_lines = [i for i, l in enumerate(body_lines) if "if {[wm state" in l]
+        assert len(wm_check_lines) == 1, f"Expected 1 wm state if-check, got {len(wm_check_lines)}"
+        wm_branch_idx = wm_check_lines[0]
+
+        update_view_idx = next(i for i, l in enumerate(body_lines) if "UpdateView $vno_int" in l)
+
+        # Verify ordering: height bump finished → update → if/else branch → UpdateView
+        assert hb_finally_end < update_idx, \
+            f"update (idx={update_idx}) must come after height bump restore (idx={hb_finally_end})"
+        assert update_idx < wm_branch_idx, \
+            f"update (idx={update_idx}) must come before wm state check (idx={wm_branch_idx})"
+        # UpdateView appears after wm state branching (in both branches)
+        assert update_idx < update_view_idx, \
+            f"update (idx={update_idx}) must come before UpdateView (idx={update_view_idx})"
+
     def test_capture_movie_has_height_bump_before_update_view(self, tmp_path):
         """Verify height bump (View::SetSize h+1 then h) forces View dict sync, bypassing View::SetSize no-op."""
         cfg = _make_minimal_cfg(tmp_path)

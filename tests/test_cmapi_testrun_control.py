@@ -162,6 +162,36 @@ class TestMovieEventPumpMitigations:
             cmctrl.ensure_movie_abraxas_enabled()
 
 
+class TestEnsureMovieViewSize:
+    def test_has_update_after_height_bump_to_stabilize_gl_context(self, cmctrl, monkeypatch, tmp_path):
+        """Verify 'update' appears after height bump try-finally in ensure_movie_view_size.
+
+        Without this 'update', the GL context remains unstable after 2x View::SetSize
+        resize. When the subsequent capture body calls UpdateView, IPG-MOVIE's internal
+        FBO operations fail with 'FBO error: id not mapped'.
+        """
+        captured = _capture_body_lines(monkeypatch, cmctrl, tmp_path, "ok")
+        # Call ensure_movie_view_size with standard dimensions
+        cmctrl.ensure_movie_view_size(960, 640)
+        body_lines = captured["body_lines"]
+
+        # Find height bump restore (end of try-finally) and update
+        hb_restore = [l for l in body_lines if "rename CheckViewPort_saved CheckViewPort" in l]
+        update_lines = [l for l in body_lines if l.strip() == "update"]
+        assert len(hb_restore) >= 1, "Expected at least one height bump restore line"
+        assert len(update_lines) >= 1, "Expected at least one 'update' after height bump"
+
+        # Verify ordering: height bump finished -> update
+        hb_restore_idx = next(i for i, l in enumerate(body_lines)
+                              if "rename CheckViewPort_saved CheckViewPort" in l)
+        update_idx = next(i for i, l in enumerate(body_lines) if l.strip() == "update")
+        assert hb_restore_idx < update_idx, \
+            f"'update' (idx={update_idx}) must come after height bump restore (idx={hb_restore_idx})"
+
+        # Verify 'update idletasks' is NOT used (known to cause FBO Creation errors)
+        assert "update idletasks" not in body_lines
+
+
 class TestCheckViewPortRecursionGuard:
     def test_disable_sends_guarded_wrapper(self, cmctrl, monkeypatch, tmp_path):
         captured = _capture_body_lines(monkeypatch, cmctrl, tmp_path, "ok")

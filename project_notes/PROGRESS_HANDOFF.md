@@ -1902,17 +1902,36 @@ update idletasks    # ← 旧版也有这个
 
 commit `c5dbbc9` 移除了 `update` / `update idletasks`。
 
-### 修复
-在 height bump try-finally 之后、`wm state` 分支之前添加单次 `update`。单次 `update` 是安全的（Phase 4 实验：`inline_update_once` = 20/20 clean）。稳定的 key：
-- `update` 处理所有 pending events（包括 widget resize + GL context recreation）
-- 之后 `UpdateView` 调用时 GL 上下文已稳定，内部 FBO 操作正常
+### 第一次修复尝试（a1d6583）— 引发新的 FBO Creation error
+
+在 height bump try-finally 之后添加 `update` 来稳定 GL 上下文。但 `update` 意外触发了 IPG-MOVIE 的 `UpdateView_TimerProc`（bootstrap 时注册的 30s Tcl `after` 定时器），该定时器调用 `ConfigFBO` → `FBO new` → `FBO Creation error`。
+
+错误栈确认其为 Tcl `after` 定时器（非 C++ 回调）：
+```
+"after" script:
+   "UpdateView_TimerProc"
+procedure "ConfigFBO" line 36:
+   "FBO new $wi $he -tex $texfmt -samples $samples -noclear"
+```
+
+所以 `after cancel UpdateView_TimerProc` 可以取消它。
+
+### 最终修复（d52ac58）
+```
+height bump try-finally 结束
+→ catch {after cancel UpdateView_TimerProc}    # 取消 30s 定时器
+→ update                                      # 稳定 GL 上下文（安全：无定时器触发）
+→ wm state 分支 → UpdateView / FBO 路径       # 正常执行
+```
 
 适用范围：
-- `camera_calibration.py` capture body：height bump 后加 `update`
-- `cmapi_testrun_control.py` ensure_movie_view_size：height bump 后加 `update`
+- `camera_calibration.py`：capture body 中 `after cancel` + `update`
+- `cmapi_testrun_control.py`：`ensure_movie_view_size` 中 `after cancel` + `update`
 
 ### 经验教训
-不要删除旧版代码中看似无意义的 `after xxx; update` 模式。`after xxx` 本身不阻塞，但 `update` 处理 pending events，对 GL 上下文稳定至关重要。
+1. 不要删除旧版代码中看似无意义的 `after xxx; update` 模式。`after xxx` 本身不阻塞，但 `update` 处理 pending events，对 GL 上下文稳定至关重要。
+2. `update` 会触发 IPG-MOVIE 注册的 Tcl `after` 定时器。必须先用 `after cancel UpdateView_TimerProc` 取消定时器，再执行 `update`，否则定时器内的 `ConfigFBO` → `FBO new` 会在不稳定的 GL 上下文中失败。
+3. 诊断输出（DIAG_WM_STATE / DIAG_BRANCH / 保留失败文件）是定位此类问题的关键：Phase 28 中我们一直以为是 persistent FBO 问题，实际上是 noFBO 路径中 `UpdateView` 内部失败。
 
 ### ❌ 问题 4：标定分数长期较高（right_rear ~43, rear_tv ~1055, left_tv ~811）
 **现状：** 所有相机分数远超 target <5.0，3 次迭代未收敛。**这不是 capture bug，是标定算法/初始参数问题。**

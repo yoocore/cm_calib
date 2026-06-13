@@ -1,7 +1,7 @@
 # IPG-MOVIE Intermittent FBO Failure - Progress Handoff
 
 > Last updated: 2026-06-13
-> Latest commit: 3197d14 fix(movie): install persistent View::SetSize trace to auto-sync View() dict
+> Latest commit: a1d6583 fix(capture): stabilize GL context after height bump with single update
 > Previous major fix: e0c858b fix(ensure_movie_view_size): remove update idletasks
 
 > Author: Bytes (OpenCode agent)
@@ -1785,32 +1785,134 @@ da042d7 fix(bootstrap): add after cancel + Step 0 sync before any IPG-MOVIE acti
 **根因：** FBO 路径报错时 `catch {gl bindframebuffer_read 0}` 被跳过 → framebuffer 绑定残留 → 下次 `gl readpixels` 读到垃圾数据。
 **修复：** 错误路径中先清理 framebuffer，再加 if/else 后的统一兜底清理。
 
-### ✅ 问题 5：CheckViewPort 递归 "too many nested evaluations" — **已修复**（Phase 27, commits d7fdad6 / cfc828a / e5c230b / 7971dd1 / 3197d14）
-**根因：** `View::SetSize` 只更新 C++ 内部状态和 OpenGL widget 实际大小，但**从不更新 Tcl 侧的 `View()` 字典**。CheckViewPort 读取的是 `$::View($key)` 字典。之后 CheckViewPort 被触发（通过 C++ 定时器、StartSim、或 sensor 激活）时，读到字典中的旧 Width/Height，发现与 widget 实际大小不匹配 → 调用 `View::SetSize` 去"修正" → 触发 UpdateView → 又调用 CheckViewPort → **无限递归**。错误信息：
+### ⚠️ 问题 5：CheckViewPort 递归 "too many nested evaluations" — **重新调查 (2026-06-12/13)**
+
+此前声称"已修复"的三个机制经 DDE 探测验证均存在根本性错误：
+
+| 方案 | 假设 | 实际情况 |
+|------|------|----------|
+| (3197d14) trace add execution View::SetSize | View::SetSize 是 C++ 命令，trace 跨重定义存活 | **View::SetSize 是 Tcl proc**！SetSize 所在的 package 被每次 `Tcl_Eval proc CheckViewPort` 连带 `auto_import` 重定义 → trace 丢失 |
+| (e5c230b) View() dict 同步 | CheckViewPort 读取 View() dict | **CheckViewPort 不读 View() dict**！它比较 OpenGL viewport 尺寸与 widget 尺寸 |
+| (00cc01b) 全局 `rename CheckViewPort` = no-op | 阻止递归即可 | 原 implementation 是 no-op wrapper，后改为 guarded wrapper |
+
+### 真正机制（2026-06-12 DDE 探测确认）
+
+**递归路径：**
 ```
-ERROR: too many nested evaluations (infinite loop?)
-procedure "CheckViewPort" line 3: "Log::Debug big  "CheckViewPort $wv...""
-procedure "CheckViewPort" line 15: "CheckViewPort $wv"
+CheckViewPort 第 11 行: gl viewport 设置 → 触发 redraw
+  → redraw 完成后 viewport 被还原为旧的错误值
+  → CheckViewPort 第 15 行: 再次检测 → 发现仍然不匹配 → 自调用（递归）
+  → 无限循环 → "too many nested evaluations"
 ```
 
-**修复：**
+**`View::SetSize` 是 Tcl proc（不是 C++ 命令）：**
+```tcl
+info commands View::SetSize
+# → ::View::SetSize（Tcl proc，非 C++）
 
-1. **（e5c230b）核心修复：** `ensure_movie_view_size` 的 height bump 后同步 `View()` 字典：
-   ```tcl
-   if {[info exists View($wno)]} {
-       set ::View($wno) [dict replace $::View($wno) Width $w Height $h]
-   }
-   ```
-   让 CheckViewPort 再也找不到不匹配，递归就不可能发生。
+info body View::SetSize
+# → set __wno [string trimleft $wno v]; .view$__wno.gl0 configure ...
+```
+这意味着 attach 在 proc 上的 trace 在 IPG-MOVIE 通过 `Tcl_Eval` 重注册 CheckViewPort 时被丢失。
 
-2. **（d7fdad6）** `_prepare_runtime_for_camera` 中 `sync_gui_testrun_selection` 后和 `restart_gui_movie_for_send_recovery` 后再次调用 `disable_checkviewport_recursion()`——因为 sync_gui 和 Movie 重启时 IPG-MOVIE 会通过 C++ `Tcl_Eval("proc CheckViewPort {...}")` 重新注册 CheckViewPort，覆盖外层的 disable no-op。
+### 实际修复（commit c5dbbc9）
 
-3. **（cfc828a）** `_reuse_existing_runtime_for_camera` 的 `sync_gui_testrun_selection` 后同样处理。
-4. **（7971dd1）** `bootstrap_testrun_for_movie_via_cmapi` 内部第 1205 行也调用了一次 `sync_gui_testrun_selection`（重新注册 CheckViewPort），所以 Step 2（bootstrap）返回后也加一次 re-disable。
+**核心策略：re-entrant guarded wrapper + delete-trace 自动重装**
 
-5. **（3197d14）** **根本性修复**：在 `View::SetSize`（C++ 命令）上安装 Tcl execution trace，每次 `View::SetSize` 调用完成后自动读取实际 widget 尺寸并同步 View() dict。该 trace 附着在 C++ 命令上，跨 Tcl proc 重定义（IPG-MOVIE 的 `Tcl_Eval`）依然存活。这样无论哪条代码路径调用 `View::SetSize` → dict 自动同步 → CheckViewPort 读取正确值 → 永无 mismatch → 永不递归。同时提供 `install_view_sync_trace()` / `remove_view_sync_trace()` 函数。
+```tcl
+# ::ReGuardCheckViewPort — 核心重装逻辑（idempotent + per-widget re-entrant guard）
+proc ::ReGuardCheckViewPort {} {
+    # 1. 如果 CheckViewPort 不存在，跳过
+    if {[info commands CheckViewPort] eq ""} { return }
+    set __body [info body CheckViewPort]
+    # 2. 如果已经加过 guard，跳过（idempotent）
+    if {[string first "CheckViewPort_running" $__body] >= 0} { return }
+    # 3. 重命名原版
+    catch {rename CheckViewPort_saved {}}
+    catch {rename CheckViewPort CheckViewPort_saved}
+    if {[info commands CheckViewPort] ne ""} { return }
+    # 4. 安装 guarded wrapper
+    proc CheckViewPort {wv} {
+        global CheckViewPort_running
+        if {[info exists CheckViewPort_running($wv)] && $CheckViewPort_running($wv)} { return }
+        set CheckViewPort_running($wv) 1
+        if {[catch {CheckViewPort_saved $wv} err]} {
+            Log::Debug big "CheckViewPort error: $err"
+        }
+        set CheckViewPort_running($wv) 0
+    }
+}
+```
 
-**涉及文件：** `calibration_orchestrator.py`, `cmapi_testrun_control.py`
+**Delete-trace 机制（应对 IPG-MOVIE 的未知 proc 重注册）：**
+当 IPG-MOVIE C++ 代码通过 `Tcl_Eval("proc CheckViewPort {...}")` 重新注册 CheckViewPort 时，Tcl 会先 **删除旧 command**（触发我们的 delete trace）再创建新 proc。delete trace 调度 `after 0 ::ReGuardCheckViewPort` → 在新 proc 创建后立即重新安装 guarded wrapper。
+
+**新增函数（cmapi_testrun_control.py）：**
+| 函数 | 作用 |
+|------|------|
+| `wrap_checkviewport()` | 安装 re-entrant guard + delete-trace（用于 prepare 链头）|
+| `disable_checkviewport_recursion()` | 改为 guarded wrapper（不带 delete-trace），与 wrap_checkviewport 共享同一核心 |
+| `install_view_sync_trace()` | **DEPRECATED** — 基于 View::SetSize 是 C++ 的假设，已证实错误 |
+| `remove_view_sync_trace()` | **DEPRECATED** — 同上前提错误，仍保留清理逻辑 |
+
+**文件变更：**
+| File | Change |
+|------|--------|
+| `cmapi_testrun_control.py` | +150/-62: 新增 wrap_checkviewport, 修改 disable_checkviewport_recursion, 废弃 install/remove_view_sync_trace, ensure_movie_view_size 移除 trace 代码改为 guard-wrapping |
+| `calibration_orchestrator.py` | install_view_sync_trace() → wrap_checkviewport(); 新增 wrap_checkviewport 在 prepare 流程末尾 |
+
+### 防御纵深总结
+1. **wrap_checkviewport()** — delete-trace 自动重装 guard，覆盖 IPG-MOVIE 任何 proc 重注册路径
+2. **disable_checkviewport_recursion()** — 没有 delete-trace 的 same guarded wrapper（prepare 链内用）
+3. **ensure_movie_view_size 的 guard-wrapping** — after finally 块后重装 guard
+4. **capture body 的 guard-wrapping** — height bump + after cancel + after 200 + dict sync + guard
+
+## Phase 28: FBO ID Not Mapped — Height Bump Destabilizes GL Context (2026-06-13)
+
+**Commit:** a1d6583
+
+### 问题
+`FBO error: id not mapped` — capture 全部 6/6 失败。
+
+### 诊断方法
+在 Tcl capture body 中添加 DIAG_WM_STATE / DIAG_BRANCH 诊断输出，并保留失败后的 result 文件。
+
+### 诊断结果
+```
+DIAG_WM_STATE: normal        ← 窗口 visible
+DIAG_BRANCH: normal           ← 走 noFBO 路径
+rc=1
+msg_begin
+FBO error: id not mapped     ← 来自 UpdateView 内部
+msg_end
+```
+
+### 根因
+窗口 visible 时走 noFBO 路径，不涉及我们创建的 persistent FBO。错误来自 IPG-MOVIE 的 **`UpdateView` 内部**（C++ 命令内部使用 FBO 渲染）。height bump（`View::SetSize h+1→h`）导致 GL 上下文被重新创建，但 **没有 event processing 来稳定 GL 上下文**。`after 200` 不阻塞。`UpdateView` 调用时内部 FBO 操作失败。
+
+对比旧版工作代码（commit 60aa02c 之前）：
+```tcl
+View::SetSize $w $h $wpath
+View::SetSize $w [expr {$h + 1}] $wpath
+View::SetSize $w $h $wpath
+after 200
+update              # ← 旧版有这个！稳定 GL 上下文
+update idletasks    # ← 旧版也有这个
+```
+
+commit `c5dbbc9` 移除了 `update` / `update idletasks`。
+
+### 修复
+在 height bump try-finally 之后、`wm state` 分支之前添加单次 `update`。单次 `update` 是安全的（Phase 4 实验：`inline_update_once` = 20/20 clean）。稳定的 key：
+- `update` 处理所有 pending events（包括 widget resize + GL context recreation）
+- 之后 `UpdateView` 调用时 GL 上下文已稳定，内部 FBO 操作正常
+
+适用范围：
+- `camera_calibration.py` capture body：height bump 后加 `update`
+- `cmapi_testrun_control.py` ensure_movie_view_size：height bump 后加 `update`
+
+### 经验教训
+不要删除旧版代码中看似无意义的 `after xxx; update` 模式。`after xxx` 本身不阻塞，但 `update` 处理 pending events，对 GL 上下文稳定至关重要。
 
 ### ❌ 问题 4：标定分数长期较高（right_rear ~43, rear_tv ~1055, left_tv ~811）
 **现状：** 所有相机分数远超 target <5.0，3 次迭代未收敛。**这不是 capture bug，是标定算法/初始参数问题。**

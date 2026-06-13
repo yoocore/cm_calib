@@ -20,7 +20,7 @@
         "bottleneck_board_score_max_threshold": 4.0,
         "bottleneck_board_score_avg_threshold": 2.5
     },
-    "max_iters": 180,
+    "max_iters": 5,
     "min_improve": 5e-05,
     "step_decay": 0.7,
     "priority_board_acceptance": {

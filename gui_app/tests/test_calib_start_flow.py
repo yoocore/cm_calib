@@ -416,15 +416,15 @@ class TestCalibStartFlow:
         item = main_window.output_panel.result_tree.topLevelItem(0)
         assert item is not None
         assert item.text(0) == "cam1"
-        assert item.text(2) == "59.000000"
+        assert item.text(2) == "59.00"
         assert item.data(0, BEST_IMAGE_ROLE) == r"C:\best_a.png"
         assert item.data(0, BEST_SCORE_IMAGE_ROLE) == r"C:\best_a_score.png"
         assert item.data(0, BEST_OVERLAY_IMAGE_ROLE) == r"C:\best_a_overlay.png"
         assert item.data(0, CURRENT_ITER_IMAGE_ROLE) == r"C:\iter_7.png"
-        assert item.text(3) == "69.000000"
+        assert item.text(3) == "69.00"
 
         card = main_window.output_panel._result_cards["cam1"]
-        assert card.best_score_value.text() == "59.000000"
+        assert card.best_score_value.text() == "59.00"
         assert card.score_preview._artifact_path == r"C:\best_a_score.png"
         assert card.overlay_preview._artifact_path == r"C:\best_a_overlay.png"
         assert card.open_best_button.isEnabled() is True
@@ -473,7 +473,7 @@ class TestCalibStartFlow:
 
         item = main_window.output_panel.result_tree.topLevelItem(0)
         assert item is not None
-        assert item.text(2) == "59.000000"
+        assert item.text(2) == "59.00"
         assert item.data(0, BEST_SCORE_IMAGE_ROLE) == r"C:\best_a_score.png"
 
         card = main_window.output_panel._result_cards["cam1"]

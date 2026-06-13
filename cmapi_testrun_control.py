@@ -1344,7 +1344,7 @@ def wrap_checkviewport(*, timeout_sec: float = 10.0) -> None:
             '}',
             '# --- Remove stale trace, install new one ---',
             'catch {trace remove command CheckViewPort delete ::OnCheckViewPortDelete}',
-            'trace add command CheckViewPort delete ::OnCheckViewPortDelete',
+            'catch {trace add command CheckViewPort delete ::OnCheckViewPortDelete}'
             '# --- Initial guard application ---',
             '::ReGuardCheckViewPort',
         ]
@@ -1425,7 +1425,7 @@ def disable_checkviewport_recursion(*, timeout_sec: float = 10.0) -> None:
                     '}',
                     '# --- Install/ensure delete trace ---',
                     'catch {trace remove command CheckViewPort delete ::OnCheckViewPortDelete}',
-                    'trace add command CheckViewPort delete ::OnCheckViewPortDelete',
+                    'catch {trace add command CheckViewPort delete ::OnCheckViewPortDelete}'
                     '# --- Apply guard ---',
                     '::ReGuardCheckViewPort',
                 ],
@@ -2083,7 +2083,7 @@ def ensure_movie_view_size(
                 '    }',
                 '}',
                 'catch {trace remove command CheckViewPort delete ::OnCheckViewPortDelete}',
-                'trace add command CheckViewPort delete ::OnCheckViewPortDelete',
+                'catch {trace add command CheckViewPort delete ::OnCheckViewPortDelete}'
                 '::ReGuardCheckViewPort',
                 'update',
                 'set wi [$wpath.gl0 cget -width]',

@@ -588,7 +588,8 @@ class TestMovieFboCaptureScript:
         body_lines = captured["body_lines"]
         # Find key line indices to verify ordering
         hb_finally_end = next(i for i, l in enumerate(body_lines) if "rename CheckViewPort_saved CheckViewPort" in l)
-        update_idx = next(i for i, l in enumerate(body_lines) if l.strip() == "update")
+        cancel_idx = next(i for i, l in enumerate(body_lines) if "after cancel UpdateView_TimerProc" in l)
+        update_idx = next(i for i, l in enumerate(body_lines) if l.strip() == "update" and "after cancel" not in l)
 
         # IMPORTANT: There are 2 wm state occurrences:
         #   1. DIAG_WM_STATE: diagnostic BEFORE height bump (earlier index)
@@ -600,9 +601,11 @@ class TestMovieFboCaptureScript:
 
         update_view_idx = next(i for i, l in enumerate(body_lines) if "UpdateView $vno_int" in l)
 
-        # Verify ordering: height bump finished → update → if/else branch → UpdateView
-        assert hb_finally_end < update_idx, \
-            f"update (idx={update_idx}) must come after height bump restore (idx={hb_finally_end})"
+        # Verify ordering: height bump finished → cancel timer → update → if/else branch → UpdateView
+        assert hb_finally_end < cancel_idx, \
+            f"cancel (idx={cancel_idx}) must come after height bump restore (idx={hb_finally_end})"
+        assert cancel_idx < update_idx, \
+            f"cancel (idx={cancel_idx}) must come before update (idx={update_idx})"
         assert update_idx < wm_branch_idx, \
             f"update (idx={update_idx}) must come before wm state check (idx={wm_branch_idx})"
         # UpdateView appears after wm state branching (in both branches)

@@ -175,18 +175,25 @@ class TestEnsureMovieViewSize:
         cmctrl.ensure_movie_view_size(960, 640)
         body_lines = captured["body_lines"]
 
-        # Find height bump restore (end of try-finally) and update
+        # Find height bump restore (end of try-finally), cancel timer, and update
         hb_restore = [l for l in body_lines if "rename CheckViewPort_saved CheckViewPort" in l]
+        cancel_lines = [l for l in body_lines if "after cancel UpdateView_TimerProc" in l]
         update_lines = [l for l in body_lines if l.strip() == "update"]
         assert len(hb_restore) >= 1, "Expected at least one height bump restore line"
+        assert len(cancel_lines) >= 1, "Expected at least one 'after cancel UpdateView_TimerProc' line"
         assert len(update_lines) >= 1, "Expected at least one 'update' after height bump"
 
-        # Verify ordering: height bump finished -> update
+        # Verify ordering: height bump finished -> cancel timer -> update
         hb_restore_idx = next(i for i, l in enumerate(body_lines)
                               if "rename CheckViewPort_saved CheckViewPort" in l)
-        update_idx = next(i for i, l in enumerate(body_lines) if l.strip() == "update")
-        assert hb_restore_idx < update_idx, \
-            f"'update' (idx={update_idx}) must come after height bump restore (idx={hb_restore_idx})"
+        cancel_idx = next(i for i, l in enumerate(body_lines)
+                          if "after cancel UpdateView_TimerProc" in l)
+        update_idx = next(i for i, l in enumerate(body_lines)
+                          if l.strip() == "update" and "after cancel" not in l)
+        assert hb_restore_idx < cancel_idx, \
+            f"cancel timer (idx={cancel_idx}) must come after height bump restore (idx={hb_restore_idx})"
+        assert cancel_idx < update_idx, \
+            f"'update' (idx={update_idx}) must come after cancel timer (idx={cancel_idx})"
 
         # Verify 'update idletasks' is NOT used (known to cause FBO Creation errors)
         assert "update idletasks" not in body_lines

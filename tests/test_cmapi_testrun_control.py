@@ -163,12 +163,15 @@ class TestMovieEventPumpMitigations:
 
 
 class TestCheckViewPortRecursionGuard:
-    def test_disable_sends_rename_to_noop(self, cmctrl, monkeypatch, tmp_path):
+    def test_disable_sends_guarded_wrapper(self, cmctrl, monkeypatch, tmp_path):
         captured = _capture_body_lines(monkeypatch, cmctrl, tmp_path, "ok")
         cmctrl.disable_checkviewport_recursion()
         body_lines = captured["body_lines"]
-        assert "catch {rename CheckViewPort CheckViewPort_saved}" in body_lines
-        assert "proc CheckViewPort {wv} {}" in body_lines
+        # disable_checkviewport_recursion now uses the guarded wrapper (::ReGuardCheckViewPort)
+        # instead of the simple no-op. Verify the guarded wrapper pattern.
+        assert any("::ReGuardCheckViewPort" in l for l in body_lines)
+        assert any("CheckViewPort_running" in l for l in body_lines)
+        assert any("CheckViewPort_saved" in l for l in body_lines)
 
     def test_restore_sends_rename_back(self, cmctrl, monkeypatch, tmp_path):
         captured = _capture_body_lines(monkeypatch, cmctrl, tmp_path, "ok")

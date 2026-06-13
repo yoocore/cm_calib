@@ -2043,6 +2043,8 @@ def ensure_movie_view_size(
                 '    catch {rename CheckViewPort {}}',
                 '    catch {rename CheckViewPort_saved CheckViewPort}',
                 '}',
+                '# --- Process pending resize events to stabilize GL context after height bump ---',
+                'update',
                 '# --- Re-guard CheckViewPort (re-entrant wrapper + delete trace) ---',
                 '# Define helper procs once, then apply guard.',
                 'if {[info procs ::ReGuardCheckViewPort] eq ""} {',

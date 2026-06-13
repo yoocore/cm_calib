@@ -1,4 +1,0 @@
-step1
-step2
-dde_rc=0
-dde_msg=1

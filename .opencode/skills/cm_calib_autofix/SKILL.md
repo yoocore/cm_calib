@@ -304,3 +304,85 @@ python -m pytest tests/ -v -k "not dde and not fbo_after_prepare" 2>&1 | Tee-Obj
 3. **每轮修复必须可验证。** 改完必须自己重新执行确认。
 4. **分析先于动手。** 明确根因后再改代码，不要随机尝试。每次关键发现都写入 agentmemory。
 5. **诊断优于猜测。** 不确定根因就先加诊断输出再执行，而不是假设原因。
+
+---
+
+## 关键教训记录（从实际运行中累积）
+
+### 教训1：Smoke Test 必须限制迭代次数
+
+**场景：** 用户说"冒烟"或"smoke test"，意味着快速验证流程是否能跑通。
+**错误做法：** 依赖 config 中的 `max_iters: 180`，让全流程跑完耗时 10+ 分钟。
+**正确做法：** 在运行前修改 config 文件，将每相机迭代限制为 5-10 轮。
+
+```bash
+# 冒烟模式：手动覆盖 max_iters（orchestrator 没有 --max-iters 参数）
+python -c "
+import json
+for cam in ['right_rear', 'rear_tv', 'left_tv']:
+    p = f'configs/camera.{cam}.json'
+    with open(p) as f: cfg = json.load(f)
+    cfg['max_iters'] = 5
+    with open(p, 'w') as f: json.dump(cfg, f, indent=4)
+"
+# 然后正常运行 orchestrator
+python calibration_orchestrator.py --testrun vctc_ngxpro --camera right_rear rear_tv left_tv --campaign-rounds 1
+```
+
+**关键：** `--campaign-rounds` 不等于冒烟次数。它控制的是整个标定流程重复几遍，不是每个相机的迭代次数。要限制迭代必须改 config。
+
+### 教训2：CheckViewPort 多相机切换失败
+
+**场景：** Orchestrator 完成第一相机后切换到第二相机时，IPG-MOVIE 报 `unknown command "CheckViewPort"` 并卡死。
+
+**根因：**
+1. 第一相机 prepare 时 `disable_checkviewport_recursion()` 将 CheckViewPort 重命名为 CheckViewPort_saved，安装 wrapper
+2. 第一相机 finish 时 `restore_checkviewport()` 恢复 CheckViewPort_saved → CheckViewPort
+3. 第二相机 prepare 时再次尝试 wrap CheckViewPort，但 MOVIE 正在重建 view widget，CheckViewPort 作为内部 proc 已不复存在
+4. `ensure_movie_view_size()` 中 view size 设置脚本尝试调用 CheckViewPort 相关代码 → 抛出 `unknown command` → 整个脚本失败
+
+**本质：** CheckViewPort 不是持久 Tcl proc，它是 IPG-MOVIE 在创建 view widget 时动态生成的。相机切换时 widget 销毁重建，proc 也随之消失。
+
+**修复方向：**
+- `ensure_movie_view_size()` 中对 CheckViewPort 的操作应 graceful degrade：如果 CheckViewPort 不存在，创建一个简单的 no-op placeholder 或直接跳过
+- 或者 view size 脚本解耦：CheckViewPort guard 和 view size 设置分开执行，避免 guard 失败导致 size 设置也失败
+
+**搜索命令：**
+```bash
+Select-String -Path tmp/*.log -Pattern "CheckViewPort|unknown command" -SimpleMatch
+```
+
+### 教训3：分析必须全面 —— 不要只查 FBO/ConnectTo
+
+**场景：** 检查标定是否导致 CarMaker 报错时，不能只 grep "FBO" 和 "ConnectTo"。
+**问题：** CarMaker/IPG-MOVIE 还有其他错误类型（`unknown command`、`invalid command name`、Traceback 等）。
+**正确做法：**
+- 读取完整日志，不要依赖 grep 摘要
+- 检查 orchestration 最终状态 status 字段
+- 检查每个相机的 CALIBRATION_SUMMARY_JSON 中的 passed 字段
+- 用更宽泛的模式搜索错误
+
+```bash
+# 正确检查标定是否失败
+$full_log = Get-Content tmp/orchestration.log -Raw
+if ($full_log -match '"status":"failed"' -or $full_log -match 'Traceback') {
+    Write-Host "FAILED - 需分析完整错误"
+}
+# 或者
+Select-String -Path tmp/orchestration.log -Pattern "(error|Error|ERROR|invalid|unknown|failed|Failed|FAILED|Traceback|Exception)"
+```
+
+### 教训4：检测标定是否卡死 —— 参数无变化 = 标定不正常
+
+**场景：** 标定跑了 N 轮但 `start_score == final_score` 且所有参数 start == final。
+**判断标准：**
+- start_score ≈ final_score（差 < 1e-6）
+- 所有参数值 start 和 final 完全相同
+- `accepted` 字段持续为 False
+- `stop_reason` 是 `max_iters_reached`（从未提前收敛）
+
+这表示标定系统本身有问题（board 检测失败、score 计算不工作、view 配置不正确等），不是参数调整能解决的。应该：
+1. 检查 Capture 是否返回有效图像
+2. 检查 board 检测结果
+3. 检查 template/overlay 是否正确匹配
+4. 而不是继续跑更多轮次

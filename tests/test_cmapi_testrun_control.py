@@ -175,25 +175,39 @@ class TestEnsureMovieViewSize:
         cmctrl.ensure_movie_view_size(960, 640)
         body_lines = captured["body_lines"]
 
-        # Find height bump restore (end of try-finally), cancel timer, and update
+        # Find height bump restore (end of try-finally)
         hb_restore = [l for l in body_lines if "rename CheckViewPort_saved CheckViewPort" in l]
-        cancel_lines = [l for l in body_lines if "after cancel UpdateView_TimerProc" in l]
-        update_lines = [l for l in body_lines if l.strip() == "update"]
         assert len(hb_restore) >= 1, "Expected at least one height bump restore line"
-        assert len(cancel_lines) >= 1, "Expected at least one 'after cancel UpdateView_TimerProc' line"
-        assert len(update_lines) >= 1, "Expected at least one 'update' after height bump"
 
-        # Verify ordering: height bump finished -> cancel timer -> update
+        # Verify the rename-to-no-op pattern for UpdateView_TimerProc
+        cancel_lines = [l for l in body_lines if "after cancel UpdateView_TimerProc" in l]
+        rename_save_lines = [l for l in body_lines if "rename UpdateView_TimerProc __saved_UpdateView_TimerProc" in l]
+        noop_lines = [l for l in body_lines if "proc UpdateView_TimerProc {args} {}" in l]
+        update_lines = [l for l in body_lines if l.strip() == "update" and "after cancel" not in l]
+        rename_restore_lines = [l for l in body_lines if "rename __saved_UpdateView_TimerProc UpdateView_TimerProc" in l]
+
+        assert len(cancel_lines) >= 1, "Expected after cancel UpdateView_TimerProc"
+        assert len(rename_save_lines) >= 1, "Expected rename UpdateView_TimerProc __saved_..."
+        assert len(noop_lines) >= 1, "Expected proc UpdateView_TimerProc {args} {}"
+        assert len(update_lines) >= 1, "Expected 'update' after no-op proc"
+        assert len(rename_restore_lines) >= 1, "Expected restore of UpdateView_TimerProc"
+
+        # Verify ordering: height bump finished -> cancel -> rename -> no-op -> update
         hb_restore_idx = next(i for i, l in enumerate(body_lines)
                               if "rename CheckViewPort_saved CheckViewPort" in l)
         cancel_idx = next(i for i, l in enumerate(body_lines)
                           if "after cancel UpdateView_TimerProc" in l)
+        rename_save_idx = next(i for i, l in enumerate(body_lines)
+                               if "rename UpdateView_TimerProc __saved_UpdateView_TimerProc" in l)
+        noop_idx = next(i for i, l in enumerate(body_lines)
+                        if "proc UpdateView_TimerProc {args} {}" in l)
         update_idx = next(i for i, l in enumerate(body_lines)
                           if l.strip() == "update" and "after cancel" not in l)
-        assert hb_restore_idx < cancel_idx, \
-            f"cancel timer (idx={cancel_idx}) must come after height bump restore (idx={hb_restore_idx})"
-        assert cancel_idx < update_idx, \
-            f"'update' (idx={update_idx}) must come after cancel timer (idx={cancel_idx})"
+
+        assert hb_restore_idx < cancel_idx
+        assert cancel_idx < rename_save_idx
+        assert rename_save_idx < noop_idx
+        assert noop_idx < update_idx
 
         # Verify 'update idletasks' is NOT used (known to cause FBO Creation errors)
         assert "update idletasks" not in body_lines

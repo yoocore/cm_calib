@@ -586,10 +586,39 @@ class TestMovieFboCaptureScript:
                 calib._capture_movie_via_dde("probe")
 
         body_lines = captured["body_lines"]
-        # Find key line indices to verify ordering
+        # Find key line indices to verify ordering of the UpdateView_TimerProc
+        # defense block: cancel -> rename -> no-op -> update -> restore
         hb_finally_end = next(i for i, l in enumerate(body_lines) if "rename CheckViewPort_saved CheckViewPort" in l)
+
+        # Cancel timer
+        cancel_lines = [l for l in body_lines if "after cancel UpdateView_TimerProc" in l]
+        assert len(cancel_lines) >= 1, "Expected after cancel UpdateView_TimerProc"
         cancel_idx = next(i for i, l in enumerate(body_lines) if "after cancel UpdateView_TimerProc" in l)
+
+        # Rename original to no-op
+        rename_save_lines = [l for l in body_lines if "rename UpdateView_TimerProc __saved_UpdateView_TimerProc" in l]
+        assert len(rename_save_lines) >= 1, "Expected rename UpdateView_TimerProc __saved_..."
+        rename_save_idx = next(i for i, l in enumerate(body_lines) if "rename UpdateView_TimerProc __saved_UpdateView_TimerProc" in l)
+
+        # No-op proc definition
+        noop_lines = [l for l in body_lines if "proc UpdateView_TimerProc {args} {}" in l]
+        assert len(noop_lines) >= 1, "Expected proc UpdateView_TimerProc {args} {}"
+        noop_idx = next(i for i, l in enumerate(body_lines) if "proc UpdateView_TimerProc {args} {}" in l)
+
+        # update (the actual event processing)
+        update_lines_without_cancel = [l for l in body_lines if l.strip() == "update" and "after cancel" not in l]
+        assert len(update_lines_without_cancel) >= 1, "Expected 'update' after no-op proc"
         update_idx = next(i for i, l in enumerate(body_lines) if l.strip() == "update" and "after cancel" not in l)
+
+        # Restore original
+        rename_restore_lines = [l for l in body_lines if "rename __saved_UpdateView_TimerProc UpdateView_TimerProc" in l]
+        assert len(rename_restore_lines) >= 1, "Expected rename __saved_UpdateView_TimerProc UpdateView_TimerProc"
+
+        # Verify ordering: cancel → rename → no-op → update
+        assert hb_finally_end < cancel_idx
+        assert cancel_idx < rename_save_idx
+        assert rename_save_idx < noop_idx
+        assert noop_idx < update_idx
 
         # IMPORTANT: There are 2 wm state occurrences:
         #   1. DIAG_WM_STATE: diagnostic BEFORE height bump (earlier index)
@@ -601,14 +630,9 @@ class TestMovieFboCaptureScript:
 
         update_view_idx = next(i for i, l in enumerate(body_lines) if "UpdateView $vno_int" in l)
 
-        # Verify ordering: height bump finished → cancel timer → update → if/else branch → UpdateView
-        assert hb_finally_end < cancel_idx, \
-            f"cancel (idx={cancel_idx}) must come after height bump restore (idx={hb_finally_end})"
-        assert cancel_idx < update_idx, \
-            f"cancel (idx={cancel_idx}) must come before update (idx={update_idx})"
+        # Verify ordering: update → if/else branch → UpdateView
         assert update_idx < wm_branch_idx, \
             f"update (idx={update_idx}) must come before wm state check (idx={wm_branch_idx})"
-        # UpdateView appears after wm state branching (in both branches)
         assert update_idx < update_view_idx, \
             f"update (idx={update_idx}) must come before UpdateView (idx={update_view_idx})"
 

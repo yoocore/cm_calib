@@ -1,6 +1,6 @@
 # CameraCalibration — Handoff
 
-## 当前状态 (2026-06-14 14:20)
+## 当前状态 (2026-06-14 11:30)
 
 ### 渲染卡死修复 (已完成)
 
@@ -71,49 +71,9 @@ if {($View(StopUpdateView) || $View(UpdateViewActive)) && $Pgm(Exporting)==0} {
 - left_tv 达到 ~21 次迭代时渲染卡死，score 恒定 810.73
 - 用户中止，触发本次修复 (Layer 1 + 2 防御)
 
-### CheckViewPort 命名冲突修复 (已完成)
+### 当前轮标定
 
-**根源**: 两个独立的 Tcl `rename` 系统使用了相同的临时名称 `CheckViewPort_saved`：
-
-1. `wrap_checkviewport()` (persistent guard) — 将原始 CheckViewPort 重命名为 `CheckViewPort_saved`，然后创建 re-entrant 守卫作为新的 `CheckViewPort`
-2. `_capture_movie_via_dde()` 和 `ensure_movie_view_size()` — 在 height bump 期间也将 CheckViewPort 重命名为 `CheckViewPort_saved`
-
-**冲突过程**:
-```
-wrap_checkviewport(): CheckViewPort → CheckViewPort_saved (原始), 创建守卫作为 CheckViewPort
-capture script: rename CheckViewPort CheckViewPort_saved → 覆盖了守卫, 丢失原始命令
-capture finally: rename CheckViewPort_saved CheckViewPort → 恢复守卫
-结果: CheckViewPort_saved 为空, 守卫调用 CheckViewPort_saved 时崩溃
-```
-
-**修复方法** (commit `12f8aa2`): 使用 `__orig_during_bump` 作为 height bump 期间的临时名称，避免与守卫系统的命名冲突。
-
-修改文件:
-- `camera_calibration.py` — 2 行
-- `cmapi_testrun_control.py` — 2 行
-- `tests/test_persistent_counters.py` — 3 行 (更新断言)
-- `tests/test_cmapi_testrun_control.py` — 2 行 (更新断言)
-
-### 验证结果
-
-| 检查项 | 结果 |
-|--------|------|
-| CheckViewPort rename 命名冲突 | ✅ 已修复 (使用 `__orig_during_bump`) |
-| 单元测试 | ✅ 121/121 通过 |
-| 单次捕获测试 | ✅ 成功，无 CheckViewPort 错误 |
-| capture-initials | ✅ 成功读取相机参数 |
-| 完整标定运行 | ✅ 无 CheckViewPort 错误 |
-| 生成的 Tcl 脚本 | ✅ 确认使用 `__orig_during_bump` |
-
-### 新发现的问题 (待修复)
-
-完整标定运行中发现渲染状态异常:
-- `UVA=0 SUV=1 EXP=0` — StopUpdateView 激活
-- 导致截图返回 None，标定优化失败
-- 这是独立的渲染问题，需要单独调查
-
-### 下一步
-
-1. 调查 `SUV=1` (StopUpdateView) 的触发原因
-2. 修复渲染状态异常
-3. 重新运行完整标定验证
+- 此文档更新后即启动新一轮三相机标定
+- 命令: `python calibration_orchestrator.py --testrun vctc_ngxpro --camera rear_tv --camera left_tv --camera right_rear --explore-then-refine`
+- 预计耗时: 30min-2h per camera
+- 预期: 修复后渲染卡死自动恢复，score 不再恒定不变

@@ -1937,3 +1937,81 @@ height bump try-finally 结束
 **现状：** 所有相机分数远超 target <5.0，3 次迭代未收敛。**这不是 capture bug，是标定算法/初始参数问题。**
 **建议：** 确认 capture 稳定后（当前三轮已修复），增加 multi-start-iters 或 round 数。考虑检查初始参数猜测的准确性。
 
+---
+
+## Phase 29: CheckViewPort Rename Conflict — Fix `invalid command name "CheckViewPort"` (2026-06-14)
+
+**Commits:** 12f8aa2, 33ed68e
+
+### Problem
+
+运行标定后出现 `ERROR: invalid command name "CheckViewPort"`:
+```
+ERROR: invalid command name "CheckViewPort"
+procedure "Ev_Configure" line 48: "CheckViewPort .view$wno"
+```
+
+### Root Cause
+
+两个独立的 Tcl `rename` 系统使用了相同的临时名称 `CheckViewPort_saved`，导致命名冲突：
+
+1. **`wrap_checkviewport()`** (persistent guard) — 将原始 CheckViewPort 重命名为 `CheckViewPort_saved`，然后创建 re-entrant 守卫作为新的 `CheckViewPort`
+2. **`_capture_movie_via_dde()` 和 `ensure_movie_view_size()`** — 在 height bump 期间也将 CheckViewPort 重命名为 `CheckViewPort_saved`
+
+**冲突过程：**
+```
+wrap_checkviewport(): CheckViewPort → CheckViewPort_saved (原始), 创建守卫作为 CheckViewPort
+capture script: rename CheckViewPort CheckViewPort_saved → 覆盖了守卫, 丢失原始命令
+capture finally: rename CheckViewPort_saved CheckViewPort → 恢复守卫
+结果: CheckViewPort_saved 为空, 守卫调用 CheckViewPort_saved 时崩溃
+```
+
+### Fix
+
+使用 `__orig_during_bump` 作为 height bump 期间的临时名称，避免与守卫系统的命名冲突。
+
+**修改位置：**
+- `camera_calibration.py:7779,7785` — `_capture_movie_via_dde()` 中的 height bump try-finally
+- `cmapi_testrun_control.py:2078,2090` — `ensure_movie_view_size()` 中的 height bump try-finally
+
+**测试更新：**
+- `tests/test_persistent_counters.py:591,663,667` — 更新断言
+- `tests/test_cmapi_testrun_control.py:179,197` — 更新断言
+
+### Verification
+
+| 检查项 | 结果 |
+|--------|------|
+| CheckViewPort rename 命名冲突 | ✅ 已修复 (使用 `__orig_during_bump`) |
+| 单元测试 | ✅ 121/121 通过 |
+| 单次捕获测试 | ✅ 成功，无 CheckViewPort 错误 |
+| capture-initials | ✅ 成功读取相机参数 |
+| 完整标定运行 | ✅ 无 CheckViewPort 错误 |
+| 生成的 Tcl 脚本 | ✅ 确认使用 `__orig_during_bump` |
+
+### 新发现的问题 (待修复)
+
+完整标定运行中发现渲染状态异常:
+- `UVA=0 SUV=1 EXP=0` — StopUpdateView 激活
+- 导致截图返回 None，标定优化失败
+- 这是独立的渲染问题，需要单独调查
+
+### Git History
+
+```
+33ed68e docs: update handoff.md with CheckViewPort fix verification results
+12f8aa2 fix: resolve CheckViewPort rename conflict between capture script and re-entrant guard
+```
+
+---
+
+## Phase 30: StopUpdateView (SUV=1) Rendering Freeze (2026-06-14, IN PROGRESS)
+
+### Problem
+
+完整标定运行中，所有 multi-start runs 失败：`Failed reading screenshot: None`。
+诊断显示渲染状态异常：`UVA=0 SUV=1 EXP=0`（StopUpdateView 激活）。
+
+### Status
+
+待调查。与 Phase 29 的 CheckViewPort 修复无关，是独立的渲染问题。

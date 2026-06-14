@@ -1322,7 +1322,7 @@ def disable_movie_updateview_timer(*, timeout_sec: float = 10.0) -> None:
                 "IPG-MOVIE",
                 [
                     "catch {after cancel UpdateView_TimerProc}",
-                    "catch {rename UpdateView_TimerProc __saved_UpdateView_TimerProc}",
+                    "catch {rename UpdateView_TimerProc __saved_UpdateView_TimerProc_orch}",
                     "proc UpdateView_TimerProc {args} {}",
                 ],
             ),
@@ -1354,7 +1354,7 @@ def enable_movie_updateview_timer(*, timeout_sec: float = 10.0) -> None:
                 "IPG-MOVIE",
                 [
                     "catch {rename UpdateView_TimerProc {}}",
-                    "catch {rename __saved_UpdateView_TimerProc UpdateView_TimerProc}",
+                    "catch {rename __saved_UpdateView_TimerProc_orch UpdateView_TimerProc}",
                     "if {[info commands UpdateView_TimerProc] ne \"\"} {",
                     "    catch {after 0 UpdateView_TimerProc}",
                     "}",

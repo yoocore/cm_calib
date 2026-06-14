@@ -89,10 +89,23 @@ python -c "import sys; sys.path.insert(0, '.'); from dde_health_check import run
 
 ## 工作流
 
+### 第0步：环境检查（必须！）
+
+**在执行任何标定命令前，必须先运行环境检查：**
+
+```bash
+python check_environment.py
+```
+
+如果检查失败，先解决环境问题再继续。常见问题：
+- CarMaker 未运行 → 启动 CarMaker
+- IPG-MOVIE 未运行 → 启动 IPG-MOVIE
+- CheckViewPort 不存在 → 重启 IPG-MOVIE
+- DDE 连接失败 → 等待 5s 后重试
+
 ### 第1步：理解需求
 
 用户明确说出要修什么。如果需求模糊，问一个问题澄清。
-
 ### 第2步：执行 + 捕获
 
 直接通过 `bash` 运行相关命令。关键要点：

@@ -32,7 +32,7 @@ def dde_exec_tcl(script_body: str, label: str = "diag") -> str:
     full_script = f"""set __diag_out [open "{result_path.as_posix()}" w]
 set rc [catch {{send {DDE_TOPIC} {{
     {script_body}
-}}} msg]
+}} msg]
 puts $__diag_out "rc=$rc"
 puts $__diag_out "msg_begin"
 puts $__diag_out $msg

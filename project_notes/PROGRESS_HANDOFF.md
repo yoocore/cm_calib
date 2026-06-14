@@ -2114,3 +2114,108 @@ orchestrator 的 health check 不像 capture_movie() 那样有 try_restart_rende
 ### ❌ 问题 8：相机切换后 View() 数组丢失 — **未修复**（Phase 32）
 ### ❌ 问题 9：Prepare 阶段渲染冻结 — **未修复**（Phase 32）
 ### ❌ 问题 4：标定分数长期较高 — **算法问题**
+
+---
+
+## Phase 33: `after 0 UpdateView_TimerProc` Causes ConfigFBO Crash After Height Bump (2026-06-14)
+
+**Commit:** c1ec1e5
+
+### Problem
+
+多相机标定后 IPG-MOVIE 卡死，报错：
+```
+ERROR: FBO Creation error (unknown error)
+procedure "ConfigFBO" line 36:
+   "FBO new $wi $he -tex $texfmt -samples $samples -noclear"
+procedure "UpdateView_TimerProc" line 71:
+   "ConfigFBO $vno"
+"after" script:
+   "UpdateView_TimerProc"
+```
+
+用户可见症状：IPG-MOVIE 窗口卡死无响应，需重启。
+
+### Root Cause
+
+`camera_calibration.py` 的 capture body 中，`catch {after 0 UpdateView_TimerProc}` 放在 height bump + `after cancel` + `rename` + `update` (try/finally) 块之后、capture if/else 块之前。
+
+时序问题：
+1. Height bump 调用 `View::SetSize h+1` → `View::SetSize h` — GL 上下文需要重新创建
+2. `after cancel UpdateView_TimerProc` + `rename` to no-op + `update` — 事件处理完成
+3. `rename` 恢复原版 `UpdateView_TimerProc`
+4. **`after 0 UpdateView_TimerProc`** — 立即调度渲染定时器
+5. capture if/else 块执行 `UpdateView $vno_int` — 触发渲染
+6. 渲染过程中 `after 0` 定时器触发（同一次 Tcl event loop），调用已恢复的 `UpdateView_TimerProc`
+7. `UpdateView_TimerProc` 调用 `ConfigFBO` → `FBO new`
+8. GL 上下文尚未从 height bump 中完全稳定 → FBO Creation error → IPG-MOVIE 冻结
+
+Phase 28 (commit d52ac58) 发现了类似问题，当时的解决方案是小心控制 `after cancel` + `update` 顺序。但 Phase 31 (commit 47e8d79) 为了解决"渲染循环静默死亡"问题，在 capture body 中重新引入了 `after 0 UpdateView_TimerProc`，且放在 capture 之前，重新触发了 Phase 28 的 FBO 失败路径。
+
+### Fix (commit c1ec1e5)
+
+将 `catch {after 0 UpdateView_TimerProc}` 从 height bump try/finally 块之后移动到 **整个 capture if/else 块之后**：
+
+```tcl
+# Before (crashes):
+try { rename + after cancel + update } finally { restore }
+catch {after 0 UpdateView_TimerProc}     # ← BEFORE capture: triggers ConfigFBO
+if {iconic} { FBO path } else { noFBO path }
+
+# After (fixed):
+try { rename + after cancel + update } finally { restore }
+if {iconic} { FBO path } else { noFBO path }
+catch {after 0 UpdateView_TimerProc}     # ← AFTER capture: GL context stable
+```
+
+同样修复在 `cmapi_testrun_control.py` 的 `ensure_movie_view_size()` 中。
+
+### 为什么这次修复是安全的
+
+- `after 0 UpdateView_TimerProc` 在 `update`（事件处理）之后调度，但 `after 0` 的定时器在**当前事件循环退出后**才触发
+- capture if/else 块中的 `UpdateView $vno_int` 是同步调用，在当前 Tcl event loop 迭代内完成渲染
+- 定时器在下一轮 event loop 迭代才触发，此时 GL 上下文已经完全稳定
+- 渲染循环不会因为 1 个 capture 间隔而死亡，因为 capture 体本身调用了 `UpdateView` 完成了渲染
+
+### Verification
+
+**双相机标定（right_rear + rear_tv）验证：**
+
+| 检查项 | 结果 |
+|--------|------|
+| right_rear 标定 | ✅ 分数 43.47，无错误 |
+| rear_tv 标定 | ✅ 分数 1051.83，无 FBO 错误 |
+| 相机切换 | ✅ 正常 |
+| CheckViewPort 递归 | ✅ 0 次 |
+| ConfigFBO FBO 错误 | ✅ 0 次 |
+| IPG-MOVIE 存活 | ✅ 仍然健康 |
+| `check_environment.py` | ✅ 全部通过 |
+| 单元测试 38/38 | ✅ 通过 |
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `camera_calibration.py` | 移走 `after 0` 从 capture 之前，移入 capture 之后 |
+| `cmapi_testrun_control.py` | 移走 `after 0` 从 guard 之前，移入 guard + update 之后 |
+
+### 经验教训
+
+1. `after 0 UpdateView_TimerProc` 必须在 GL 上下文完全稳定后调度，不能放在 height bump + update 之后立刻
+2. Phase 28 和 Phase 31 的修复存在冲突：Phase 28 移除 `after 0` 防止 FBO 错误；Phase 31 添加 `after 0` 防止渲染循环死亡。正确的平衡是将 `after 0` 放在 capture 体之后而不是之前
+3. 两相机标定验证比单相机更有价值，能暴露相机切换相关的 GL/FBO 问题
+
+### 当前剩余问题状态 (2026-06-14)
+
+| # | 问题 | 状态 |
+|---|------|------|
+| 1 | 最小化窗口报错 | ✅ **已修复**（Phase 23） |
+| 2 | 间歇性 DDE capture 错误 | ✅ **已修复**（Phase 24） |
+| 3 | 分数不稳定（百万级异常） | ✅ **已修复**（Phase 24） |
+| 4 | 标定分数长期较高 | ❌ **算法问题** |
+| 5 | CheckViewPort 递归 | ✅ **已修复**（Phase 27, 29） |
+| 6 | 渲染循环静默死亡 | ✅ **已修复**（Phase 31） |
+| 7 | capture_movie() 缺少 return | ✅ **已修复**（Phase 31） |
+| 8 | 相机切换后 View() 数组丢失 | ⚠️ **部分缓解**（Phase 32 — 新鲜启动时正常，旧 session 仍可能触发） |
+| 9 | Prepare 阶段渲染冻结 | ⚠️ **部分缓解**（Phase 33, rendering_health.js 会检测并 restart，但 restart 可能返回 None） |
+| 10 | `after 0` 导致 ConfigFBO crash | ✅ **已修复**（Phase 33, commit c1ec1e5） |

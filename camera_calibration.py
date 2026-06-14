@@ -7989,7 +7989,18 @@ class CameraCalibrator:
                     if r.get("restart_success"):
                         print(f"[health] Rendering restarted, UC growth={r.get('uc_growth')}")
                     else:
-                        print(f"[health] Rendering restart failed: {r.get('error', 'unknown')}")
+                        err_detail = r.get('error', 'unknown') or 'None'
+                        print(f"[health] Rendering restart failed: {err_detail}")
+                        # Capture CarMaker error dialog for diagnostic
+                        cm_err = self._capture_carmaker_error_dialog()
+                        if cm_err:
+                            print(f"[health] CarMaker error at freeze time: {cm_err[:300]}")
+                        # Abort: frozen rendering = waste of retries
+                        raise RuntimeError(
+                            f"IPG-MOVIE rendering frozen (UVA={uva} SUV={suv} EXP={exp} UC={uc}). "
+                            f"Restart failed: {err_detail}. "
+                            f"CarMaker err: {cm_err[:100] if cm_err else 'N/A'}"
+                        )
                 self._last_capture_uc = uc
         except ImportError:
             pass  # rendering_health module not available

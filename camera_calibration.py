@@ -7846,6 +7846,8 @@ class CameraCalibrator:
                     "    after 200",
                     "}",
                     "# --- Re-schedule the rendering loop timer AFTER capture (not before — would trigger ConfigFBO in unstable GL context) ---",
+                    "# --- diagnostic: capture CarMaker/IPG-MOVIE Tcl error state ---",
+                    "catch {puts $__copilot_remote_out \"DIAG_CARMAKER_ERR: [set ::errorInfo]\"}",
                     "catch {after 0 UpdateView_TimerProc}",
                     "catch {gl bindframebuffer_read 0}",
             ],

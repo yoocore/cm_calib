@@ -7995,6 +7995,15 @@ class CameraCalibrator:
             pass  # rendering_health module not available
         except Exception as exc:
             print(f"[health] Rendering check error: {exc}")
+
+        # Proactive CarMaker error check: probe for errors before capture
+        try:
+            err_text = self._capture_carmaker_error_dialog()
+            if err_text and ("ERROR" in err_text or "invalid" in err_text or "FBO" in err_text):
+                print(f"[carmaker] WARNING: CarMaker error detected before capture: {err_text[:200]}")
+        except Exception:
+            pass
+
         return self._capture_movie_via_dde(tag)
 
     def _diagnose_carmaker_after_failure(self, error: RuntimeError) -> None:
@@ -8033,6 +8042,76 @@ class CameraCalibrator:
                 print(f"[carmaker_diag] probe failed: {result.get('detail')}")
         except Exception as exc:
             print(f"[carmaker_diag] error: {exc}")
+        # Fallback: try clipboard-based dialog capture when DDE is unresponsive
+        try:
+            err = self._capture_carmaker_error_dialog()
+            if err:
+                # Check if it's an error (not just empty/no-error state)
+                if "ERROR" in err or "invalid" in err or "FBO" in err or "ConfigFBO" in err:
+                    print(f"[carmaker_diag] CAPTURED FROM DEBUGGER: {err}")
+        except Exception:
+            pass
+
+    def _capture_carmaker_error_dialog(self) -> Optional[str]:
+        """Capture CarMaker/IPG-MOVIE error dialog content via clipboard (Ctrl+A + Ctrl+C).
+        Returns the error text if found, None otherwise.
+        Use when DDE is down and standard diag probes fail.
+        """
+        try:
+            import ctypes
+            from ctypes import wintypes
+            import time
+
+            user32 = ctypes.windll.user32
+
+            # Find IPGMovie Internal Debugger window
+            found = []
+            def enum_proc(hwnd, lparam):
+                length = user32.GetWindowTextLengthW(hwnd) + 1
+                buffer = ctypes.create_unicode_buffer(length)
+                user32.GetWindowTextW(hwnd, buffer, length)
+                title = buffer.value
+                if "Internal Debugger" in title or ("IPGMovie" in title and "Debugger" in title):
+                    found.append(hwnd)
+                return True
+            callback = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)(enum_proc)
+            user32.EnumWindows(callback, 0)
+
+            if not found:
+                return None
+
+            hwnd = found[0]
+            user32.BringWindowToTop(hwnd)
+            user32.SetForegroundWindow(hwnd)
+            time.sleep(0.2)
+
+            # Ctrl+A (select all)
+            ctypes.windll.user32.keybd_event(0x11, 0, 0, 0)
+            ctypes.windll.user32.keybd_event(0x41, 0, 0, 0)
+            time.sleep(0.05)
+            ctypes.windll.user32.keybd_event(0x41, 0, 2, 0)
+            ctypes.windll.user32.keybd_event(0x11, 0, 2, 0)
+            time.sleep(0.1)
+
+            # Ctrl+C (copy)
+            ctypes.windll.user32.keybd_event(0x11, 0, 0, 0)
+            ctypes.windll.user32.keybd_event(0x43, 0, 0, 0)
+            time.sleep(0.05)
+            ctypes.windll.user32.keybd_event(0x43, 0, 2, 0)
+            ctypes.windll.user32.keybd_event(0x11, 0, 2, 0)
+            time.sleep(0.2)
+
+            import win32clipboard
+            win32clipboard.OpenClipboard()
+            try:
+                data = win32clipboard.GetClipboardData()
+                return data.strip() if data.strip() else None
+            except Exception:
+                return None
+            finally:
+                win32clipboard.CloseClipboard()
+        except Exception:
+            return None
 
     def _snapshot_values(self) -> Dict[str, float]:
         return {p.name: p.value for p in self.params}

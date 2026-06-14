@@ -7947,9 +7947,9 @@ class CameraCalibrator:
                 print(f"Warning: could not set movie view size: {exc}")
             self._movie_view_size_initialized = True
         # Rendering health check: detect freeze before attempting capture.
-        # Trigger restart for UVA=1 (stuck) or SUV=1 (stopped) or EXP=1 (exporting).
-        # UVA=0+SUV=0 is the normal between-frame state — let stale hash detection
-        # (Layer 2 in evaluate()) handle that case if rendering is actually dead.
+        # Layer 1a: Flag-based detection — UVA=1 (stuck), SUV=1 (stopped), EXP=1 (exporting).
+        # Layer 1b: UC growth detection — if UpdateCounter hasn't grown since last
+        # capture, the rendering loop timer is dead (after cancel killed it).
         try:
             from rendering_health import check_render_state, try_restart_rendering
             state = check_render_state()
@@ -7957,13 +7957,30 @@ class CameraCalibrator:
                 uva = state.get("uva", "0")
                 suv = state.get("suv", "0")
                 exp = state.get("exp", "0")
+                uc = state.get("uc", "0")
+                needs_restart = False
+                reason = ""
                 if uva == "1" or suv == "1" or exp == "1":
-                    print(f"[health] Rendering issue before '{tag}': UVA={uva} SUV={suv} EXP={exp}, attempting restart...")
+                    needs_restart = True
+                    reason = f"UVA={uva} SUV={suv} EXP={exp}"
+                else:
+                    prev_uc = getattr(self, "_last_capture_uc", None)
+                    if prev_uc is not None:
+                        try:
+                            uc_growth = int(uc) - int(prev_uc)
+                            if uc_growth <= 0:
+                                needs_restart = True
+                                reason = f"UC stalled (prev={prev_uc}, now={uc}, growth={uc_growth})"
+                        except (TypeError, ValueError):
+                            pass
+                if needs_restart:
+                    print(f"[health] Rendering issue before '{tag}': {reason}, attempting restart...")
                     r = try_restart_rendering()
                     if r.get("restart_success"):
                         print(f"[health] Rendering restarted, UC growth={r.get('uc_growth')}")
                     else:
                         print(f"[health] Rendering restart failed: {r.get('error', 'unknown')}")
+                self._last_capture_uc = uc
         except ImportError:
             pass  # rendering_health module not available
         except Exception as exc:

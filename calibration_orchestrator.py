@@ -588,12 +588,6 @@ def main() -> None:
                 # (bootstrap's StopSim clears View() / scene data; a StartSim alone does not re-populate)
                 cmctrl.sync_gui_testrun_selection(project_root, testrun_rel_path)
                 cmctrl.disable_checkviewport_recursion()
-                # Only disable UpdateView_TimerProc for camera switches (2nd+ camera),
-                # NOT for the first camera — disabling kills the rendering loop before
-                # calibration even starts, causing stale captures.
-                # For the first camera, the prepare chain's own after cancel is sufficient.
-                if camera_name != cameras[0]:
-                    cmctrl.disable_movie_updateview_timer(timeout_sec=10.0)
                 try:
                     calibration_summary = _run_single_camera_process(
                         task_id=task_id,
@@ -607,9 +601,6 @@ def main() -> None:
                         probe_name=f"stop_sim_post_calib_{camera_name}",
                     )
             finally:
-                # Only enable if we disabled (not for first camera)
-                if camera_name != cameras[0]:
-                    cmctrl.enable_movie_updateview_timer(timeout_sec=10.0)
                 cmctrl.restore_checkviewport()
             per_camera_results.append(
                 {

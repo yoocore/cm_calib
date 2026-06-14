@@ -404,12 +404,15 @@ def build_checks(output_dir: Path) -> List[Tuple[str, str]]:
                     'set uva $::View(UpdateViewActive)',
                     'set suv $::View(StopUpdateView)',
                     'set uc $::View(UpdateCounter)',
-                    'if {$uva ne "1"} { error "UpdateViewActive=$uva (expected 1)" }',
+                    '# UVA==1 check removed: TimerProc sets UVA=1 only briefly during frame',
+                    '# rendering; between frames UVA=0 even when healthy.',
                     'if {$suv ne "0"} { error "StopUpdateView=$suv (expected 0)" }',
+                    'if {$uc eq "" || $uc < 0} { error "Invalid UpdateCounter=$uc" }',
                     'list UpdateViewActive $uva StopUpdateView $suv UpdateCounter $uc',
                 ],
             ),
         ),
+
     ]
 
 
@@ -590,10 +593,10 @@ def classify_health_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
 
     if movie_render_ok is False:
         return {
-            "code": "movie_render_frozen",
+            "code": "movie_render_probe_failed",
             "message": (
-                "DDE execute and view probe work, but IPG-MOVIE rendering is not active "
-                "(UpdateViewActive!=1 or StopUpdateView!=0). The rendering loop is frozen."
+                "DDE execute and view probe work, but movie_render_probe returned an error. "
+                "This is unexpected; check individual check attempts for details."
             ),
             "interpreter_probe": interpreter_detail or None,
             "movie_command_probe": movie_command_detail or None,

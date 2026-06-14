@@ -7841,14 +7841,9 @@ class CameraCalibrator:
                     f'probeImg write "{out_path.as_posix()}" -format png',
                     "} else {",
                     "    puts $__copilot_remote_out \"DIAG_BRANCH: normal\"",
-                    "    # --- window visible: noFBO, render to default framebuffer ---",
+                    "    # --- window visible: UpdateView only; capture via win32 PrintWindow ---",
                     "    UpdateView $vno_int",
                     "    after 200",
-                    "    catch {image delete probeImg}",
-                    "    image create photo probeImg -width $vp_w -height $vp_h",
-                    "    gl bindframebuffer_read 0",
-                    "    gl readpixels 0 0 probeImg",
-                    f'probeImg write "{out_path.as_posix()}" -format png',
                     "}",
                     "catch {gl bindframebuffer_read 0}",
             ],
@@ -7894,6 +7889,15 @@ class CameraCalibrator:
                             self._record_dde_operation_success()
                             _unlink_if_exists(script_path)
                             _unlink_if_exists(result_path)
+                            if not out_path.exists():
+                                try:
+                                    from capture_viewport_win32 import capture_ipgmovie_viewport
+                                    capture_ipgmovie_viewport(out_path)
+                                except Exception as exc:
+                                    attempt_runtime_error = RuntimeError(
+                                        f"movie dde capture failed: Win32 viewport capture error: {exc}",
+                                    )
+                                    break
                             return out_path
                     time.sleep(0.05)
 

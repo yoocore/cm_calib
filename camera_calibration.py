@@ -7799,8 +7799,6 @@ class CameraCalibrator:
                     "    catch {rename UpdateView_TimerProc {}}",
                     "    catch {rename __saved_UpdateView_TimerProc UpdateView_TimerProc}",
                     "}",
-                    "# --- Re-schedule the rendering loop timer (after cancel killed it) ---",
-                    "catch {after 0 UpdateView_TimerProc}",
                     "if {[wm state $_top] eq {iconic}} {",
                     "    # --- window minimized: use persistent FBO (offscreen) ---",
                     "    if {![info exists __captureFBO]} {",
@@ -7847,6 +7845,8 @@ class CameraCalibrator:
                     "    UpdateView $vno_int",
                     "    after 200",
                     "}",
+                    "# --- Re-schedule the rendering loop timer AFTER capture (not before — would trigger ConfigFBO in unstable GL context) ---",
+                    "catch {after 0 UpdateView_TimerProc}",
                     "catch {gl bindframebuffer_read 0}",
             ],
             )

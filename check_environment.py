@@ -24,10 +24,10 @@ def check_processes():
         capture_output=True, text=True, timeout=10
     )
     if result.stdout.strip():
-        print("CarMaker: FOUND")
+        print("CarMaker: [OK] FOUND")
         print(result.stdout)
     else:
-        print("CarMaker: NOT FOUND (process may not be running)")
+        print("CarMaker: [FAIL] NOT FOUND (process may not be running)")
         return False
 
     # Check IPG-MOVIE
@@ -38,10 +38,10 @@ def check_processes():
         capture_output=True, text=True, timeout=10
     )
     if result.stdout.strip():
-        print("IPG-MOVIE: FOUND")
+        print("IPG-MOVIE: [OK] FOUND")
         print(result.stdout)
     else:
-        print("IPG-MOVIE: NOT FOUND")
+        print("IPG-MOVIE: [FAIL] NOT FOUND")
         return False
 
     return True
@@ -58,10 +58,12 @@ def check_dde_state():
 
     output_dir = default_output_dir()
     output_dir.mkdir(parents=True, exist_ok=True)
-    result_file = str(output_dir / "env_check.txt").replace("\\", "/")
+    result_path = output_dir / "env_check.txt"
+    # Body writes to a separate file to avoid being overwritten by render_dde_execute_script
+    body_output_file = str(result_path.with_suffix(".txt.body")).replace("\\", "/")
 
     body = [
-        f'set __fp [open "{result_file}" w]',
+        f'set __fp [open "{body_output_file}" w]',
         'puts $__fp "VIEW0:[winfo exists .view0]"',
         'puts $__fp "CHECKVP:[info commands CheckViewPort]"',
         'puts $__fp "CHECKVP_SAVED:[info commands CheckViewPort_saved]"',
@@ -76,7 +78,7 @@ def check_dde_state():
         topic="CarMaker",
         output_dir=output_dir,
         script_text=render_dde_execute_script(
-            output_dir / "env_check.txt",
+            result_path,
             "IPG-MOVIE",
             body,
         ),
@@ -89,9 +91,9 @@ def check_dde_state():
         print(f"  Detail: {result.get('detail')}")
         return False
 
-    # Read and parse result
-    if os.path.exists(result_file):
-        with open(result_file) as f:
+    # Read and parse body output
+    if os.path.exists(body_output_file):
+        with open(body_output_file) as f:
             content = f.read().strip()
             print(f"Result:\n{content}")
 
@@ -124,14 +126,14 @@ def check_dde_state():
 
         # Overall assessment
         if view0 == "1" and checkvp:
-            print("\n✅ Environment HEALTHY")
+            print("\n[OK] Environment HEALTHY")
             return True
         elif view0 == "1" and not checkvp:
-            print("\n❌ Environment UNHEALTHY: CheckViewPort missing")
+            print("\n[FAIL] Environment UNHEALTHY: CheckViewPort missing")
             print("   Solution: Restart IPG-MOVIE")
             return False
         else:
-            print("\n❌ Environment UNHEALTHY: .view0 not found")
+            print("\n[FAIL] Environment UNHEALTHY: .view0 not found")
             return False
     else:
         print("  Result file not created")
@@ -145,17 +147,17 @@ def main():
 
     # Step 1: Process check
     if not check_processes():
-        print("\n❌ Process check FAILED")
+        print("\n[FAIL] Process check FAILED")
         sys.exit(1)
 
     print()
 
     # Step 2: DDE state check
     if not check_dde_state():
-        print("\n❌ Environment check FAILED")
+        print("\n[FAIL] Environment check FAILED")
         sys.exit(1)
 
-    print("\n✅ All checks passed")
+    print("\n[PASS] All checks passed")
 
 
 if __name__ == "__main__":

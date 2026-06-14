@@ -2083,7 +2083,11 @@ def ensure_movie_view_size(
                 '    # Without this, the restored CheckViewPort reads stale Width/Height',
                 '    # from the dict, detects a discrepancy, calls View::SetSize again,',
                 '    # and enters infinite recursion.',
-                f"    if {{[info exists View($wno)]}} {{ set ::View($wno) [dict replace $::View($wno) Width {target_width} Height {target_height}] }}",
+                f"    if {{[info exists View($wno)]}} {{",
+                f"        set ::View($wno) [dict replace $::View($wno) Width {target_width} Height {target_height}]",
+                f"    }} else {{",
+                f"        set ::View($wno) [dict create Width {target_width} Height {target_height}]",
+                f"    }}",
 
                 '} finally {',
                 '    catch {rename CheckViewPort {}}',

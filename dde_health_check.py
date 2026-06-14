@@ -412,6 +412,21 @@ def build_checks(output_dir: Path) -> List[Tuple[str, str]]:
                 ],
             ),
         ),
+        (
+            "movie_fbo_probe",
+            render_dde_execute_script(
+                output_dir / "movie_fbo_probe.txt",
+                "IPG-MOVIE",
+                [
+                    "set vno \$::View(ev.view)",
+                    "set w [dict get \$::View(\$vno) Widget]",
+                    "if {[catch {\$w image extract -width 1 -height 1 -format RGBA -data {}} err]} {",
+                    "    error {FBO probe failed: $err}",
+                    "}",
+                    "list ok {FBO probe passed}",
+                ],
+            ),
+        ),
 
     ]
 
@@ -459,6 +474,10 @@ def classify_health_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
     movie_render_ok = None
     if isinstance(movie_render_probe, dict):
         movie_render_ok = bool(movie_render_probe.get("ok"))
+    movie_fbo_probe = _get_check(summary, "movie_fbo_probe")
+    movie_fbo_ok = None
+    if isinstance(movie_fbo_probe, dict):
+        movie_fbo_ok = bool(movie_fbo_probe.get("ok"))
 
     target_status = {
         "movie_command_ok": movie_command_ok,
@@ -469,6 +488,7 @@ def classify_health_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
         "ipg_movie_render_ok": movie_render_ok,
         "gpusensor_registered": gpu_registered,
         "gpusensor_send_ok": gpu_ping_ok,
+        "ipg_movie_fbo_ok": movie_fbo_ok,
     }
 
     if bool(summary.get("all_ok")):

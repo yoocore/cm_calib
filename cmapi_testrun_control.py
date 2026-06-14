@@ -231,6 +231,23 @@ def kill_all_movie_processes() -> list[dict[str, Any]]:
     return movie_processes
 
 
+def kill_all_processes() -> list[dict[str, Any]]:
+    """Kill ALL CarMaker variants AND Movie processes via taskkill /F /T."""
+    all_processes = list_cm_processes()
+    target_names = (*CARMAKER_PROCESS_NAMES, "Movie.exe")
+    targets = [proc for proc in all_processes if proc.get("Name") in target_names]
+    if not targets:
+        return []
+    for proc in targets:
+        subprocess.run(
+            ["taskkill", "/PID", str(proc["ProcessId"]), "/F", "/T"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    return targets
+
+
 def stop_movie_stack_via_movie_quit(
     *,
     timeout_sec: float,

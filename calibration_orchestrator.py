@@ -242,30 +242,33 @@ def _prepare_runtime_for_camera(
     config_path: Path,
     movie_view_size: tuple[int, int] | None = None,
 ) -> dict[str, Any]:
-    # --- Step 0: Force-sync Movie view size BEFORE any IPG-MOVIE state change ---
+    # --- Step 0: Kill any stale CarMaker/Movie processes ---
+    # Ensures a clean start, especially after FBO corruption detection
+    cmctrl.kill_all_processes()
+    # --- Step 1: Force-sync Movie view size BEFORE any IPG-MOVIE state change ---
     # Prevents CheckViewPort recursion when sensor activation/TestRun load triggers IPG-MOVIE.
     if movie_view_size is not None:
         view_width, view_height = movie_view_size
         try:
             cmctrl.ensure_movie_view_size(view_width, view_height, timeout_sec=10.0)
         except Exception as exc:
-            print(f"Warning: could not sync movie view size (Step 0): {exc}")
-    # --- Step 1: Activate sensor & sync TestRun in CarMaker GUI ---
+            print(f"Warning: could not sync movie view size (Step 1): {exc}")
+    # --- Step 2: Activate sensor & sync TestRun in CarMaker GUI ---
     vehicle_path, vehicle_key = cmctrl.resolve_vehicle_path(project_root, testrun_rel_path)
     activation = cmctrl.activate_single_vehicle_sensor(vehicle_path, camera_name)
     selected_testrun = cmctrl.sync_gui_testrun_selection(project_root, testrun_rel_path)
     # --- sync_gui re-initializes IPG-MOVIE (re-registers CheckViewPort), so re-guard ---
     cmctrl.disable_checkviewport_recursion()
-    # --- Step 1.5: Sync Movie view size BEFORE bootstrap SIM_START ---
+    # --- Step 2.5: Sync Movie view size BEFORE bootstrap SIM_START ---
     if movie_view_size is not None:
         view_width, view_height = movie_view_size
         try:
             cmctrl.ensure_movie_view_size(view_width, view_height, timeout_sec=10.0)
         except Exception as exc:
             # Non-fatal: Movie may not have View(ev.view) yet before bootstrap;
-            # Step 5 will re-apply after Movie is fully ready
+            # Step 7 will re-apply after Movie is fully ready
             print(f"Warning: could not sync movie view size before bootstrap: {exc}")
-    # --- Step 2: StartSim / StopSim (bootstrap the TestRun for Movie) ---
+    # --- Step 3: StartSim / StopSim (bootstrap the TestRun for Movie) ---
     carmaker_pid, bootstrap_testrun = cmctrl.bootstrap_testrun_for_movie_via_cmapi_sync(
         project_root=project_root,
         testrun_rel_path=testrun_rel_path,
@@ -274,12 +277,12 @@ def _prepare_runtime_for_camera(
     )
     # --- bootstrap's internal sync_gui re-registers CheckViewPort, so re-guard ---
     cmctrl.disable_checkviewport_recursion()
-    # --- Step 3: Cancel movie's internal UpdateView timer (set by StartSim/StopSim) ---
+    # --- Step 4: Cancel movie's internal UpdateView timer (set by StartSim/StopSim) ---
     # cancel_movie_updateview_timer uses 'after cancel' which only cancels ONE timer instance.
     # For the first camera, this is sufficient (no prior timers to worry about).
     # For camera switches, the outer cycle calls disable_movie_updateview_timer().
     cmctrl.cancel_movie_updateview_timer(timeout_sec=10.0)
-    # --- Step 4: Ensure IPG-Movie is alive ---
+    # --- Step 5: Ensure IPG-Movie is alive ---
     # Strategy:
     #   GPUSensor present → Movie keeps running throughout bootstrap, nothing to do
     #   No GPUSensor     → bootstrap already quit stale Movie; launch a fresh one
@@ -292,7 +295,7 @@ def _prepare_runtime_for_camera(
         )
         # --- Movie restart re-registers CheckViewPort, re-guard ---
         cmctrl.disable_checkviewport_recursion()
-    # --- Step 5: Wait for Movie scene ready ---
+    # --- Step 6: Wait for Movie scene ready ---
     movie_scene = cmctrl.wait_for_movie_scene_ready(
         cm_install=args.cm_install.resolve(),
         movie_apphost=str(args.movie_apphost),
@@ -301,7 +304,7 @@ def _prepare_runtime_for_camera(
         timeout_sec=float(args.movie_settle_sec),
         poll_interval_sec=float(args.movie_ready_poll_sec),
     )
-    # --- Step 6: Configure Movie for this camera ---
+    # --- Step 7: Configure Movie for this camera ---
     if movie_view_size is not None:
         view_width, view_height = movie_view_size
         applied_view = cmctrl.ensure_movie_view_size(view_width, view_height)
@@ -316,9 +319,9 @@ def _prepare_runtime_for_camera(
     )
     movie_scene["camera_name"] = str(camera_selection.get("current") or movie_scene.get("camera_name") or "")
     camera_widgets = cmctrl.ensure_movie_camera_widgets(timeout_sec=float(args.health_check_timeout_sec))
-    # --- Step 7: Capture initial parameter values ---
+    # --- Step 8: Capture initial parameter values ---
     config_initial_capture = cmctrl.capture_initial_values_to_config(config_path)
-    # --- Step 8: Health check ---
+    # --- Step 9: Health check ---
     health_classification: Optional[dict[str, Any]] = None
     if args.health_check_after_switch:
         health_summary = cmctrl.run_movie_send_health_check(
@@ -353,6 +356,7 @@ def _reuse_existing_runtime_for_camera(
     testrun_rel_path: Path,
     camera_name: str,
     config_path: Path,
+    movie_view_size: tuple[int, int] | None = None,
 ) -> dict[str, Any]:
     vehicle_path, vehicle_key = cmctrl.resolve_vehicle_path(project_root, testrun_rel_path)
     status_summary = cmctrl.build_status_summary(
@@ -367,6 +371,21 @@ def _reuse_existing_runtime_for_camera(
         health_check_timeout_sec=float(args.health_check_timeout_sec),
         health_check_settle_sec=float(args.health_check_settle_sec),
     )
+
+    # --- Check for FBO corruption; if detected, restart with clean processes ---
+    health = status_summary.get("health") or {}
+    target_status = health.get("target_status") or {}
+    if target_status.get("ipg_movie_fbo_ok") is False:
+        print(
+            "IPG-MOVIE FBO corrupted (ipg_movie_fbo_ok=False). "
+            "Killing all stale processes and starting fresh."
+        )
+        cmctrl.kill_all_processes()
+        return _prepare_runtime_for_camera(
+            args, project_root, testrun_rel_path, camera_name, config_path,
+            movie_view_size=movie_view_size,
+        )
+
     if str(status_summary.get("status") or "") != "ready":
         raise RuntimeError(
             "Current runtime is not ready for direct calibration start: "
@@ -559,6 +578,7 @@ def main() -> None:
                         testrun_rel_path,
                         camera_name,
                         config_path,
+                        movie_view_size=movie_view_size,
                     )
                 else:
                     runtime_state = _prepare_runtime_for_camera(

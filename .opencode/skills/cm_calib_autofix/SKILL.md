@@ -226,182 +226,60 @@ python camera_calibration.py --precheck --camera <NAME>
 
 ---
 
-### 代码修复模式
+### 代码修复关键规则
 
-#### FBO 修复模式（完整 5 步防御）
+修复 FBO / CheckViewPort / Height Bump 相关问题时，**必须**先读 `project_notes/PROGRESS_HANDOFF.md` 对应 Phase 获取完整实现细节。以下是核心规则摘要：
 
-```tcl
-# 在 height bump 后，update 之前：
-catch {after cancel UpdateView_TimerProc}
-catch {rename UpdateView_TimerProc __saved_UpdateView_TimerProc}
-proc UpdateView_TimerProc {args} {}
-update
-# finally: rename __saved_UpdateView_TimerProc UpdateView_TimerProc
-```
+| 规则 | 原因 | 详见 |
+|------|------|------|
+| Height bump 必须用 `__orig_during_bump` 做临时 rename | 与 guard 系统的 `CheckViewPort_saved` 隔离 | Phase 29 |
+| `after cancel UpdateView_TimerProc` + `rename + no-op` 必须一起用 | `after cancel` 只取消一个 timer 实例 | Phase 28 |
+| CheckViewPort 防御用 `wrap_checkviewport()` + delete-trace | IPG-MOVIE C++ 会重注册 proc，简单 rename 会丢失 | Phase 27 |
+| **不要**用 `install_view_sync_trace()` | `View::SetSize` 是 Tcl proc 不是 C++，trace 会丢失 | Phase 27 |
+| Height bump 后必须有 `update` 稳定 GL 上下文 | 否则 `UpdateView` 内部 FBO 操作失败 | Phase 28 |
+| `update` 前必须 cancel + rename UpdateView_TimerProc | `update` 会触发 30s 定时器内的 ConfigFBO → FBO new | Phase 28 |
 
-> `after cancel` 只取消一个定时器实例（tclTimer.c 的 TimerCancelDo break 在首次匹配后），`rename + no-op proc` 才彻底防御。
+### 窗口管理
 
-#### CheckViewPort 递归防御（Phase 27 + Phase 29）
+与 IPG-MOVIE 通信通过 **DDE**（不是 Tk `send`）。具体 DDE 调用模式见上面"环境检查脚本"部分。
 
-**核心机制：re-entrant guarded wrapper + delete-trace 自动重装**
+**常用 Tcl 命令：** 最小化 `wm state . iconic` / 恢复 `wm state . normal` + `raise .` / 检查 `wm state .`
 
-IPG-MOVIE 的 C++ 代码会通过 `Tcl_Eval("proc CheckViewPort {...}")` 重注册 CheckViewPort（每次创建 view widget 时）。
-简单的 `rename` + no-op 在重注册后失效。Phase 27 的解决方案：
-
-1. **`wrap_checkviewport()`** — 安装 re-entrant guard wrapper + delete trace
-2. **Delete trace** — 当 IPG-MOVIE 重注册 CheckViewPort 时，Tcl 先删除旧 command（触发 delete trace），
-   trace 调度 `after 0 ::ReGuardCheckViewPort`，在新 proc 创建后立即重新安装 guard
-3. **Re-entrant guard** — 用 `CheckViewPort_running($wv)` 全局变量防止递归
-
-```tcl
-# ::ReGuardCheckViewPort — 核心重装逻辑（idempotent）
-proc ::ReGuardCheckViewPort {} {
-    if {[info commands CheckViewPort] eq ""} { return }
-    set __body [info body CheckViewPort]
-    if {[string first "CheckViewPort_running" $__body] >= 0} { return }  ;# 已有 guard
-    catch {rename CheckViewPort_saved {}}
-    catch {rename CheckViewPort CheckViewPort_saved}
-    proc CheckViewPort {wv} {
-        global CheckViewPort_running
-        if {[info exists CheckViewPort_running($wv)] && $CheckViewPort_running($wv)} { return }
-        set CheckViewPort_running($wv) 1
-        if {[catch {CheckViewPort_saved $wv} err]} { Log::Debug big "CheckViewPort error: $err" }
-        set CheckViewPort_running($wv) 0
-    }
-}
-```
-
-**函数清单（cmapi_testrun_control.py）：**
-| 函数 | 作用 |
-|------|------|
-| `wrap_checkviewport()` | 安装 re-entrant guard + delete-trace（prepare 链头调用） |
-| `disable_checkviewport_recursion()` | guarded wrapper（不带 delete-trace，prepare 链内用） |
-| `restore_checkviewport()` | 恢复原始 CheckViewPort |
-| `install_view_sync_trace()` | **DEPRECATED** — 基于 View::SetSize 是 C++ 的错误假设 |
-| `remove_view_sync_trace()` | **DEPRECATED** — 同上 |
-
-> **为什么 `install_view_sync_trace()` 被废弃：** Phase 27 DDE 探测证实 `View::SetSize` 是 Tcl proc（不是 C++ 命令），
-> attach 在 proc 上的 trace 在 IPG-MOVIE 重注册 CheckViewPort 时被 `auto_import` 连带丢失。
-
-#### Height Bump 安全模式（Phase 22 + Phase 29）
-
-Height bump 强制 `View::SetSize` 更新 View dict（跨相机切换后 dict 残留旧尺寸）。
-必须用 `__orig_during_bump`（不是 `CheckViewPort_saved`）作为临时名称，避免与 guard 系统冲突（Phase 29）。
-
-```tcl
-# --- height bump: 临时禁用 CheckViewPort，防止递归 ---
-try {
-    catch {rename CheckViewPort __orig_during_bump}
-    proc CheckViewPort {wv} {}
-    View::SetSize $vp_w [expr {$vp_h + 1}] $wpath   # h+1: 强制触发 dict 更新
-    View::SetSize $vp_w $vp_h $wpath                  # 还原
-    # 同步 Tcl View() dict，防止恢复后 CheckViewPort 读到旧值
-    if {[info exists View($wno)]} { set ::View($wno) [dict replace $::View($wno) Width $vp_w Height $vp_h] }
-} finally {
-    catch {rename CheckViewPort {}}
-    catch {rename __orig_during_bump CheckViewPort}
-}
-```
-
-> **关键：** `__orig_during_bump` 是 Phase 29 的修复——之前用 `CheckViewPort_saved` 与 guard 系统的同名变量冲突，导致 `invalid command name "CheckViewPort"`。
-
-### 窗口管理参考
-
-IPG-MOVIE 窗口状态直接影响标定工作流。与 IPG-MOVIE 通信通过 **DDE**（不是 Tk `send`）：
-
-```python
-# 通用模式：通过 DDE 向 IPG-MOVIE 发送 Tcl 命令
-import cmapi_testrun_control as cmctrl
-from dde_health_check import render_dde_execute_script, run_check_attempt, default_output_dir
-
-output_dir = default_output_dir()
-output_dir.mkdir(parents=True, exist_ok=True)
-result = run_check_attempt(
-    name="window_cmd",
-    service="TclEval", topic="CarMaker",
-    output_dir=output_dir,
-    script_text=render_dde_execute_script(
-        output_dir / "window_cmd.txt", "IPG-MOVIE",
-        ["wm state . iconic"],  # ← 替换为任何 Tcl 命令
-    ),
-    timeout_sec=5.0,
-)
-```
-
-#### 常用窗口操作
-
-| 操作 | Tcl 命令 |
-|------|---------|
-| 最小化 | `wm state . iconic` |
-| 恢复前台 | `wm state . normal` + `raise .` |
-| 取消置顶 | `wm attributes . -topmost 0` + `wm lower .` |
-| 检查状态 | `wm state .` |
-| camera 对话框取消置顶 | `wm attributes .camera -topmost 0` + `wm lower .camera` |
-
-#### 标定工作流中的窗口策略
-
-| 阶段 | 窗口状态 | 原因 |
-|------|---------|------|
-| `cmapi_testrun_control.py --mode prepare` | 正常/前台 | 需要 GUI 交互（场景就绪检测、控件打开） |
-| `camera_calibration.py` 优化阶段 | 最小化 | 纯计算，不需要 GUI，让出桌面 |
-| `camera_calibration.py` Capture | 最小化也可工作 | 自动使用 FBO 离屏渲染（dual-mode） |
-| `calibration_orchestrator.py` 切换相机间 | 正常 | Orchestrator 内部自动处理 |
-| 长时间多轮标定 | 最小化后台 | 不干扰用户其他工作 |
+| 标定阶段 | 窗口状态 | 原因 |
+|---------|---------|------|
+| prepare | 正常/前台 | 需要 GUI 交互 |
+| 优化阶段 | 最小化 | 纯计算，自动使用 FBO 离屏渲染 |
+| 切换相机间 | 正常 | Orchestrator 内部自动处理 |
 
 ---
 
-### 项目特定错误模式补充
+### 常见错误速查
 
-#### CMAPI 启动问题
+遇到以下错误时，先查 `PROGRESS_HANDOFF.md` 对应 Phase，再定位代码。
 
-| 错误特征 | 根因方向 |
-|---------|---------|
-| `ConnectTo failed` | CarMaker 未运行或 DDE 服务未注册 |
-| `APO connect timeout` | SimControlInteractive 连接失败，重试参数（`--apo-connect-retries`）不足 |
-| `Scene not ready` | Movie 场景加载超时，`--movie-settle-sec` 参数需增加 |
-| `TestRun status: idle` | TestRun 未进入 running 状态，检查 TestRun Info 路径 |
-
-#### 捕获/标定问题
-
-| 错误特征 | 根因方向 |
-|---------|---------|
-| `UpdateView_TimerProc` 冲突 | Tcl after timer 竞争，使用 rename+no-op 防御（见 FBO 修复模式） |
-| `CheckViewPort` 递归 | IPG-MOVIE 内部触发，确保 `wrap_checkviewport()` 已安装 re-entrant guard |
-| Height bump 后 FBO 错误 | `View::SetSize W H+1` 然后在 update 前缺少 rename+no-op 防御 |
-| `No image available` | 视图尺寸异常（width=0 或 height=0），检查 `ensure_movie_view_size()` 顺序 |
-| Capture 返回空白 | 检查 ABRAXAS 是否开启、相机是否激活、视图尺寸是否正确 |
-| `.camera` 对话框状态异常 | 初始处于 `iconic` 时被捕获后未 `wm deiconify`，先保存初始状态再恢复 |
+| 错误特征 | 方向 | Phase |
+|---------|------|-------|
+| `FBO Creation error` / `FBO error: id not mapped` | GL 上下文不稳定，height bump 后缺 update | 28 |
+| `too many nested evaluations` / CheckViewPort 递归 | guard 未安装或被覆盖 | 27, 29 |
+| `invalid command name "CheckViewPort"` | rename 命名冲突（`__orig_during_bump`） | 29 |
+| `ConnectTo failed` | CarMaker/IPG-MOVIE 未运行 | — |
+| `UpdateView_TimerProc call error` | Tcl after 定时器竞争 | 28 |
+| `UVA=0 SUV=1 EXP=0` / 截图返回 None | StopUpdateView 渲染冻结（已知未解决） | 30 |
+| `APO connect timeout` | SimControlInteractive 连接失败 | — |
+| `Scene not ready` | Movie 场景加载超时 | — |
+| start_score ≈ final_score 且参数无变化 | 标定系统异常（board 检测/模板不匹配） | — |
 
 ---
 
-### 多轮修复循环——全链路示例
+### 多轮修复示例
 
-当需要修复一个涉及完整标定流程的问题时：
+修复涉及完整标定流程的问题时，典型循环：
 
-**第1轮：观察**
-```bash
-# 1a. 查看当前状态
-python cmapi_testrun_control.py --mode status --testrun <Name> 2>&1 | Tee-Object -FilePath tmp/status.log
-# 1b. 如果状态不对，尝试 prepare
-python cmapi_testrun_control.py --mode prepare --testrun <Name> --camera-sensor <NAME> --open-movie --keep-carmaker-open --keep-movie-open 2>&1 | Tee-Object -FilePath tmp/prepare.log
-# 1c. 分析输出中的错误
-# 1d. 修复代码 → 重新执行验证
-```
+1. **观察**：`cmapi_testrun_control.py --mode status` / `--mode prepare` → 分析输出
+2. **标定**：`camera_calibration.py --config ... --explore-then-refine` → 分析结果
+3. **回归**：`python -m pytest tests/ -v -k "not dde and not fbo_after_prepare"`
 
-**第2轮：运行标定**
-```bash
-# 最小化 IPG-MOVIE（可选）
-python -c "import sys; sys.path.insert(0,'.'); from dde_health_check import send_tcl; send_tcl('send IPG-MOVIE {wm state . iconic}')"
-# 运行标定
-python camera_calibration.py --config configs/camera.<name>.json --explore-then-refine --print-summary-json 2>&1 | Tee-Object -FilePath tmp/calib.log
-# 分析结果 → 修复 → 重新执行
-```
-
-**第3轮：回归测试**
-```bash
-# 跑项目测试（过滤需要 DDE 的用例）
-python -m pytest tests/ -v -k "not dde and not fbo_after_prepare" 2>&1 | Tee-Object -FilePath tmp/pytest.log
-```
+每轮 `2>&1 | Tee-Object -FilePath tmp/<step>.log` 保存完整日志。
 ---
 
 ## 内存管理

@@ -7966,6 +7966,7 @@ class CameraCalibrator:
             pass  # rendering_health module not available
         except Exception as exc:
             print(f"[health] Rendering check error: {exc}")
+        return self._capture_movie_via_dde(tag)
 
     def _snapshot_values(self) -> Dict[str, float]:
         return {p.name: p.value for p in self.params}

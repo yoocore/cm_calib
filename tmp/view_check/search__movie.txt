@@ -1,4 +1,0 @@
-rc=0
-msg_begin
-pattern=.movie w=bad window path name ".movie" h=bad window path name ".movie" children=bad window path name ".movie"
-msg_end

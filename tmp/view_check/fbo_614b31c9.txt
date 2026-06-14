@@ -1,4 +1,0 @@
-rc=0
-msg_begin
-
-msg_end

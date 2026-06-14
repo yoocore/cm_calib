@@ -1,4 +1,0 @@
-rc=0
-msg_begin
-count=89 keys=Scale LineWidth WidthLine zOffset DrawTunnel ev.t DrawSepLane ev.x DrawBgImage ev.y WidthPoint DrawSepLaneSection DrawRoadMarking DrawTraffic PolygonMode Mode DrawTrfSigns DrawTree DrawSegmentPoints m.btn SimplifyView DrawLinkRefLine DrawEgoVehicle ev.dt PrevMode DrawRefLine DrawPath ev.delta m.x DrawOpenCRG Widget m.y PanMode DrawBumps DrawSignPlate ev.dx Samples ev.dy DrawCamber X
-msg_end

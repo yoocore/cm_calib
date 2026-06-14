@@ -1,4 +1,0 @@
-rc=0
-msg_begin
-View_0=1
-msg_end

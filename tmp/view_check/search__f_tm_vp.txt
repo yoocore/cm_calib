@@ -1,4 +1,0 @@
-rc=0
-msg_begin
-pattern=.f.tm.vp w=bad window path name ".f.tm.vp" h=bad window path name ".f.tm.vp" children=bad window path name ".f.tm.vp"
-msg_end

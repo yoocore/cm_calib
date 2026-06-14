@@ -1,4 +1,0 @@
-rc=0
-msg_begin
-array_names=Scale LineWidth WidthLine zOffset DrawTunnel ev.t DrawSepLane ev.x DrawBgImage ev.y WidthPoint DrawSepLaneSection DrawRoadMarking DrawTraffic PolygonMode Mode DrawTrfSigns DrawTree DrawSegmentPoints m.btn SimplifyView DrawLinkRefLine DrawEgoVehicle ev.dt PrevMode DrawRefLine DrawPath ev.delta m.x DrawOpenCRG Widget m.y PanMode DrawBumps DrawSignPlate ev.dx Samples ev.dy DrawCamber X Y DrawGeometry ForceUpdate DrawTrafficBarrier DrawMounts w.width Redraw zMaxAbs SnapDist Ratio BgColor Slide DrawUserPath DrawPathWidth DrawBridge Accuracy FgColor ev.btn DrawCustomPath zMin zMax DrawARP DrawGuidePost DrawLateralOffset FontSize DrawConPath IsEmpty zMinAbs DrawRoute CompleteViewShowWarn DrawCustomPathWidth Cursor w.height DrawLanePath DrawTrfLights DrawElevation DrawPathMarker DrawRoadPainting Level DrawSepSegment DrawSlope Number SnapAngle LevelChanged DrawMarkers DrawRoadSurface Tolerance DrawLaneWidth IgnoreDynamicObjs
-msg_end

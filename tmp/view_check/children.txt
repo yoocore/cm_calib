@@ -1,4 +1,0 @@
-rc=0
-msg_begin
-children=.tk_TablePopupMenu .mbar .m_context .m_hidden .f .tm .nvmenu .sessionlog .car
-msg_end

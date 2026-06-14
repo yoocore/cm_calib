@@ -607,7 +607,9 @@ def main() -> None:
                         probe_name=f"stop_sim_post_calib_{camera_name}",
                     )
             finally:
-                cmctrl.enable_movie_updateview_timer(timeout_sec=10.0)
+                # Only enable if we disabled (not for first camera)
+                if camera_name != cameras[0]:
+                    cmctrl.enable_movie_updateview_timer(timeout_sec=10.0)
                 cmctrl.restore_checkviewport()
             per_camera_results.append(
                 {

@@ -223,6 +223,21 @@ def build_read_only_checks(output_dir: Path) -> list[tuple[str, str]]:
                 ['list ok [info patchlevel]'],
             ),
         ),
+        (
+            "movie_render_probe",
+            render_dde_execute_script(
+                output_dir / "movie_render_probe.txt",
+                "IPG-MOVIE",
+                [
+                    'set uva $::View(UpdateViewActive)',
+                    'set suv $::View(StopUpdateView)',
+                    'set uc $::View(UpdateCounter)',
+                    'if {$uva ne "1"} { error "UpdateViewActive=$uva (expected 1)" }',
+                    'if {$suv ne "0"} { error "StopUpdateView=$suv (expected 0)" }',
+                    'list UpdateViewActive $uva StopUpdateView $suv UpdateCounter $uc',
+                ],
+            ),
+        ),
     ]
 
 

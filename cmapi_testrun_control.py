@@ -1344,7 +1344,7 @@ def wrap_checkviewport(*, timeout_sec: float = 10.0) -> None:
             '}',
             '# --- Remove stale trace, install new one ---',
                 'catch {trace remove command CheckViewPort delete ::OnCheckViewPortDelete}',
-                'catch {trace add command CheckViewPort delete ::OnCheckViewPortDelete',
+                'catch {trace add command CheckViewPort delete ::OnCheckViewPortDelete}',
                 '::ReGuardCheckViewPort',
         ]
         result = run_check_attempt(
@@ -1424,7 +1424,7 @@ def disable_checkviewport_recursion(*, timeout_sec: float = 10.0) -> None:
                     '}',
                     '# --- Install/ensure delete trace ---',
                     'catch {trace remove command CheckViewPort delete ::OnCheckViewPortDelete}',
-                    'catch {trace add command CheckViewPort delete ::OnCheckViewPortDelete',
+                    'catch {trace add command CheckViewPort delete ::OnCheckViewPortDelete}',
                     '# --- Apply guard ---',
                     '::ReGuardCheckViewPort',
                 ],
@@ -1709,6 +1709,53 @@ def restart_gui_movie_for_send_recovery(
     subprocess.Popen(command, cwd=str((cm_install / "GUI").resolve()))
     movie_pid = wait_for_gui_movie_pid(existing_pids)
     return movie_pid
+
+
+def restart_movie_rendering(*, timeout_sec: float = 10.0) -> None:
+    """Restart IPG-MOVIE rendering loop if frozen.
+
+    Cancels existing timer, resets state, schedules a new
+    UpdateView_TimerProc via ``after 10`` with UpdateViewActive=1.
+
+    The standard RestartUpdateView proc often does not respond
+    after a Tcl error, so we use direct after scheduling.
+
+    Non-fatal on failure.
+    """
+    body = [
+        "# Cancel existing timer and install no-op guard",
+        "catch {after cancel UpdateView_TimerProc}",
+        "catch {rename UpdateView_TimerProc __saved_uvp_restart}",
+        "proc UpdateView_TimerProc {args} {}",
+        "update",
+        "# Reset render state",
+        "set ::View(StopUpdateView) 0",
+        "set ::View(UpdateViewActive) 0",
+        "# Restore original proc",
+        "catch {rename UpdateView_TimerProc {}}",
+        "catch {rename __saved_uvp_restart UpdateView_TimerProc}",
+        "# Schedule rendering",
+        "after 10 {set ::View(UpdateViewActive) 1; UpdateView_TimerProc}",
+    ]
+    try:
+        result = run_check_attempt(
+            name="restart_movie_rendering",
+            service="TclEval",
+            topic="CarMaker",
+            output_dir=Path("tmp"),
+            script_text=render_dde_execute_script(
+                Path("tmp") / "restart_movie_rendering.txt",
+                "IPG-MOVIE",
+                body,
+            ),
+            timeout_sec=timeout_sec,
+        )
+        if result.get("ok"):
+            print("Restarted IPG-MOVIE rendering via direct after scheduling")
+        else:
+            print(f"Warning: restart movie rendering non-fatal: {result.get('detail')}")
+    except Exception as exc:
+        print(f"Warning: restart movie rendering failed (non-fatal): {exc}")
 
 
 def _parse_probe_detail(detail: str) -> dict[str, str]:
@@ -2082,7 +2129,7 @@ def ensure_movie_view_size(
                 '    }',
                 '}',
                 'catch {trace remove command CheckViewPort delete ::OnCheckViewPortDelete}',
-                'catch {trace add command CheckViewPort delete ::OnCheckViewPortDelete',
+                'catch {trace add command CheckViewPort delete ::OnCheckViewPortDelete}',
                 '::ReGuardCheckViewPort',
                 'update',
                 'set wi [$wpath.gl0 cget -width]',

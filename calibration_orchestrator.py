@@ -14,6 +14,10 @@ from typing import Any, Optional
 import cmapi_testrun_control as cmctrl
 from portable_runtime import build_python_subprocess_command
 from runtime_config_bootstrap import load_movie_view_size_from_real_image
+from cmapi_testrun_control import (
+    start_simulation_via_tcl,
+    stop_simulation_via_tcl,
+)
 
 
 CALIBRATION_SUMMARY_PREFIX = "CALIBRATION_SUMMARY_JSON:"
@@ -572,12 +576,27 @@ def main() -> None:
                     reused_existing_runtime=bool(runtime_state.get("reused_existing_runtime")),
                 )
 
-                calibration_summary = _run_single_camera_process(
-                    task_id=task_id,
-                    camera_name=camera_name,
-                    command=_build_camera_command(args, config_path),
-                    working_dir=Path(__file__).resolve().parent,
+                # Start the simulation so camera_calibration.py can capture rendered frames
+                start_simulation_via_tcl(
+                    running_timeout_sec=float(args.bootstrap_running_timeout_sec),
+                    probe_name=f"start_sim_pre_calib_{camera_name}",
                 )
+                # Force IPG-MOVIE to reload the scene while sim is running
+                # (bootstrap's StopSim clears View() / scene data; a StartSim alone does not re-populate)
+                cmctrl.sync_gui_testrun_selection(project_root, testrun_rel_path)
+                cmctrl.disable_checkviewport_recursion()
+                try:
+                    calibration_summary = _run_single_camera_process(
+                        task_id=task_id,
+                        camera_name=camera_name,
+                        command=_build_camera_command(args, config_path),
+                        working_dir=Path(__file__).resolve().parent,
+                    )
+                finally:
+                    stop_simulation_via_tcl(
+                        idle_timeout_sec=float(args.bootstrap_idle_timeout_sec),
+                        probe_name=f"stop_sim_post_calib_{camera_name}",
+                    )
             finally:
                 cmctrl.restore_checkviewport()
             per_camera_results.append(

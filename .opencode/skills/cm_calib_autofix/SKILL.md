@@ -115,7 +115,9 @@ python -c "import sys; sys.path.insert(0,'.'); from cmapi_testrun_control import
 
 | 问题 | 状态 | 描述 |
 |------|------|------|
-| Phase 30: 渲染冻结 | **大部分已修复** | 根因：`after cancel UpdateView_TimerProc` 杀死渲染定时器后未重新调度（commit 47e8d79 修复）。残留：极端 GPU 负载下仍可能触发 |
+| Phase 30: 渲染冻结 | **单相机已修复** | 根因：`after cancel` 杀死渲染定时器后未重新调度（commit 47e8d79）。三相机切换仍有问题（Phase 32） |
+| Phase 32: 相机切换 View() 丢失 | **未修复** | 相机切换后 View(0) 数组元素不存在，View::SetSize 崩溃。不能用不完整的 dict 初始化（缺 DistortionSrc 等 key） |
+| Phase 32: Prepare 阶段渲染冻结 | **未修复** | 新鲜 CarMaker 启动后 bootstrap 导致 SUV=1，orchestrator health check 无 restart 恢复逻辑 |
 | 问题 4: 标定分数偏高 | **算法问题** | right_rear ~43, rear_tv ~1055, left_tv ~811，远超 target <5.0。不是 capture bug，是标定算法/初始参数问题 |
 
 遇到这些问题时，不要重复调查已知原因，直接在已知约束下工作。
@@ -327,3 +329,12 @@ Select-String -Path tmp/*.log -Pattern "(error|ERROR|invalid|unknown|failed|FAIL
 3. 标定输出中无 `[health]` 告警 ≠ 正常——如果 UC 检测触发了 restart 会有告警，但如果代码没加 UC 检测则完全静默
 **已修复（commit 47e8d79）：** capture body 和 ensure_movie_view_size 的 finally 块后加 `catch {after 0 UpdateView_TimerProc}`。
 **验证方法：** 标定完成后运行 `python rendering_health.py`，UC 应在 2s 内持续增长。
+
+### 教训6：三相机切换陷阱——View() 数组丢失 + Prepare 渲染冻结
+
+**场景：** 多相机编排 (right_rear → rear_tv → left_tv) 在第二个相机切换时崩溃。
+**两个独立问题：**
+1. **View() 数组丢失：** 相机切换后 `View(0)` Tcl 数组元素不存在。`View::SetSize` 内部做 `dict replace` 时崩溃（`can't read "View(0)": no such element in array`）。**不能**用 `[dict create Width W Height H]` 初始化——IPG-MOVIE 需要 DistortionSrc 等更多 key。
+2. **Prepare 阶段渲染冻结：** 新鲜 CarMaker 启动后 bootstrap 导致 SUV=1。orchestrator 的 health check 没有 `try_restart_rendering()` 恢复逻辑，直接报错退出。
+3. **新鲜启动时序：** 新启动的 CarMaker 上 IPG-MOVIE 初始化需要 >60s，用 `--movie-settle-sec 120` 解决。
+**详见 Phase 32。**

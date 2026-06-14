@@ -2005,13 +2005,112 @@ capture finally: rename CheckViewPort_saved CheckViewPort → 恢复守卫
 
 ---
 
-## Phase 30: StopUpdateView (SUV=1) Rendering Freeze (2026-06-14, IN PROGRESS)
+## Phase 30: StopUpdateView (SUV=1) Rendering Freeze (2026-06-14, PARTIALLY RESOLVED)
 
 ### Problem
 
 完整标定运行中，所有 multi-start runs 失败：`Failed reading screenshot: None`。
 诊断显示渲染状态异常：`UVA=0 SUV=1 EXP=0`（StopUpdateView 激活）。
 
-### Status
+### Root Cause (Phase 31 确认)
 
-待调查。与 Phase 29 的 CheckViewPort 修复无关，是独立的渲染问题。
+`after cancel UpdateView_TimerProc` 在 capture body 和 ensure_movie_view_size 中取消了渲染定时器，
+但 finally 块恢复 proc 后**没有重新调度定时器**（缺少 `catch {after 0 UpdateView_TimerProc}`）。
+渲染循环静默死亡：UVA=0 SUV=0 看起来健康，但 UC（UpdateCounter）不再增长。
+
+### Fix (commit 47e8d79)
+
+1. capture body: finally 块后加 `catch {after 0 UpdateView_TimerProc}`
+2. ensure_movie_view_size: 同上
+3. rendering_health.py: 改为双区间（1s+1s）持续增长验证，并在 restart 中加 `after 0` 重新调度
+4. capture_movie() health check: 加 UC 增长跨迭代比较（Layer 1b），零额外 DDE 开销
+
+### 验证
+
+- 单相机标定 (right_rear, 5 iter): 零 stale capture，标定后 UC 增长 157/2s ✅
+- 三相机标定: ❌ 仍有问题（见 Phase 32）
+
+---
+
+## Phase 31: Rendering Loop Timer Death — capture_movie() Missing Return (2026-06-14)
+
+**Commits:** b543d81, 47e8d79, 34cf73b
+
+### Problem 1: capture_movie() 返回 None
+
+commit df809f7 扩展 health check 时意外删除了 `return self._capture_movie_via_dde(tag)`。
+所有标定失败：`Failed reading screenshot: None`。
+
+**Fix (b543d81):** 加回 return 语句。
+
+### Problem 2: 渲染循环静默死亡
+
+`after cancel UpdateView_TimerProc` 杀死渲染定时器后未重新调度。
+UVA=0 SUV=0 看起来健康但 UC 不增长。
+
+**Fix (47e8d79):** capture body + ensure_movie_view_size 的 finally 块后加 `catch {after 0 UpdateView_TimerProc}`。
+
+### Problem 3: 渲染健康检测假阳性
+
+`try_restart_rendering()` 用单次 UC 快照判断恢复成功，但 UC 可能因一次性 bump 增长而非持续渲染。
+
+**Fix (47e8d79):** 改为双区间（t=1s 和 t=2s）验证持续增长。
+
+### Problem 4: capture_movie() 缺少 UC 增长检测
+
+health check 只看 UVA/SUV/EXP 标志位，无法检测渲染循环定时器死亡。
+
+**Fix (34cf73b):** 加 Layer 1b — 跨迭代比较 UpdateCounter，无增长则触发 restart。零额外 DDE 开销。
+
+---
+
+## Phase 32: Camera Switch Issues — View() Array + Prepare-Phase Rendering Death (2026-06-14, UNRESOLVED)
+
+### Problem
+
+三相机标定 (right_rear → rear_tv → left_tv) 在相机切换时失败。
+
+### 问题 1: View() 数组元素丢失
+
+right_rear 标定完成后切换到 rear_tv 时，`View(0)` Tcl 数组元素不存在。
+capture body 的 `View::SetSize` 内部做 `dict replace $View($wno)` 时崩溃：
+`can't read "View(0)": no such element in array`。
+
+**尝试的修复:** 在 capture body 中创建 `View($vno_int) = [dict create Width $vp_w Height $vp_h]`。
+**失败原因:** IPG-MOVIE 内部代码需要更多 key（DistortionSrc 等），不完整的 dict 导致
+`key "DistortionSrc" not known in dictionary`。**已 revert (b2b35be)**。
+
+**根本原因:** 相机切换时 IPG-MOVIE 销毁旧 view widget 并重建，View() 数组元素被清除。
+`ensure_movie_view_size` 的 `View::SetSize` 调用也需要同样的数组元素，形成先有鸡还是先有蛋的问题。
+
+### 问题 2: Prepare 阶段渲染冻结
+
+新鲜 CarMaker 启动后，bootstrap（StartSim/StopSim）后渲染循环死亡（SUV=1）。
+health check 检测到 `StopUpdateView=1 (expected 0)` 直接报错退出。
+orchestrator 的 health check 不像 capture_movie() 那样有 try_restart_rendering() 恢复逻辑。
+
+### 问题 3: 新鲜 CarMaker 启动时序
+
+新启动的 CarMaker 上 IPG-MOVIE 初始化需要 >60s。默认 `--movie-settle-sec` 不够。
+`wait_for_movie_scene_ready` 在 DDE 不通时过早 restart Movie，导致循环失败。
+
+### 状态
+
+全部未解决。需要单独调查：
+1. View() 数组在相机切换时的生命周期——为什么被清除，如何正确重建
+2. Prepare 阶段 health check 加 rendering restart 逻辑
+3. `--movie-settle-sec` 默认值调大或 `wait_for_movie_scene_ready` 等待 DDE 就绪后再开始计时
+
+---
+
+## 当前剩余问题状态 (2026-06-14)
+
+### ✅ 问题 1：最小化窗口报错 — **已修复**（Phase 23）
+### ✅ 问题 2：间歇性 DDE capture 错误 — **已修复**（Phase 24）
+### ✅ 问题 3：分数不稳定（百万级异常） — **已修复**（Phase 24）
+### ✅ 问题 5：CheckViewPort 递归 — **已修复**（Phase 27, 29）
+### ✅ 问题 6：渲染循环静默死亡 — **已修复**（Phase 31, commit 47e8d79）
+### ✅ 问题 7：capture_movie() 缺少 return — **已修复**（Phase 31, commit b543d81）
+### ❌ 问题 8：相机切换后 View() 数组丢失 — **未修复**（Phase 32）
+### ❌ 问题 9：Prepare 阶段渲染冻结 — **未修复**（Phase 32）
+### ❌ 问题 4：标定分数长期较高 — **算法问题**

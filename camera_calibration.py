@@ -7919,6 +7919,9 @@ class CameraCalibrator:
             # Keep files for debugging when capture fails
             # _unlink_if_exists(script_path)
             # _unlink_if_exists(result_path)
+            # Run CarMaker error diagnostic on last attempt failure
+            if attempt_runtime_error is not None:
+                self._diagnose_carmaker_after_failure(attempt_runtime_error)
             if retry_sleep_sec is not None:
                 if self._runtime_error_needs_dde_recovery_probe(attempt_runtime_error):
                     if self._wait_for_dde_service_recovery():
@@ -7960,7 +7963,9 @@ class CameraCalibrator:
                 uc = state.get("uc", "0")
                 needs_restart = False
                 reason = ""
-                if uva == "1" or suv == "1" or exp == "1":
+                # UVA=0 means rendering stopped; SUV=1 means StopUpdateView; EXP=1 means exporting.
+                # UVA=1 alone is NORMAL (IPG-MOVIE actively rendering) — do NOT restart.
+                if uva == "0" or suv == "1" or exp == "1":
                     needs_restart = True
                     reason = f"UVA={uva} SUV={suv} EXP={exp}"
                 else:
@@ -7986,6 +7991,43 @@ class CameraCalibrator:
         except Exception as exc:
             print(f"[health] Rendering check error: {exc}")
         return self._capture_movie_via_dde(tag)
+
+    def _diagnose_carmaker_after_failure(self, error: RuntimeError) -> None:
+        """Check CarMaker/IPG-MOVIE error state after a DDE failure.
+        Runs a lightweight DDE probe to capture any CarMaker-side errors
+        (e.g. FBO Creation error) that aren't visible in Python's DDE output.
+        """
+        try:
+            from dde_health_check import run_check_attempt, default_output_dir
+            from pathlib import Path
+            output_dir = default_output_dir()
+            output_dir.mkdir(parents=True, exist_ok=True)
+            body = [
+                'puts stdout "--- CarMaker Error Diagnostic ---"',
+                'puts stdout "errorInfo: [set ::errorInfo]"',
+                'puts stdout "View array: [array names View]"',
+                'if {[info exists View(ev.view)]} { puts stdout "View(ev.view): $View(ev.view)" }',
+                'if {[info exists View(0)]} { puts stdout "View(0): $View(0)" }',
+                'puts stdout "CheckViewPort: [info commands CheckViewPort]"',
+                'puts stdout "CheckViewPort_saved: [info commands CheckViewPort_saved]"',
+                'puts stdout "ConfigFBO exists: [info commands ConfigFBO]"',
+                'catch { puts stdout "FBO test: [FBO new 100 100 -tex rgb -noclear]" } err_fbo',
+                'puts stdout "FBO new error: $err_fbo"',
+                'if {[info exists err_fbo] && $err_fbo eq ""} { catch {FBO delete $::__test_fbo} }',
+            ]
+            result = run_check_attempt(
+                name="diag_after_fail",
+                service="TclEval", topic="CarMaker",
+                output_dir=output_dir,
+                script_text="\n".join(body),
+                timeout_sec=5,
+            )
+            if result.get("ok") and result.get("detail"):
+                print(f"[carmaker_diag] {result['detail']}")
+            else:
+                print(f"[carmaker_diag] probe failed: {result.get('detail')}")
+        except Exception as exc:
+            print(f"[carmaker_diag] error: {exc}")
 
     def _snapshot_values(self) -> Dict[str, float]:
         return {p.name: p.value for p in self.params}

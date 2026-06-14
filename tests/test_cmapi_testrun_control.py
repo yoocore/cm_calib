@@ -176,7 +176,7 @@ class TestEnsureMovieViewSize:
         body_lines = captured["body_lines"]
 
         # Find height bump restore (end of try-finally)
-        hb_restore = [l for l in body_lines if "rename CheckViewPort_saved CheckViewPort" in l]
+        hb_restore = [l for l in body_lines if "rename __orig_during_bump CheckViewPort" in l]
         assert len(hb_restore) >= 1, "Expected at least one height bump restore line"
 
         # Verify the rename-to-no-op pattern for UpdateView_TimerProc
@@ -194,7 +194,7 @@ class TestEnsureMovieViewSize:
 
         # Verify ordering: height bump finished -> cancel -> rename -> no-op -> update
         hb_restore_idx = next(i for i, l in enumerate(body_lines)
-                              if "rename CheckViewPort_saved CheckViewPort" in l)
+                              if "rename __orig_during_bump CheckViewPort" in l)
         cancel_idx = next(i for i, l in enumerate(body_lines)
                           if "after cancel UpdateView_TimerProc" in l)
         rename_save_idx = next(i for i, l in enumerate(body_lines)

@@ -588,7 +588,7 @@ class TestMovieFboCaptureScript:
         body_lines = captured["body_lines"]
         # Find key line indices to verify ordering of the UpdateView_TimerProc
         # defense block: cancel -> rename -> no-op -> update -> restore
-        hb_finally_end = next(i for i, l in enumerate(body_lines) if "rename CheckViewPort_saved CheckViewPort" in l)
+        hb_finally_end = next(i for i, l in enumerate(body_lines) if "rename __orig_during_bump CheckViewPort" in l)
 
         # Cancel timer
         cancel_lines = [l for l in body_lines if "after cancel UpdateView_TimerProc" in l]
@@ -660,9 +660,9 @@ class TestMovieFboCaptureScript:
         assert len(bump1) == 1, f"Expected 1 height bump+1 line, got {len(bump1)}"
         assert len(bump2) == 1, f"Expected 1 height bump restore line, got {len(bump2)}"
         # CheckViewPort rename must come BEFORE height bump
-        rename_idx = next(i for i, l in enumerate(body_lines) if "catch {rename CheckViewPort CheckViewPort_saved}" in l)
+        rename_idx = next(i for i, l in enumerate(body_lines) if "catch {rename CheckViewPort __orig_during_bump}" in l)
         bump1_idx = next(i for i, l in enumerate(body_lines) if "View::SetSize $vp_w [expr {$vp_h + 1}]" in l)
         assert rename_idx < bump1_idx, "CheckViewPort rename must come before height bump"
         # restore must come after height bump
-        restore_idx = next(i for i, l in enumerate(body_lines) if "rename CheckViewPort_saved CheckViewPort" in l)
+        restore_idx = next(i for i, l in enumerate(body_lines) if "rename __orig_during_bump CheckViewPort" in l)
         assert restore_idx > bump1_idx, "CheckViewPort restore must come after height bump"

@@ -2075,7 +2075,7 @@ def ensure_movie_view_size(
                 '# --- Temporarily replace CheckViewPort with no-op (prevents recursion during height bump) ---',
                 '#     wrapped in try-finally to always restore even if View::SetSize fails.',
                 'try {',
-                '    catch {rename CheckViewPort CheckViewPort_saved}',
+                '    catch {rename CheckViewPort __orig_during_bump}',
                 '    proc CheckViewPort {wv} {}',
                 f"    View::SetSize {target_width} [expr {{{target_height} + 1}}] $wpath",
                 f"    View::SetSize {target_width} {target_height} $wpath",
@@ -2087,7 +2087,7 @@ def ensure_movie_view_size(
 
                 '} finally {',
                 '    catch {rename CheckViewPort {}}',
-                '    catch {rename CheckViewPort_saved CheckViewPort}',
+                '    catch {rename __orig_during_bump CheckViewPort}',
                 '}',
                 '# --- Cancel UpdateView_TimerProc: rename to no-op + cancel pending timers ---',
                 '# after cancel script cancels ONLY ONE timer. rename + no-op is the only robust',

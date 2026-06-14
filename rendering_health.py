@@ -126,23 +126,12 @@ def try_restart_rendering() -> Dict[str, Any]:
 
     result["state_before"] = state
 
-    try:
-        uva = int(state["uva"])
-    except (TypeError, ValueError):
-        result["error"] = f"Cannot parse UVA from {state}"
-        result["elapsed_sec"] = time.perf_counter() - started
-        return result
+    # Always attempt restart. The old check `if uva != 1: return success` was
+    # removed because UVA=0 can also mean frozen rendering (TimerProc never
+    # scheduled, rendering loop dead). We always try to kickstart it.
+    result["rendering_was_frozen"] = state.get("uva") != "0" or state.get("suv") != "0"
 
-    if uva != 1:
-        # Not frozen; rendering is healthy or not running
-        result["restart_success"] = True
-        result["elapsed_sec"] = time.perf_counter() - started
-        return result
-
-    result["rendering_was_frozen"] = True
-
-    # Step 2: Restart — set UpdateViewActive=0, call TimerProc directly.
-    # NOT setting UVA=1 first — the TimerProc itself does that.
+    # Step 2: Restart — set SUV=0, UVA=0, call TimerProc directly.
     r = _movie("""
         set ::View(StopUpdateView) 0
         set ::View(UpdateViewActive) 0

@@ -7944,22 +7944,28 @@ class CameraCalibrator:
             except Exception as exc:
                 print(f"Warning: could not set movie view size: {exc}")
             self._movie_view_size_initialized = True
-        # Rendering health check: detect freeze before attempting capture
+        # Rendering health check: detect freeze before attempting capture.
+        # Trigger restart for UVA=1 (stuck) or SUV=1 (stopped) or EXP=1 (exporting).
+        # UVA=0+SUV=0 is the normal between-frame state — let stale hash detection
+        # (Layer 2 in evaluate()) handle that case if rendering is actually dead.
         try:
             from rendering_health import check_render_state, try_restart_rendering
             state = check_render_state()
-            if state.get("ok") and state.get("uva") == "1":
-                print(f"[health] Rendering frozen (UVA=1) before capture '{tag}', attempting restart...")
-                r = try_restart_rendering()
-                if r.get("restart_success"):
-                    print(f"[health] Rendering restarted, UC growth={r.get('uc_growth')}")
-                else:
-                    print(f"[health] Rendering restart failed: {r.get('error', 'unknown')}")
+            if state.get("ok"):
+                uva = state.get("uva", "0")
+                suv = state.get("suv", "0")
+                exp = state.get("exp", "0")
+                if uva == "1" or suv == "1" or exp == "1":
+                    print(f"[health] Rendering issue before '{tag}': UVA={uva} SUV={suv} EXP={exp}, attempting restart...")
+                    r = try_restart_rendering()
+                    if r.get("restart_success"):
+                        print(f"[health] Rendering restarted, UC growth={r.get('uc_growth')}")
+                    else:
+                        print(f"[health] Rendering restart failed: {r.get('error', 'unknown')}")
         except ImportError:
             pass  # rendering_health module not available
         except Exception as exc:
             print(f"[health] Rendering check error: {exc}")
-        return self._capture_movie_via_dde(tag)
 
     def _snapshot_values(self) -> Dict[str, float]:
         return {p.name: p.value for p in self.params}
@@ -10576,7 +10582,11 @@ class CameraCalibrator:
         current_hash = hash(sim_img.tobytes())
         prev_hash = getattr(self, "_last_capture_hash", None)
         if prev_hash is not None and current_hash == prev_hash:
-            print(f"[health] Stale capture detected for '{tag}': image identical to previous. Attempting recovery...")
+            stale_count = getattr(self, "_consecutive_stale_count", 0) + 1
+            self._consecutive_stale_count = stale_count
+            print(f"[health] Stale capture #{stale_count} for '{tag}': image identical to previous. Attempting recovery...")
+            if stale_count >= 3:
+                raise RuntimeError(f"RENDERING_BROKEN: Too many consecutive stale captures ({stale_count}), rendering permanently frozen")
             try:
                 from rendering_health import try_restart_rendering
                 r = try_restart_rendering()
@@ -10598,6 +10608,8 @@ class CameraCalibrator:
                 raise RuntimeError(f"Stale capture detected (rendering_health not available): {sim_path}")
             except Exception as exc:
                 raise RuntimeError(f"Stale capture recovery failed: {exc}")
+        else:
+            self._consecutive_stale_count = 0
         self._last_capture_hash = current_hash
 
         sim_prepared = self._prepare_eval_image(sim_img)
@@ -11179,6 +11191,8 @@ class CameraCalibrator:
                 accepted_reason=accepted_reason,
             )
         except RuntimeError as exc:
+            if "RENDERING_BROKEN" in str(exc):
+                raise  # Propagate rendering failure — abort calibration
             restored = self._recover_after_runtime_error(base_values, exc)
             history.append(
                 self._make_history_entry(
@@ -11305,6 +11319,8 @@ class CameraCalibrator:
                 accepted_reason=accepted_reason,
             )
         except RuntimeError as exc:
+            if "RENDERING_BROKEN" in str(exc):
+                raise  # Propagate rendering failure — abort calibration
             restored = self._recover_after_runtime_error({name: previous_value}, exc)
             history.append(
                 self._make_history_entry(

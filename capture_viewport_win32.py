@@ -14,17 +14,30 @@ from typing import Optional, Tuple
 
 
 def _find_ipgmovie_hwnd() -> Optional[int]:
-    """Find the main IPG-MOVIE window handle."""
+    """Find the main IPG-MOVIE window that has a real Tk-OGL viewport.
+
+    The main window has the actual scene viewport (>=640px wide),
+    not accessory dialogs (Camera Lens Parameters, Camera Settings, etc).
+    """
     import win32gui
 
-    candidates: list = []
+    def _has_ogl_viewport(parent: int) -> bool:
+        children: list = []
+        def _enum_c(h, c):
+            if win32gui.GetClassName(h) == "Tk-OGL":
+                r = win32gui.GetClientRect(h)
+                c.append((r[2] - r[0], r[3] - r[1]))
+            return True
+        win32gui.EnumChildWindows(parent, _enum_c, children)
+        return any(w >= 640 for w, _ in children)
 
     def _enum(hwnd, ctx):
         title = win32gui.GetWindowText(hwnd)
-        if "IPGMovie" in title:
+        if "IPGMovie" in title and _has_ogl_viewport(hwnd):
             ctx.append(hwnd)
         return True
 
+    candidates: list = []
     win32gui.EnumWindows(_enum, candidates)
     return candidates[0] if candidates else None
 
@@ -100,9 +113,8 @@ def capture_ipgmovie_viewport(out_path: Path) -> None:
 
         bits = bitmap.GetBitmapBits(True)
 
-        # Convert BGRA → RGBA, flip Y axis, save as PNG
+        # Convert BGRA -> RGBA, save as PNG (data is already top-to-bottom)
         img = Image.frombuffer("RGBA", (width, height), bits, "raw", "BGRA", 0, 1)
-        img = img.transpose(Image.FLIP_TOP_BOTTOM)
         img.save(out_path, "PNG")
     finally:
         _cleanup_gdi(hwnd, hwnd_dc, bitmap, save_dc, mfc_dc)
@@ -146,7 +158,6 @@ def capture_ipgmovie_viewport_bytes() -> bytes:
 
         bits = bitmap.GetBitmapBits(True)
         img = Image.frombuffer("RGBA", (width, height), bits, "raw", "BGRA", 0, 1)
-        img = img.transpose(Image.FLIP_TOP_BOTTOM)
 
         buf = io.BytesIO()
         img.save(buf, "PNG")

@@ -2102,6 +2102,8 @@ def ensure_movie_view_size(
                 '    catch {rename UpdateView_TimerProc {}}',
                 '    catch {rename __saved_UpdateView_TimerProc UpdateView_TimerProc}',
                 '}',
+                '# --- Re-schedule the rendering loop timer (after cancel killed it) ---',
+                'catch {after 0 UpdateView_TimerProc}',
                 '# --- Re-guard CheckViewPort (re-entrant wrapper + delete trace) ---',
                 '# Define helper procs once, then apply guard.',
                 'if {[info procs ::ReGuardCheckViewPort] eq ""} {',

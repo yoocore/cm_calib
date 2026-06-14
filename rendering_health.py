@@ -131,13 +131,15 @@ def try_restart_rendering() -> Dict[str, Any]:
     # scheduled, rendering loop dead). We always try to kickstart it.
     result["rendering_was_frozen"] = state.get("uva") != "0" or state.get("suv") != "0"
 
-    # Step 2: Restart — set SUV=0, UVA=0, call TimerProc directly.
+    # Step 2: Restart — set SUV=0, UVA=0, call TimerProc directly to re-schedule loop.
     r = _movie("""
         set ::View(StopUpdateView) 0
         set ::View(UpdateViewActive) 0
         set uc_before $::View(UpdateCounter)
         set rc [catch {UpdateView_TimerProc} msg]
         set uc_after $::View(UpdateCounter)
+        # Re-schedule the rendering loop timer
+        catch {after 0 UpdateView_TimerProc}
         list RC $rc MSG $msg UC_BEFORE $uc_before UC_AFTER $uc_after
     """)
 
@@ -149,9 +151,12 @@ def try_restart_rendering() -> Dict[str, Any]:
     result["uc_before_restart"] = _parse_kv(r.get("detail", ""), "UC_BEFORE")
     result["rc"] = _parse_kv(r.get("detail", ""), "RC")
 
-    # Step 3: Verify rendering continues after 1s
+    # Step 3: Verify rendering is SUSTAINED over two intervals (not just a one-time bump).
     time.sleep(1.0)
+    state_mid = check_render_state()
+    uc_mid = int(state_mid.get("uc", 0) or 0) if state_mid.get("ok") else 0
 
+    time.sleep(1.0)
     state2 = check_render_state()
     result["state_after"] = state2
 
@@ -160,7 +165,9 @@ def try_restart_rendering() -> Dict[str, Any]:
             uc_after = int(state2["uc"])
             uc_before = int(result.get("uc_before_restart", 0) or 0)
             result["uc_growth"] = uc_after - uc_before
-            result["restart_success"] = result["uc_growth"] > 0
+            # Require growth in BOTH intervals: mid-to-end confirms loop is sustained
+            growth_second_half = uc_after - uc_mid
+            result["restart_success"] = result["uc_growth"] > 0 and growth_second_half > 0
         except (TypeError, ValueError):
             pass
 

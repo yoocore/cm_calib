@@ -49,42 +49,49 @@ description: >
 
 ### ⚠️ 关键陷阱
 
-1. **CarMaker 进程名不是 `Carmaker`**：正确名称是 `CarMaker.win64`（或 `CarMaker`）。用 `Get-Process -Name "CarMaker*"` 检查。
-2. **IPG-MOVIE 运行 ≠ 状态正常**：必须检查以下状态：
+1. **CarMaker GUI 进程名是 `HIL`**（不是 `Carmaker`）：完整列表 `HIL.exe`, `CarMaker.win64.exe`, `CM_Office.exe`
+2. **IPG-MOVIE 进程名是 `Movie`**：GUI Movie 和 GPUSensor 都叫 `Movie.exe`，通过 CommandLine 区分
+3. **IPG-MOVIE 运行 ≠ 状态正常**：必须检查以下状态：
    - `winfo exists .view0` — 窗口存在
    - `info commands CheckViewPort` — CheckViewPort 命令存在
-   - `winfo exists .view0` 返回 1 但 CheckViewPort 不存在 = 状态异常，需要重启 IPG-MOVIE
-3. **DDE 连接成功 ≠ 状态正常**：DDE 可能返回 `rc=0` 但 Tcl 执行失败。必须检查结果文件内容。
+   - `StopUpdateView` — 渲染管线是否停止（SUV=1 表示死锁，需重启）
+   - GL widget 尺寸 vs View dict 尺寸是否一致
+4. **DDE 连接成功 ≠ 状态正常**：DDE 可能返回 `rc=0` 但 Tcl 执行失败或超时。
 
 ### 环境检查脚本
 
-每次执行标定前，运行以下检查：
-
 ```powershell
-# 1. 检查 CarMaker 进程（注意进程名）
-Get-Process -Name "CarMaker*" -ErrorAction SilentlyContinue | Select-Object -First 3 Id, ProcessName, StartTime
+# 1. 检查所有 IPG 进程（注意进程名！）
+Get-Process -Name "HIL","Movie","CarMaker*","CM_Office" -ErrorAction SilentlyContinue | Select-Object Id, ProcessName, MainWindowTitle, StartTime | Format-Table -AutoSize
 
-# 2. 检查 IPG-MOVIE 进程
-Get-Process -Name "Movie" -ErrorAction SilentlyContinue | Select-Object -First 3 Id, ProcessName, StartTime
-
-# 3. 检查 DDE 连接和 CheckViewPort 状态
-python -c "import sys; sys.path.insert(0, '.'); from dde_health_check import run_check_attempt, default_output_dir, render_dde_execute_script; output_dir = default_output_dir(); output_dir.mkdir(parents=True, exist_ok=True); result_file = str(output_dir / 'env_check.txt').replace('\\', '/'); body = [f'set __fp [open \"{result_file}\" w]', 'puts $__fp \"VIEW0:[winfo exists .view0]\"', 'puts $__fp \"CHECKVP:[info commands CheckViewPort]\"', 'puts $__fp \"CHECKVP_SAVED:[info commands CheckViewPort_saved]\"', 'puts $__fp \"TCL_VERSION:[info tclversion]\"', 'close $__fp']; result = run_check_attempt(name='env_check', service='TclEval', topic='CarMaker', output_dir=output_dir, script_text=render_dde_execute_script(output_dir / 'env_check.txt', 'IPG-MOVIE', body), timeout_sec=10); print('DDE ok:', result.get('ok')); import os; f = result_file; print(open(f).read().strip() if os.path.exists(f) else 'result file not found')"
-
-# 4. 验证结果
-# - VIEW0:1 = 窗口存在
-# - CHECKVP:非空 = CheckViewPort 存在（正常）
-# - CHECKVP:空 = CheckViewPort 不存在（异常，需重启 IPG-MOVIE）
+# 2. 检查 DDE 连接和 IPG-MOVIE 状态（用项目脚本）
+python _diag_movie_state.py
 ```
 
 ### 环境异常处理
 
-| 现象 | 原因 | 处理 |
-|------|------|------|
-| CarMaker 进程不存在 | 未启动或已崩溃 | 启动 CarMaker（需要路径） |
-| IPG-MOVIE 进程不存在 | 未启动 | 通过 DDE 启动或要求用户启动 |
-| CheckViewPort 不存在 | 之前操作残留或 IPG-MOVIE 未完全初始化 | 重启 IPG-MOVIE |
-| DDE 连接失败 | IPG-MOVIE 未就绪或 DDE 服务未注册 | 等待 5s 后重试，最多 3 次 |
-| 渲染状态异常 (UVA/SUV/EXP) | IPG-MOVIE 内部状态问题 | 检查渲染健康状态，必要时重启 |
+| 现象 | 处理 |
+|------|------|
+| HIL 进程不存在 | 启动 CarMaker（见下方重启命令） |
+| Movie 进程不存在 | CarMaker 启动后会自动拉起 Movie |
+| StopUpdateView=1 (SUV=1) | 渲染死锁，必须重启整个 CarMaker |
+| CheckViewPort 不存在 | 重启 IPG-MOVIE（kill Movie 进程即可，CarMaker 会重拉） |
+| DDE 超时 | 渲染管线卡死，重启 |
+
+### 重启 CarMaker
+
+```powershell
+# Kill 所有（进程名是 HIL + Movie，不是 CarMaker！）
+taskkill /IM HIL.exe /F /T 2>$null
+taskkill /IM Movie.exe /F /T 2>$null
+Start-Sleep -Seconds 3
+
+# 启动（HIL.exe = CarMaker GUI）
+Start-Process "D:\IPG\carmaker\win64-14.1\GUI\HIL.exe" -ArgumentList "-projectdir","C:/CM_Projects/CMO141_Calibration" -WorkingDirectory "D:\IPG\carmaker\win64-14.1\GUI"
+
+# 等待就绪（DDE TclEval 可用）
+python -c "import sys; sys.path.insert(0,'.'); from cmapi_testrun_control import wait_for_carmaker_tcleval_ready; wait_for_carmaker_tcleval_ready()"
+```
 ---
 
 ## 知识源

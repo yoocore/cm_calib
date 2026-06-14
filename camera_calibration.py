@@ -7944,6 +7944,21 @@ class CameraCalibrator:
             except Exception as exc:
                 print(f"Warning: could not set movie view size: {exc}")
             self._movie_view_size_initialized = True
+        # Rendering health check: detect freeze before attempting capture
+        try:
+            from rendering_health import check_render_state, try_restart_rendering
+            state = check_render_state()
+            if state.get("ok") and state.get("uva") == "1":
+                print(f"[health] Rendering frozen (UVA=1) before capture '{tag}', attempting restart...")
+                r = try_restart_rendering()
+                if r.get("restart_success"):
+                    print(f"[health] Rendering restarted, UC growth={r.get('uc_growth')}")
+                else:
+                    print(f"[health] Rendering restart failed: {r.get('error', 'unknown')}")
+        except ImportError:
+            pass  # rendering_health module not available
+        except Exception as exc:
+            print(f"[health] Rendering check error: {exc}")
         return self._capture_movie_via_dde(tag)
 
     def _snapshot_values(self) -> Dict[str, float]:
@@ -10556,6 +10571,34 @@ class CameraCalibrator:
         sim_img = cv2.imread(str(sim_path), cv2.IMREAD_GRAYSCALE)
         if sim_img is None:
             raise RuntimeError(f"Failed reading screenshot: {sim_path}")
+
+        # Freshness check: detect stale capture (same pixel data as previous)
+        current_hash = hash(sim_img.tobytes())
+        prev_hash = getattr(self, "_last_capture_hash", None)
+        if prev_hash is not None and current_hash == prev_hash:
+            print(f"[health] Stale capture detected for '{tag}': image identical to previous. Attempting recovery...")
+            try:
+                from rendering_health import try_restart_rendering
+                r = try_restart_rendering()
+                if r.get("restart_success"):
+                    print(f"[health] Rendering restarted (UC growth={r.get('uc_growth')}), re-capturing...")
+                    sim_path = self.capture_movie(tag + "_re")
+                    sim_img = cv2.imread(str(sim_path), cv2.IMREAD_GRAYSCALE)
+                    if sim_img is None:
+                        raise RuntimeError(f"Failed reading re-captured screenshot: {sim_path}")
+                    re_hash = hash(sim_img.tobytes())
+                    if re_hash == current_hash:
+                        raise RuntimeError(f"Stale capture persists after rendering restart: {sim_path}")
+                    current_hash = re_hash
+                else:
+                    raise RuntimeError(f"Stale capture and rendering restart failed: {r.get('error', 'unknown')}")
+            except RuntimeError:
+                raise  # Propagate explicit RuntimeErrors above
+            except ImportError:
+                raise RuntimeError(f"Stale capture detected (rendering_health not available): {sim_path}")
+            except Exception as exc:
+                raise RuntimeError(f"Stale capture recovery failed: {exc}")
+        self._last_capture_hash = current_hash
 
         sim_prepared = self._prepare_eval_image(sim_img)
         sim_score_img = self._build_sim_eval_image(sim_img)

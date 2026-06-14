@@ -115,17 +115,7 @@ python -c "import sys; sys.path.insert(0, '.'); from dde_health_check import run
 
 ### 第0步：环境检查（必须！）
 
-**在执行任何标定命令前，必须先运行上面"环境检查脚本"部分的检查命令：**
-
-1. 检查 CarMaker/IPG-MOVIE 进程
-2. 通过 DDE 检查 CheckViewPort 状态
-3. 确认 VIEW0:1 + CHECKVP:非空
-
-如果检查失败，先解决环境问题再继续。常见问题：
-- CarMaker 未运行 → 启动 CarMaker
-- IPG-MOVIE 未运行 → 启动 IPG-MOVIE
-- CheckViewPort 不存在 → 重启 IPG-MOVIE
-- DDE 连接失败 → 等待 5s 后重试
+执行上面"环境检查"部分的 3 步检查。任何一项失败则先解决再继续。
 
 ### 第1步：理解需求
 
@@ -148,19 +138,7 @@ python -m pytest tests/test_persistent_counters.py -v 2>&1 | Tee-Object -FilePat
 ### 第3步：分析根因
 
 分析输出中的错误信息，判断问题类型。不得在未执行的情况下猜测原因。
-
-**常见标定项目错误模式：**
-
-| 错误特征 | 常见根因方向 |
-|-----------|-------------|
-| `FBO Creation error` / `FBO error: id not mapped` | GL 上下文不稳定，UpdateView_TimerProc 冲突，height bump 后缺 update |
-| `FBO new` 后紧跟 `FBO Creation error` | ConfigFBO 被 UpdateView_TimerProc 触发 |
-| `ConnectTo failed` | CarMaker 未运行，或 DDE 服务未注册 |
-| `Tcl_Eval` 返回错误 | Tcl 脚本语法错误，或 IPG-MOVIE 未就绪 |
-| `after` 脚本相关错误 | Tcl after timer 问题，考虑 rename+no-op 模式 |
-| 测试失败（assertion） | 逻辑错误，读取代码定位 |
-
-不确定时，使用 `systematic-debugging` skill 辅助多方向调查。
+错误模式速查见下面"常见错误速查"表。不确定时用 `systematic-debugging` skill 辅助多方向调查。
 
 ### 第4步：修复
 
@@ -209,20 +187,14 @@ python cmapi_testrun_control.py --mode status
 python camera_calibration.py --precheck --camera <NAME>
 ```
 
-#### 关键参数说明
+#### 常用参数（完整列表用 `--help`）
 
 | 参数 | 用途 |
 |------|------|
-| `--keep-carmaker-open` | prepare/run 后不关闭 CarMaker，减少后续启动时间 |
-| `--keep-movie-open` | prepare/run 后不关闭 IPG-MOVIE |
-| `--open-movie` | 启动并附加 IPG-MOVIE GUI |
-| `--explore-then-refine` | 先快速多起点探索再细化，适合首次标定 |
-| `--multi-start-count N` | N 轮多起点优化（抖动初始参数） |
+| `--keep-carmaker-open` / `--keep-movie-open` | 不关闭进程，减少后续启动时间 |
+| `--explore-then-refine` | 先多起点探索再细化，适合首次标定 |
 | `--campaign-rounds N` | 重复 N 轮校准（默认 1） |
-| `--print-summary-json` | 输出机器可读的 JSON 摘要行 |
-| `--bootstrap-template` | 自定义 bootstrap 模板路径 |
-| `--config-dir <path>` | `camera.<name>.json` 配置存放目录（默认 `configs/`） |
-| `--testrun-control-mode tcl` | 通过纯 Tcl 引导（默认，更可靠） |
+| `--print-summary-json` | 输出 JSON 摘要行 |
 
 ---
 
@@ -301,94 +273,25 @@ python camera_calibration.py --precheck --camera <NAME>
 
 ---
 
-## 关键教训记录（从实际运行中累积）
+## 关键教训记录
 
-### 教训1：Smoke Test 必须限制迭代次数 + 必须恢复
+### 教训1：冒烟测试必须限制迭代 + 必须恢复
 
-**场景：** 用户说"冒烟"或"smoke test"，意味着快速验证流程是否能跑通。
-**错误做法：** 依赖 config 中的 `max_iters: 180`，让全流程跑完耗时 10+ 分钟。
-**正确做法：** 在运行前备份并修改 config 文件，跑完后**必须恢复**。
+改 config 的 `max_iters` 为 5-10 跑冒烟。**改之前 `shutil.copy2(p, p + '.bak')` 备份，跑完必须 `shutil.move(p + '.bak', p)` 恢复。**
+`--campaign-rounds` 控制流程重复次数，不等于迭代次数。
 
-```bash
-# 冒烟模式：备份 → 修改 → 运行 → 恢复
-python -c "
-import json, shutil
-for cam in ['right_rear', 'rear_tv', 'left_tv']:
-    p = f'configs/camera.{cam}.json'
-    shutil.copy2(p, p + '.bak')          # 备份
-    with open(p) as f: cfg = json.load(f)
-    cfg['max_iters'] = 5
-    with open(p, 'w') as f: json.dump(cfg, f, indent=4)
-"
-# 运行冒烟测试
-python calibration_orchestrator.py --testrun vctc_ngxpro --camera right_rear rear_tv left_tv --campaign-rounds 1
+### 教训2：CheckViewPort rename 必须用 `__orig_during_bump`
 
-# 恢复原始 config（必须！）
-python -c "
-import shutil
-for cam in ['right_rear', 'rear_tv', 'left_tv']:
-    p = f'configs/camera.{cam}.json'
-    shutil.move(p + '.bak', p)           # 恢复
-    print(f'Restored {p}')
-"
+Guard 系统占用 `CheckViewPort_saved`。Height bump 用同名会导致 `invalid command name`。详见 Phase 29。
+
+### 教训3：分析日志要全面
+
+不要只 grep "FBO" 和 "ConnectTo"。用宽泛模式搜索：
+```powershell
+Select-String -Path tmp/*.log -Pattern "(error|ERROR|invalid|unknown|failed|FAILED|Traceback|Exception)"
 ```
+检查 orchestration 的 `status` 字段和每相机的 `CALIBRATION_SUMMARY_JSON`。
 
-**关键：** `--campaign-rounds` 不等于冒烟次数。它控制的是整个标定流程重复几遍，不是每个相机的迭代次数。要限制迭代必须改 config。**改完必须恢复，否则后续正式标定会只用 5 次迭代。**
+### 教训4：参数无变化 = 标定系统异常
 
-### 教训2：CheckViewPort rename 命名冲突（Phase 29 已修复）
-
-**场景：** Orchestrator 运行标定后报 `invalid command name "CheckViewPort"`。
-
-**根因：** 两个独立系统使用了相同的临时名称 `CheckViewPort_saved`：
-1. **Guard 系统**（`wrap_checkviewport()`）：将原始 CheckViewPort 重命名为 `CheckViewPort_saved`，安装 re-entrant guard 作为新 `CheckViewPort`
-2. **Height bump**（capture body / ensure_movie_view_size）：也将 CheckViewPort 重命名为 `CheckViewPort_saved`
-
-**冲突过程：**
-```
-guard: rename CheckViewPort → CheckViewPort_saved (原始), guard 成为 CheckViewPort
-height bump: rename CheckViewPort → CheckViewPort_saved → 覆盖了原始！guard 调用 CheckViewPort_saved 时崩溃
-```
-
-**修复（commit 12f8aa2）：** Height bump 使用 `__orig_during_bump` 作为临时名称，与 guard 系统的 `CheckViewPort_saved` 隔离。
-
-**规则：** 任何对 CheckViewPort 的临时 rename 操作，**必须**使用 `__orig_during_bump`（不要用 `CheckViewPort_saved`）。
-
-**搜索命令：**
-```bash
-Select-String -Path tmp/*.log -Pattern "CheckViewPort|invalid command" -SimpleMatch
-```
-
-### 教训3：分析必须全面 —— 不要只查 FBO/ConnectTo
-
-**场景：** 检查标定是否导致 CarMaker 报错时，不能只 grep "FBO" 和 "ConnectTo"。
-**问题：** CarMaker/IPG-MOVIE 还有其他错误类型（`unknown command`、`invalid command name`、Traceback 等）。
-**正确做法：**
-- 读取完整日志，不要依赖 grep 摘要
-- 检查 orchestration 最终状态 status 字段
-- 检查每个相机的 CALIBRATION_SUMMARY_JSON 中的 passed 字段
-- 用更宽泛的模式搜索错误
-
-```bash
-# 正确检查标定是否失败
-$full_log = Get-Content tmp/orchestration.log -Raw
-if ($full_log -match '"status":"failed"' -or $full_log -match 'Traceback') {
-    Write-Host "FAILED - 需分析完整错误"
-}
-# 或者
-Select-String -Path tmp/orchestration.log -Pattern "(error|Error|ERROR|invalid|unknown|failed|Failed|FAILED|Traceback|Exception)"
-```
-
-### 教训4：检测标定是否卡死 —— 参数无变化 = 标定不正常
-
-**场景：** 标定跑了 N 轮但 `start_score == final_score` 且所有参数 start == final。
-**判断标准：**
-- start_score ≈ final_score（差 < 1e-6）
-- 所有参数值 start 和 final 完全相同
-- `accepted` 字段持续为 False
-- `stop_reason` 是 `max_iters_reached`（从未提前收敛）
-
-这表示标定系统本身有问题（board 检测失败、score 计算不工作、view 配置不正确等），不是参数调整能解决的。应该：
-1. 检查 Capture 是否返回有效图像
-2. 检查 board 检测结果
-3. 检查 template/overlay 是否正确匹配
-4. 而不是继续跑更多轮次
+`start_score ≈ final_score` 且所有参数 start == final → 不是参数问题，是 capture/board 检测/模板匹配问题。停止跑更多轮次，检查图像和检测结果。

@@ -31,6 +31,7 @@ description: >
 | `python calibration_orchestrator.py` | 标定编排器 |
 | `python dde_health_check.py` | DDE 连接健康检查 |
 | `python fbo_score_check.py` | FBO 状态检查 |
+| `python rendering_health.py` | 渲染循环健康检查（UVA/SUV/UC 状态） |
 | `python xxx.py` | 任何 Python 脚本——`bash` 在用户机器上，有完整的运行环境 |
 
 ### ⚠️ 可能需要处理的限制
@@ -64,8 +65,10 @@ description: >
 # 1. 检查所有 IPG 进程（注意进程名！）
 Get-Process -Name "HIL","Movie","CarMaker*","CM_Office" -ErrorAction SilentlyContinue | Select-Object Id, ProcessName, MainWindowTitle, StartTime | Format-Table -AutoSize
 
-# 2. 检查 DDE 连接和 IPG-MOVIE 状态（用项目脚本）
-python _diag_movie_state.py
+# 2. 检查 DDE + 渲染循环健康（UVA/SUV/UC 状态 + 2s 增长验证）
+python rendering_health.py
+# 期望输出: ok=True uva=0 suv=0 uc=增长中
+# 如果 uc 在 2 秒内无增长 → 渲染循环死亡 → 必须重启 CarMaker
 ```
 
 ### 环境异常处理
@@ -105,13 +108,14 @@ python -c "import sys; sys.path.insert(0,'.'); from cmapi_testrun_control import
 - 相机模型重初始化 → Phase 12
 - apply 脚本 diff-only → Phase 12
 - DDE capture 失败 → Phase 24
-- StopUpdateView 渲染冻结 → Phase 30
+- 渲染循环死亡 / StopUpdateView → Phase 30-31
+- capture_movie() return 缺失 → commit b543d81
 
 ## 已知未解决问题
 
 | 问题 | 状态 | 描述 |
 |------|------|------|
-| Phase 30: StopUpdateView (SUV=1) | **待调查** | 标定运行中渲染状态异常（UVA=0 SUV=1 EXP=0），导致截图返回 None。独立于 CheckViewPort 问题 |
+| Phase 30: 渲染冻结 | **大部分已修复** | 根因：`after cancel UpdateView_TimerProc` 杀死渲染定时器后未重新调度（commit 47e8d79 修复）。残留：极端 GPU 负载下仍可能触发 |
 | 问题 4: 标定分数偏高 | **算法问题** | right_rear ~43, rear_tv ~1055, left_tv ~811，远超 target <5.0。不是 capture bug，是标定算法/初始参数问题 |
 
 遇到这些问题时，不要重复调查已知原因，直接在已知约束下工作。
@@ -259,6 +263,16 @@ python camera_calibration.py --precheck --camera <NAME>
 3. **回归**：`python -m pytest tests/ -v -k "not dde and not fbo_after_prepare"`
 
 每轮 `2>&1 | Tee-Object -FilePath tmp/<step>.log` 保存完整日志。
+
+---
+
+### 标定验证清单（每次跑完标定必须检查）
+
+1. **检查输出中无 `[health]` 告警**：`grep "\[health\]" tmp/calib.log`，有告警说明渲染出过问题
+2. **检查渲染循环仍活着**：`python rendering_health.py`，UC 应在 2s 内持续增长
+3. **检查图像是否真的不同**：对比输出目录下各 iter PNG 的文件大小和 mean/std。全部相同 = 渲染冻结（即使分数略有差异也可能是噪声）
+4. **检查分数变化**：如果所有 iter 的 `start_score == final_score` 且参数无变化，说明 capture 返回相同图像（渲染冻结或参数未生效）
+
 ---
 
 ## 内存管理
@@ -302,3 +316,14 @@ Select-String -Path tmp/*.log -Pattern "(error|ERROR|invalid|unknown|failed|FAIL
 ### 教训4：参数无变化 = 标定系统异常
 
 `start_score ≈ final_score` 且所有参数 start == final → 不是参数问题，是 capture/board 检测/模板匹配问题。停止跑更多轮次，检查图像和检测结果。
+
+### 教训5：渲染循环静默死亡——UVA=0 SUV=0 也可能是死锁
+
+**场景：** 标定跑完后 IPG-MOVIE 窗口卡死，但 `check_render_state()` 报告 UVA=0 SUV=0（看起来健康）。
+**根因：** `after cancel UpdateView_TimerProc` 取消了渲染定时器。finally 块恢复了 proc 但**没有重新调度定时器**（`after 0 UpdateView_TimerProc`）。渲染循环静默死亡。
+**检测方法：**
+1. `python rendering_health.py` 检查 UC 是否在 2s 内增长。不增长 = 死锁
+2. `capture_movie()` 内置 UC 增长检测：跨迭代比较 UpdateCounter，无增长则触发 restart
+3. 标定输出中无 `[health]` 告警 ≠ 正常——如果 UC 检测触发了 restart 会有告警，但如果代码没加 UC 检测则完全静默
+**已修复（commit 47e8d79）：** capture body 和 ensure_movie_view_size 的 finally 块后加 `catch {after 0 UpdateView_TimerProc}`。
+**验证方法：** 标定完成后运行 `python rendering_health.py`，UC 应在 2s 内持续增长。

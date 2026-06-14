@@ -41,8 +41,50 @@ description: >
 | 长时间运行 | 设置合理的 `timeout`（标定脚本可能需要几分钟），用 `timeout` 参数 |
 | 需要管理员权限 | 停下来问用户 |
 || GUI 交互操作 | 检查是否有可用的 CLI/DDE 替代接口，若无则直接问用户。**但窗口最小化/恢复操作属于自动化范围**——用 Tcl `wm state` 或 `ctypes` 直接做 |
-|| 系统目录/敏感路径 | 涉及 `C:\Windows\`、`Program Files`、注册表等系统级修改时停下来问用户。**项目目录 `C:\CM_Projects\...` 内的任何操作都直接执行** |
+| 系统目录/敏感路径 | 涉及 `C:\Windows\`、`Program Files`、注册表等系统级修改时停下来问用户。**项目目录 `C:\CM_Projects\...` 内的任何操作都直接执行** |
 
+---
+
+## 环境检查（必须在执行任何标定命令前完成）
+
+### ⚠️ 关键陷阱
+
+1. **CarMaker 进程名不是 `Carmaker`**：正确名称是 `CarMaker.win64`（或 `CarMaker`）。用 `Get-Process -Name "CarMaker*"` 检查。
+2. **IPG-MOVIE 运行 ≠ 状态正常**：必须检查以下状态：
+   - `winfo exists .view0` — 窗口存在
+   - `info commands CheckViewPort` — CheckViewPort 命令存在
+   - `winfo exists .view0` 返回 1 但 CheckViewPort 不存在 = 状态异常，需要重启 IPG-MOVIE
+3. **DDE 连接成功 ≠ 状态正常**：DDE 可能返回 `rc=0` 但 Tcl 执行失败。必须检查结果文件内容。
+
+### 环境检查脚本
+
+每次执行标定前，运行以下检查：
+
+```powershell
+# 1. 检查 CarMaker 进程（注意进程名）
+Get-Process -Name "CarMaker*" -ErrorAction SilentlyContinue | Select-Object -First 3 Id, ProcessName, StartTime
+
+# 2. 检查 IPG-MOVIE 进程
+Get-Process -Name "Movie" -ErrorAction SilentlyContinue | Select-Object -First 3 Id, ProcessName, StartTime
+
+# 3. 检查 DDE 连接和 CheckViewPort 状态
+python -c "import sys; sys.path.insert(0, '.'); from dde_health_check import run_check_attempt, default_output_dir, render_dde_execute_script; output_dir = default_output_dir(); output_dir.mkdir(parents=True, exist_ok=True); result_file = str(output_dir / 'env_check.txt').replace('\\', '/'); body = [f'set __fp [open \"{result_file}\" w]', 'puts $__fp \"VIEW0:[winfo exists .view0]\"', 'puts $__fp \"CHECKVP:[info commands CheckViewPort]\"', 'puts $__fp \"CHECKVP_SAVED:[info commands CheckViewPort_saved]\"', 'puts $__fp \"TCL_VERSION:[info tclversion]\"', 'close $__fp']; result = run_check_attempt(name='env_check', service='TclEval', topic='CarMaker', output_dir=output_dir, script_text=render_dde_execute_script(output_dir / 'env_check.txt', 'IPG-MOVIE', body), timeout_sec=10); print('DDE ok:', result.get('ok')); import os; f = result_file; print(open(f).read().strip() if os.path.exists(f) else 'result file not found')"
+
+# 4. 验证结果
+# - VIEW0:1 = 窗口存在
+# - CHECKVP:非空 = CheckViewPort 存在（正常）
+# - CHECKVP:空 = CheckViewPort 不存在（异常，需重启 IPG-MOVIE）
+```
+
+### 环境异常处理
+
+| 现象 | 原因 | 处理 |
+|------|------|------|
+| CarMaker 进程不存在 | 未启动或已崩溃 | 启动 CarMaker（需要路径） |
+| IPG-MOVIE 进程不存在 | 未启动 | 通过 DDE 启动或要求用户启动 |
+| CheckViewPort 不存在 | 之前操作残留或 IPG-MOVIE 未完全初始化 | 重启 IPG-MOVIE |
+| DDE 连接失败 | IPG-MOVIE 未就绪或 DDE 服务未注册 | 等待 5s 后重试，最多 3 次 |
+| 渲染状态异常 (UVA/SUV/EXP) | IPG-MOVIE 内部状态问题 | 检查渲染健康状态，必要时重启 |
 ---
 
 ## 工作流

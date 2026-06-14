@@ -7963,9 +7963,11 @@ class CameraCalibrator:
                 uc = state.get("uc", "0")
                 needs_restart = False
                 reason = ""
-                # UVA=0 means rendering stopped; SUV=1 means StopUpdateView; EXP=1 means exporting.
-                # UVA=1 alone is NORMAL (IPG-MOVIE actively rendering) — do NOT restart.
-                if uva == "0" or suv == "1" or exp == "1":
+                # SUV=1 means StopUpdateView (pause rendering); EXP=1 means exporting.
+                # UVA=0 alone is NORMAL after camera switch — the rendering loop timer
+                # hasn't started yet, but UpdateView in the capture body works fine.
+                # Restarting unnecessarily (try_restart_rendering) corrupts GL context.
+                if suv == "1" or exp == "1":
                     needs_restart = True
                     reason = f"UVA={uva} SUV={suv} EXP={exp}"
                 else:

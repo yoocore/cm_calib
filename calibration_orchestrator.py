@@ -274,8 +274,8 @@ def _prepare_runtime_for_camera(
     )
     # --- bootstrap's internal sync_gui re-registers CheckViewPort, so re-guard ---
     cmctrl.disable_checkviewport_recursion()
-    # --- Step 3: Cancel movie's internal UpdateView timer (set by StartSim/StopSim) ---
-    cmctrl.cancel_movie_updateview_timer(timeout_sec=10.0)
+    # --- Step 3: Disable Movie's UpdateView timer during prepare (rename to no-op, not just 'after cancel') ---
+    cmctrl.disable_movie_updateview_timer(timeout_sec=10.0)
     # --- Step 4: Ensure IPG-Movie is alive ---
     # Strategy:
     #   GPUSensor present → Movie keeps running throughout bootstrap, nothing to do
@@ -598,6 +598,7 @@ def main() -> None:
                         probe_name=f"stop_sim_post_calib_{camera_name}",
                     )
             finally:
+                cmctrl.enable_movie_updateview_timer(timeout_sec=10.0)
                 cmctrl.restore_checkviewport()
             per_camera_results.append(
                 {

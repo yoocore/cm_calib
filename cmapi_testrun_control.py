@@ -1302,6 +1302,74 @@ def cancel_movie_updateview_timer(*, timeout_sec: float = 10.0) -> None:
         print(f"Warning: cancel Movie UpdateView timer failed (non-fatal): {exc}")
 
 
+def disable_movie_updateview_timer(*, timeout_sec: float = 10.0) -> None:
+    """Rename UpdateView_TimerProc to no-op for the entire camera switch cycle.
+    Unlike cancel_movie_updateview_timer() which uses 'after cancel' (only cancels
+    ONE timer instance), this renames the proc to a no-op so any remaining or
+    newly registered timers are harmless. Restore with enable_movie_updateview_timer().
+    Non-fatal on failure.
+    """
+    output_dir = default_output_dir()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        result = run_check_attempt(
+            name="disable_movie_updateview",
+            service="TclEval",
+            topic="CarMaker",
+            output_dir=output_dir,
+            script_text=render_dde_execute_script(
+                output_dir / "disable_movie_updateview.txt",
+                "IPG-MOVIE",
+                [
+                    "catch {after cancel UpdateView_TimerProc}",
+                    "catch {rename UpdateView_TimerProc __saved_UpdateView_TimerProc}",
+                    "proc UpdateView_TimerProc {args} {}",
+                ],
+            ),
+            timeout_sec=timeout_sec,
+        )
+        if not result.get("ok"):
+            print(f"Warning: could not disable Movie UpdateView timer (non-fatal): {result.get('detail')}")
+        else:
+            print("Disabled Movie UpdateView_TimerProc (rename + no-op)")
+    except Exception as exc:
+        print(f"Warning: disable Movie UpdateView timer failed (non-fatal): {exc}")
+
+
+def enable_movie_updateview_timer(*, timeout_sec: float = 10.0) -> None:
+    """Restore the original UpdateView_TimerProc after disable_movie_updateview_timer().
+    Renames the no-op back and re-schedules the rendering loop timer.
+    Non-fatal on failure.
+    """
+    output_dir = default_output_dir()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        result = run_check_attempt(
+            name="enable_movie_updateview",
+            service="TclEval",
+            topic="CarMaker",
+            output_dir=output_dir,
+            script_text=render_dde_execute_script(
+                output_dir / "enable_movie_updateview.txt",
+                "IPG-MOVIE",
+                [
+                    "catch {rename UpdateView_TimerProc {}}",
+                    "catch {rename __saved_UpdateView_TimerProc UpdateView_TimerProc}",
+                    "if {[info commands UpdateView_TimerProc] ne \"\"} {",
+                    "    catch {after 0 UpdateView_TimerProc}",
+                    "}",
+                ],
+            ),
+            timeout_sec=timeout_sec,
+        )
+        if not result.get("ok"):
+            print(f"Warning: could not enable Movie UpdateView timer (non-fatal): {result.get('detail')}")
+        else:
+            print("Enabled Movie UpdateView_TimerProc (restored + after 0)")
+    except Exception as exc:
+        print(f"Warning: enable Movie UpdateView timer failed (non-fatal): {exc}")
+
+
 def wrap_checkviewport(*, timeout_sec: float = 10.0) -> None:
     """Install a re-entrant guard on IPG-MOVIE's CheckViewPort Tcl proc and
     a delete-trace to auto-reinstall the guard whenever IPG-MOVIE

@@ -14,6 +14,7 @@ import sys
 import time
 import warnings
 import uuid
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -1941,187 +1942,87 @@ def _compute_board_signature(boards: Any) -> Optional[frozenset]:
             return None
         entries.append((str(bid), str(btype)))
     return frozenset(entries)
+# ── Historical params pool (cross-signature) ──────────────────────────
 
 
-def _load_history_best_run_for_config(
-    config_path: Path,
-    camera_name: Optional[str] = None,
-) -> Optional[dict]:
-    cfg_payload = _load_json_if_exists(config_path)
-    required_score_scope = _resolve_score_scope_from_cfg(cfg_payload)
-    cfg_board_signature = _compute_board_signature(cfg_payload.get("boards")) if isinstance(cfg_payload, dict) else None
-    config_camera_name = _camera_name_from_config_path(config_path)
-    history_camera_name = _canonical_camera_group_name(config_camera_name)
-    if not history_camera_name and camera_name:
-        history_camera_name = _canonical_camera_group_name(camera_name)
-    if not history_camera_name:
-        print(f"[history_best] No history camera name for config={config_path}, camera_name={camera_name}")
+def _compute_board_signature_hash(signature: frozenset) -> str:
+    """Deterministic short hash of a board signature frozenset."""
+    sorted_entries = sorted(signature, key=lambda x: (x[0], x[1]))
+    raw = ",".join(f"{bid}:{btype}" for bid, btype in sorted_entries)
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+def _params_pool_path(camera_name: str) -> Path:
+    """Path to historical params pool JSON for a camera."""
+    root = _default_sim_output_root()
+    return root / _canonical_camera_group_name(camera_name) / "historical_params_pool.json"
+
+
+def _load_params_pool(camera_name: str) -> dict:
+    """Load params pool from disk, creating empty if missing."""
+    path = _params_pool_path(camera_name)
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and data.get("version") == 2:
+                return data
+        except Exception:
+            pass
+    return {"version": 2, "camera_name": camera_name, "entries": {}}
+
+
+def _save_params_pool(camera_name: str, pool: dict) -> None:
+    """Save params pool to disk."""
+    pool["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+    path = _params_pool_path(camera_name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(pool, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def _pool_entry_for_current_config(pool: dict, cfg: dict) -> Optional[dict]:
+    """Look up pool entry matching the board config from cfg."""
+    boards = cfg.get("boards")
+    sig = _compute_board_signature(boards)
+    if sig is None:
         return None
-    history_dirs = _iter_camera_history_dirs(history_camera_name)
-    print(f"[history_best] camera={history_camera_name}, cfg_scope={required_score_scope}, cfg_sig={cfg_board_signature}, dirs={history_dirs}")
-    best_run: Optional[dict] = None
-    total_results = 0
-    filtered_scope = 0
-    filtered_sig = 0
-    filtered_digest = 0
-    for history_dir in history_dirs:
-        for result_path in sorted(history_dir.rglob("result.json")):
-            payload = _load_json_if_exists(result_path)
-            if not isinstance(payload, dict):
-                continue
-            digest = _build_run_digest_from_result_payload(
-                payload,
-                result_path,
-                include_in_progress=True,
-            )
-            if digest is None:
-                filtered_digest += 1
-                continue
-            if required_score_scope is not None:
-                digest_score_scope = _resolve_score_scope_from_payload(digest)
-                if digest_score_scope != required_score_scope:
-                    filtered_scope += 1
-                    continue
-            if cfg_board_signature is not None:
-                result_signature = _compute_board_signature(payload.get("boards"))
-                if result_signature is None or result_signature != cfg_board_signature:
-                    filtered_sig += 1
-                    print(f"[history_best] sig mismatch: {result_path.parent.name} result_sig={result_signature} != cfg_sig={cfg_board_signature}")
-                    continue
-            total_results += 1
-            if best_run is None or float(digest.get("final_score", float("inf"))) < float(
-                best_run.get("final_score", float("inf"))
-            ):
-                best_run = digest
-    print(f"[history_best] total_pass={total_results}, filtered: digest={filtered_digest} scope={filtered_scope} sig={filtered_sig}")
-    if isinstance(best_run, dict):
-        print(f"[history_best] FOUND: score={best_run.get('final_score')}, src={best_run.get('result_path')}")
-        return dict(best_run)
-    print(f"[history_best] NOT FOUND for camera={history_camera_name}")
-    return None
+    sig_hash = _compute_board_signature_hash(sig)
+    return pool.get("entries", {}).get(sig_hash)
 
 
-def _load_history_best_run_any_boards(
-    config_path: Path,
-    camera_name: Optional[str] = None,
-) -> Optional[dict]:
-    cfg_payload = _load_json_if_exists(config_path)
-    required_score_scope = _resolve_score_scope_from_cfg(cfg_payload)
-    config_camera_name = _camera_name_from_config_path(config_path)
-    history_camera_name = _canonical_camera_group_name(config_camera_name)
-    if not history_camera_name and camera_name:
-        history_camera_name = _canonical_camera_group_name(camera_name)
-    if not history_camera_name:
-        return None
-    history_dirs = _iter_camera_history_dirs(history_camera_name)
-    best_entry: Optional[dict] = None
-    best_score: Optional[float] = None
-    for history_dir in history_dirs:
-        for result_path in sorted(history_dir.rglob("result.json")):
-            payload = _load_json_if_exists(result_path)
-            if not isinstance(payload, dict):
-                continue
-            digest = _build_run_digest_from_result_payload(
-                payload,
-                result_path,
-                include_in_progress=True,
-            )
-            if digest is None:
-                continue
-            if required_score_scope is not None:
-                digest_score_scope = _resolve_score_scope_from_payload(digest)
-                if digest_score_scope != required_score_scope:
-                    continue
-            final_score = digest.get("final_score")
-            if final_score is None:
-                continue
-            try:
-                final_score = float(final_score)
-            except (TypeError, ValueError):
-                continue
-            if best_score is not None and final_score >= best_score:
-                continue
-            best_score = final_score
-            best_entry = digest
-    if isinstance(best_entry, dict):
-        print(f"[history_any_boards] FOUND: score={best_entry.get('final_score')}, src={best_entry.get('result_path')}")
-        return dict(best_entry)
-    return None
+def _find_best_pool_entry_across_signatures(pool: dict) -> Optional[dict]:
+    """Find pool entry with the lowest (best) score across all signatures."""
+    best: Optional[dict] = None
+    for entry in pool.get("entries", {}).values():
+        score = entry.get("best_score")
+        if score is None:
+            continue
+        if best is None or float(score) < float(best.get("best_score", float("inf"))):
+            best = entry
+    return best
 
 
-def _evaluate_seed_candidate(
-    config_path: Path,
-    cfg: dict,
-    candidate_values: Dict[str, float],
-    camera_name: str,
-) -> Optional[float]:
-    try:
-        temp_cfg = _cfg_with_initial_values(copy.deepcopy(cfg), candidate_values)
-        calib = CameraCalibrator(temp_cfg, config_path=config_path)
-        score = calib._apply_initial_value_map_with_retry()
-        return float(score)
-    except Exception as exc:
-        print(f"[seed_eval] Failed to evaluate candidate: {exc}")
-        return None
+def _update_params_pool_with_result(pool: dict, boards: list, score: float, params: dict) -> dict:
+    """Update pool with a new calibration result for the given boards.
 
-
-def _compare_and_pick_better_seed(
-    config_path: Path,
-    cfg: dict,
-    camera_name: str,
-    matched_values: Dict[str, float],
-    matched_score: Optional[float],
-    any_board_values: Dict[str, float],
-    any_board_score: Optional[float],
-    base_output_dir: Optional[Path] = None,
-) -> Tuple[Dict[str, float], Optional[float], str]:
-    # Seed cache: skip re-evaluation if candidates haven't changed
-    if base_output_dir is not None:
-        seed_cache_path = base_output_dir / "seed_cache.json"
-        cache_key = json.dumps(
-            {"matched": matched_values, "any_board": any_board_values}, sort_keys=True
-        )
-        if seed_cache_path.exists():
-            try:
-                cached = json.loads(seed_cache_path.read_text(encoding="utf-8"))
-                if cached.get("cache_key") == cache_key:
-                    winner = cached["winner"]
-                    print(f"[seed_cache] HIT: using cached winner={winner}")
-                    if winner == "any_board":
-                        return any_board_values, any_board_score, "any_board"
-                    return matched_values, matched_score, "matched"
-            except Exception:
-                pass
-    print(f"[seed_compare] Evaluating matched candidate (history score={matched_score})...")
-    score_a = _evaluate_seed_candidate(config_path, cfg, matched_values, camera_name)
-    print(f"[seed_compare] Evaluating any-board candidate (history score={any_board_score})...")
-    score_b = _evaluate_seed_candidate(config_path, cfg, any_board_values, camera_name)
-
-    if score_a is None and score_b is None:
-        winner = "matched"
-    elif score_a is None:
-        winner = "any_board"
-    elif score_b is None:
-        winner = "matched"
-    elif score_b < score_a:
-        print(f"[seed_compare] any-board candidate wins: {score_b:.1f} < {score_a:.1f}")
-        winner = "any_board"
-    else:
-        print(f"[seed_compare] matched candidate wins: {score_a:.1f} <= {score_b:.1f}")
-        winner = "matched"
-
-    # Write cache
-    if base_output_dir is not None:
-        base_output_dir.mkdir(parents=True, exist_ok=True)
-        seed_cache_path.write_text(
-            json.dumps({"cache_key": cache_key, "winner": winner}, ensure_ascii=False),
-            encoding="utf-8",
-        )
-    if winner == "any_board":
-        return any_board_values, any_board_score, "any_board"
-    return matched_values, matched_score, "matched"
-
-
+    Returns updated pool (mutated in-place for convenience).
+    Only stores entries with a better score than what is already known.
+    """
+    sig = _compute_board_signature(boards)
+    if sig is None:
+        return pool
+    sig_hash = _compute_board_signature_hash(sig)
+    entries = pool.setdefault("entries", {})
+    existing = entries.get(sig_hash)
+    if existing and float(score) >= float(existing.get("best_score", float("inf"))) - 1e-9:
+        return pool
+    entries[sig_hash] = {
+        "board_signature": [list(pair) for pair in sorted(sig, key=lambda x: (x[0], x[1]))],
+        "best_score": float(score),
+        "best_params": dict(params),
+        "boards_count": len(boards) if isinstance(boards, list) else 0,
+        "run_timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+    return pool
 
 
 def _vehicle_writeback_backup_path(vehicle_path: Path) -> Path:
@@ -2473,15 +2374,18 @@ def _write_best_values_to_vehicle_config(
         print(f"Skipped vehicle writeback: vehicle file not found at {vehicle_path}")
         return None
 
-    history_best_run = _load_history_best_run_for_config(config_path, camera_name)
-    if isinstance(history_best_run, dict):
+    # Check params pool: don't overwrite vehicle if current score is not an improvement
+    pool = _load_params_pool(camera_name)
+    boards = cfg.get("boards")
+    pool_entry = _pool_entry_for_current_config(pool, cfg) if boards else None
+    if pool_entry is not None:
         try:
-            history_best_score = float(history_best_run.get("final_score"))
-            if float(best_score) > history_best_score + 1e-6:
+            pool_best_score = float(pool_entry.get("best_score", float("inf")))
+            if float(best_score) > pool_best_score + 1e-6:
                 print(
-                    f"Skipped vehicle writeback: current score {float(best_score):.2f} "
-                    f"worse than history best {history_best_score:.2f} "
-                    f"(camera={camera_name}, vehicle={vehicle_path})"
+                    f"Skipped vehicle writeback: current score {float(best_score):.2f} ",
+                    f"worse than pool best {pool_best_score:.2f} ",
+                    f"(camera={camera_name}, vehicle={vehicle_path})",
                 )
                 return None
         except Exception:
@@ -2673,6 +2577,11 @@ def _write_best_values_to_vehicle_config(
             f"backup={'created' if backup_created else 'reused'}:{backup_path}, "
             f"changes=-"
         )
+    # Update params pool after successful write
+    if boards:
+        _update_params_pool_with_result(pool, boards, float(best_score), values)
+        _save_params_pool(camera_name, pool)
+
     return {
         "vehicle_path": str(vehicle_path),
         "vehicle_backup_path": str(backup_path),
@@ -4405,21 +4314,23 @@ def _resolve_round_seed_anchor(
     cfg: dict,
     policy: dict,
 ) -> Tuple[Dict[str, float], Optional[float], str]:
-    anchor_values = _extract_initial_values_from_cfg(cfg)
+    anchor_values: Dict[str, float] = {}
     anchor_score: Optional[float] = None
-    anchor_source = "config_initial"
+    anchor_source = "live_read"
 
     prefer_history = bool(policy.get("prefer_history_best", True))
 
-    # When prefer_history_best is True, check history_best BEFORE config initial values
     if prefer_history:
-        history_best_run = _load_history_best_run_for_config(config_path, camera_name)
-        if isinstance(history_best_run, dict):
-            history_values = history_best_run.get("final_values")
-            if isinstance(history_values, dict) and history_values:
+        pool = _load_params_pool(camera_name)
+
+        # 1. Try exact board-signature match from pool
+        exact_entry = _pool_entry_for_current_config(pool, cfg)
+        if exact_entry is not None:
+            raw_values = exact_entry.get("best_params", {})
+            if raw_values:
                 anchor_values = {
                     name: float(value)
-                    for name, value in history_values.items()
+                    for name, value in raw_values.items()
                     if isinstance(value, (int, float))
                 }
                 parameters = cfg.get("parameters", {})
@@ -4430,21 +4341,47 @@ def _resolve_round_seed_anchor(
                     raw = anchor_values[name]
                     clamped = _clamp_to_parameter_bounds(param_cfg, raw)
                     if abs(clamped - raw) > 1e-9:
-                        print(f"[WARN] clamping history {name}={raw} to {clamped} (out of current config range)")
+                        print(f"[WARN] clamping pool exact-sig {name}={raw} to {clamped}")
                     anchor_values[name] = clamped
-                anchor_source = "history_best"
-                try:
-                    anchor_score = float(history_best_run.get("final_score"))
-                except Exception:
-                    anchor_score = None
-                print(f"Using history_best as seed anchor (score={anchor_score})")
+                anchor_score = float(exact_entry.get("best_score", 0))
+                anchor_source = "pool_exact_sig"
+                print(f"Using pool exact-sig as seed anchor (score={anchor_score})")
                 return anchor_values, anchor_score, anchor_source
 
-    # Fall back to config initial values if no history_best
-    if anchor_values:
-        print(f"Using config initial values as seed anchor (from vehicle file)")
+        # 2. Fall back to best cross-signature params from pool
+        cross_entry = _find_best_pool_entry_across_signatures(pool)
+        if cross_entry is not None:
+            raw_values = cross_entry.get("best_params", {})
+            if raw_values:
+                anchor_values = {
+                    name: float(value)
+                    for name, value in raw_values.items()
+                    if isinstance(value, (int, float))
+                }
+                parameters = cfg.get("parameters", {})
+                for name in list(anchor_values.keys()):
+                    param_cfg = parameters.get(name)
+                    if param_cfg is None:
+                        continue
+                    raw = anchor_values[name]
+                    clamped = _clamp_to_parameter_bounds(param_cfg, raw)
+                    if abs(clamped - raw) > 1e-9:
+                        print(f"[WARN] clamping pool cross-sig {name}={raw} to {clamped}")
+                    anchor_values[name] = clamped
+                anchor_score = float(cross_entry.get("best_score", 0))
+                anchor_source = "pool_cross_sig"
+                print(f"Using pool cross-sig as seed anchor (score={anchor_score})")
+                return anchor_values, anchor_score, anchor_source
+
+    # 3. Fall back to config initial values
+    config_initial = _extract_initial_values_from_cfg(cfg)
+    if config_initial:
+        anchor_values = config_initial
+        anchor_source = "config_initial"
+        print(f"Using config initial values as seed anchor")
         return anchor_values, anchor_score, anchor_source
 
+    # 4. Fall back to live read (empty anchor)
     return anchor_values, anchor_score, anchor_source
 
 
@@ -4932,30 +4869,6 @@ def _run_plain_optimize_rounds(
         cfg,
         round_seed_policy,
     )
-    any_board_run = _load_history_best_run_any_boards(config_path, camera_name)
-    if isinstance(any_board_run, dict):
-        any_board_values_raw = any_board_run.get("final_values", {})
-        any_board_values = {
-            name: float(value)
-            for name, value in any_board_values_raw.items()
-            if isinstance(value, (int, float))
-        }
-        parameters = cfg.get("parameters", {})
-        for name in list(any_board_values.keys()):
-            param_cfg = parameters.get(name)
-            if param_cfg is not None:
-                any_board_values[name] = _clamp_to_parameter_bounds(param_cfg, any_board_values[name])
-        any_board_score_val = None
-        try:
-            any_board_score_val = float(any_board_run.get("final_score"))
-        except Exception:
-            pass
-        anchor_values, anchor_score, anchor_source = _compare_and_pick_better_seed(
-            config_path, cfg, camera_name,
-            anchor_values, anchor_score,
-            any_board_values, any_board_score_val,
-            base_output_dir=base_output_dir,
-        )
     if round_seed_policy["enabled"] or round_seed_policy.get("prefer_history_best", True):
         active_cfg = _cfg_with_initial_values(active_cfg, anchor_values)
         verify_params = active_cfg.get("parameters", {})
@@ -5097,30 +5010,6 @@ def _run_multi_start_rounds(
         cfg,
         round_seed_policy,
     )
-    any_board_run = _load_history_best_run_any_boards(config_path, camera_name)
-    if isinstance(any_board_run, dict):
-        any_board_values_raw = any_board_run.get("final_values", {})
-        any_board_values = {
-            name: float(value)
-            for name, value in any_board_values_raw.items()
-            if isinstance(value, (int, float))
-        }
-        parameters = cfg.get("parameters", {})
-        for name in list(any_board_values.keys()):
-            param_cfg = parameters.get(name)
-            if param_cfg is not None:
-                any_board_values[name] = _clamp_to_parameter_bounds(param_cfg, any_board_values[name])
-        any_board_score_val = None
-        try:
-            any_board_score_val = float(any_board_run.get("final_score"))
-        except Exception:
-            pass
-        anchor_values, anchor_score, anchor_source = _compare_and_pick_better_seed(
-            config_path, cfg, camera_name,
-            anchor_values, anchor_score,
-            any_board_values, any_board_score_val,
-            base_output_dir=base_output_dir,
-        )
     if round_seed_policy["enabled"] or round_seed_policy.get("prefer_history_best", True):
         active_cfg = _cfg_with_initial_values(active_cfg, anchor_values)
         verify_params = active_cfg.get("parameters", {})
@@ -5274,30 +5163,6 @@ def _run_explore_then_refine_rounds(
         cfg,
         round_seed_policy,
     )
-    any_board_run = _load_history_best_run_any_boards(config_path, camera_name)
-    if isinstance(any_board_run, dict):
-        any_board_values_raw = any_board_run.get("final_values", {})
-        any_board_values = {
-            name: float(value)
-            for name, value in any_board_values_raw.items()
-            if isinstance(value, (int, float))
-        }
-        parameters = cfg.get("parameters", {})
-        for name in list(any_board_values.keys()):
-            param_cfg = parameters.get(name)
-            if param_cfg is not None:
-                any_board_values[name] = _clamp_to_parameter_bounds(param_cfg, any_board_values[name])
-        any_board_score_val = None
-        try:
-            any_board_score_val = float(any_board_run.get("final_score"))
-        except Exception:
-            pass
-        anchor_values, anchor_score, anchor_source = _compare_and_pick_better_seed(
-            config_path, cfg, camera_name,
-            anchor_values, anchor_score,
-            any_board_values, any_board_score_val,
-            base_output_dir=base_output_dir,
-        )
     if round_seed_policy["enabled"] or round_seed_policy.get("prefer_history_best", True):
         active_cfg = _cfg_with_initial_values(active_cfg, anchor_values)
         verify_params = active_cfg.get("parameters", {})

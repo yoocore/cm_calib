@@ -768,6 +768,10 @@ def check_movie_fbo(*, timeout_sec: float = 5.0) -> None:
                 r"if {$orig_state ne {iconic}} {",
                 r"    wm state . $orig_state",
                 r"}",
+                r"# After restoring window, push it behind active windows",
+                r"catch {wm attributes . -topmost 0}",
+                r"catch {wm lower .}",
+
                 r"if {$fbo_rc != 0} {",
                 r'    error "FBO probe failed: $fbo_msg"',
                 r"}",

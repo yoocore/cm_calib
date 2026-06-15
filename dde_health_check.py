@@ -436,6 +436,10 @@ def build_checks(output_dir: Path) -> List[Tuple[str, str]]:
                     r"if {$orig_state ne {iconic}} {",
                     r"    wm state . $orig_state",
                     r"}",
+                    r"# After restoring window, push it behind active windows",
+                    r"catch {wm attributes . -topmost 0}",
+                    r"catch {wm lower .}",
+
                     r"if {$fbo_rc != 0} {",
                     r'    error "FBO probe failed: $fbo_msg"',
                     r"}",

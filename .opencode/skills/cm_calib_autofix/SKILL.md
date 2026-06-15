@@ -344,3 +344,36 @@ Select-String -Path tmp/*.log -Pattern "(error|ERROR|invalid|unknown|failed|FAIL
 2. **Prepare 阶段渲染冻结：** 新鲜 CarMaker 启动后 bootstrap 导致 SUV=1。orchestrator 的 health check 没有 `try_restart_rendering()` 恢复逻辑，直接报错退出。
 3. **新鲜启动时序：** 新启动的 CarMaker 上 IPG-MOVIE 初始化需要 >60s，用 `--movie-settle-sec 120` 解决。
 **详见 Phase 32。**
+
+### 教训7：GPUSensor Movie 导致 "dde command failed"
+
+**场景：** 通过 GUI 启动标定，Task 立刻失败 `Timed out waiting for IPG-MOVIE calibration scene readiness: result_error: dde command failed`。桌面上看不到 IPG-MOVIE 窗口。
+
+**根因：** orchestrator Step 5 的检测逻辑 `if not cmctrl.list_gpusensor_movie_processes()` 找到 GPUSensor Movie（`-mode GPUSensor -headless`，无窗口）就认为"Movie 没问题"，跳过了 `restart_gui_movie_for_send_recovery()`。但 calibration 需要 **GUI Movie** 才能执行 `send IPG-MOVIE` 的 Tcl 命令（View widget、camera dialog、capture 等）。GPUSensor Movie 没有这些 Tcl 环境，DDE 发送失败。
+
+**修复：** 改为 `if not cmctrl.list_gui_movie_processes()`——无论 GPUSensor 是否存在，只要没有 GUI Movie 就启动一个。`restart_gui_movie_for_send_recovery()` 会先 quit 已有 Movie（包括 GPUSensor），再启动 GUI Movie。commit 4841fdb。
+
+**验证方法：** 重新通过 GUI 启动标定，应有 IPG-MOVIE 窗口弹出，标定正常进行。
+
+---
+
+## 日志位置速查
+
+| 内容 | 路径 |
+|------|------|
+| orchestrator 任务级错误 | `SimOutput/camera_orchestration/<timestamp>/task_summary.json`（`status`、`error` 字段） |
+| orchestrator 事件流 | `SimOutput/camera_orchestration/<timestamp>/events.jsonl`（逐事件 JSON） |
+| 单相机标定过程 | `SimOutput/<camera>/rounds_<timestamp>/round_01/campaign/<phase>/<start>/run.log` |
+| 手动保存的运行日志 | `tmp/*.log`（用 `Tee-Object` 保存） |
+| DDE 探针结果 | `tmp/<probe_name>.txt` / `tmp/<probe_name>.txt.remote` |
+| Health check 输出 | 通过 `print_json_summary()` 到 stdout |
+
+### 快速定位错误
+
+```powershell
+# 查看最近一次 orchestrator 结果
+Get-ChildItem SimOutput/camera_orchestration | Sort-Object LastWriteTime -Descending | Select-Object -First 1 | ForEach-Object { Get-Content "$_/task_summary.json" }
+
+# 搜索所有日志中的异常
+Select-String -Path tmp/*.log -Pattern "(error|ERROR|invalid|unknown|failed|FAILED|Traceback|Exception|dde command|timeout|TimeOut)"
+```

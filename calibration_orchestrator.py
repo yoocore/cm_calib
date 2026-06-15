@@ -243,7 +243,17 @@ def _prepare_runtime_for_camera(
     movie_view_size: tuple[int, int] | None = None,
     _fbo_retry_guard: bool = False,
 ) -> dict[str, Any]:
-    # --- Step 0 (removed): unconditional kill_all_processes was here
+    # --- Step 0: Ensure CarMaker is running (sync_gui/bootstrap both need it) ---
+    existing = cmctrl.list_carmaker_processes()
+    if not existing:
+        executable = cmctrl.resolve_carmaker_executable(args.cm_install.resolve())
+        print(f"Starting CarMaker: {executable} -projectdir {project_root}")
+        subprocess.Popen(
+            [str(executable), "-projectdir", str(project_root)],
+            cwd=str(executable.parent),
+        )
+        cmctrl.wait_for_carmaker_tcleval_ready(timeout_sec=60.0)
+        print("CarMaker started and TclEval ready.")
     # --- Step 1: Force-sync Movie view size BEFORE any IPG-MOVIE state change ---
     # Prevents CheckViewPort recursion when sensor activation/TestRun load triggers IPG-MOVIE.
     if movie_view_size is not None:
@@ -546,10 +556,11 @@ def main() -> None:
     config_dir = args.config_dir.resolve()
     testrun_rel_path = cmctrl.normalize_testrun_path(project_root, args.testrun)
 
-    # --- Kill any stale CarMaker/Movie processes before starting fresh ---
-    killed = cmctrl.kill_existing_cm_processes()
-    if killed:
-        print(f"Killed {len(killed)} stale process(es): {cmctrl.summarize_processes(killed)}")
+    # --- Kill stale processes only if NOT reusing existing runtime ---
+    if not args.skip_prepare_for_first_camera:
+        killed = cmctrl.kill_existing_cm_processes()
+        if killed:
+            print(f"Killed {len(killed)} stale process(es): {cmctrl.summarize_processes(killed)}")
 
     output_dir = _task_output_dir(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)

@@ -243,7 +243,6 @@ def _prepare_runtime_for_camera(
     camera_name: str,
     config_path: Path,
     movie_view_size: tuple[int, int] | None = None,
-    _fbo_retry_guard: bool = False,
 ) -> dict[str, Any]:
     # --- Step 0: Ensure CarMaker is running (sync_gui/bootstrap both need it) ---
     existing = cmctrl.list_carmaker_processes()
@@ -352,24 +351,23 @@ def _prepare_runtime_for_camera(
             timeout_sec=float(args.health_check_timeout_sec),
             settle_sec=float(args.health_check_settle_sec),
         )
-        # Check for FBO corruption specifically; if detected, kill all and retry
+        # FBO probe is diagnostic-only: Win32 capture does not require FBO.
+        # Camera switching triggers C++ Configure->ConfigFBO which temporarily
+        # corrupts FBO; killing processes on FBO failure does more harm than good.
         target_status = (health_summary.get("classification") or {}).get("target_status") or {}
         if target_status.get("ipg_movie_fbo_ok") is False:
-            if _fbo_retry_guard:
-                raise RuntimeError(
-                    f"IPG-MOVIE FBO still corrupted after retry "
-                    f"({camera_name}). Giving up."
-                )
             print(
-                "IPG-MOVIE FBO corrupted. Killing all processes "
-                "and retrying prepare from clean state."
+                "[INFO] IPG-MOVIE FBO probe failed (non-fatal). "
+                "Win32 capture does not require FBO; continuing."
             )
-            cmctrl.kill_all_processes()
-            return _prepare_runtime_for_camera(
-                args, project_root, testrun_rel_path, camera_name, config_path,
-                movie_view_size=movie_view_size, _fbo_retry_guard=True,
-            )
-        health_classification = _classify_health_or_raise(health_summary)
+            health_classification = {
+                "all_ok": True,
+                "code": "ok_fbo_unavailable",
+                "message": "FBO unavailable (probe failed) but Win32 capture is used.",
+                "target_status": target_status,
+            }
+        else:
+            health_classification = _classify_health_or_raise(health_summary)
 
     # --- Install delete-trace on CheckViewPort for auto-re-guard on unknown re-registrations ---
     cmctrl.wrap_checkviewport()

@@ -1959,7 +1959,10 @@ def _params_pool_path(camera_name: str) -> Path:
 
 
 def _load_params_pool(camera_name: str) -> dict:
-    """Load params pool from disk, creating empty if missing."""
+    """Load params pool from disk, creating empty if missing.
+
+    On first call (pool file absent), migrates from old result.jsons.
+    """
     path = _params_pool_path(camera_name)
     if path.exists():
         try:
@@ -1968,7 +1971,41 @@ def _load_params_pool(camera_name: str) -> dict:
                 return data
         except Exception:
             pass
-    return {"version": 2, "camera_name": camera_name, "entries": {}}
+
+    # Pool doesn't exist or is corrupt - migrate from old result.jsons
+    pool = {"version": 2, "camera_name": camera_name, "entries": {}}
+    history_dirs = _iter_camera_history_dirs(camera_name)
+    for history_dir in history_dirs:
+        for result_path in sorted(history_dir.rglob("result.json")):
+            try:
+                payload = json.loads(result_path.read_text(encoding="utf-8"))
+                if not isinstance(payload, dict):
+                    continue
+                digest = _build_run_digest_from_result_payload(payload, result_path)
+                if digest is None:
+                    continue
+                boards = payload.get("boards")
+                if not isinstance(boards, list):
+                    continue
+                final_score = digest.get("final_score")
+                final_values = digest.get("final_values")
+                if final_score is None or not final_values:
+                    continue
+                try:
+                    final_score = float(final_score)
+                except (TypeError, ValueError):
+                    continue
+                params = {name: float(value) for name, value in final_values.items()
+                          if isinstance(value, (int, float))}
+                if not params:
+                    continue
+                _update_params_pool_with_result(pool, boards, final_score, params)
+            except Exception:
+                continue
+    if pool["entries"]:
+        _save_params_pool(camera_name, pool)
+        print(f"[pool_migrate] Built pool from old runs: {len(pool['entries'])} signature(s)")
+    return pool
 
 
 def _save_params_pool(camera_name: str, pool: dict) -> None:

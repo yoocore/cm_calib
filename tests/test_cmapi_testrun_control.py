@@ -163,55 +163,23 @@ class TestMovieEventPumpMitigations:
 
 
 class TestEnsureMovieViewSize:
-    def test_has_update_after_height_bump_to_stabilize_gl_context(self, cmctrl, monkeypatch, tmp_path):
-        """Verify 'update' appears after height bump try-finally in ensure_movie_view_size.
+    def test_skips_view_set_size_when_dimensions_match(self, cmctrl, monkeypatch, tmp_path):
+        """Verify ensure_movie_view_size skips View::SetSize when dimensions already match.
 
-        Without this 'update', the GL context remains unstable after 2x View::SetSize
-        resize. When the subsequent capture body calls UpdateView, IPG-MOVIE's internal
-        FBO operations fail with 'FBO error: id not mapped'.
+        The function probes current widget dimensions. If they already match the target,
+        no View::SetSize call is made (avoids triggering C++ Configure -> ConfigFBO).
         """
         captured = _capture_body_lines(monkeypatch, cmctrl, tmp_path, "ok")
-        # Call ensure_movie_view_size with standard dimensions
         cmctrl.ensure_movie_view_size(960, 640)
         body_lines = captured["body_lines"]
 
-        # Find height bump restore (end of try-finally)
-        hb_restore = [l for l in body_lines if "rename __orig_during_bump CheckViewPort" in l]
-        assert len(hb_restore) >= 1, "Expected at least one height bump restore line"
+        # Skip guard checks current dimensions vs target
+        skip_guard = [l for l in body_lines if "if {$__cur_w ==" in l]
+        assert len(skip_guard) >= 1, "Expected skip guard checking current view dimensions"
 
-        # Verify the rename-to-no-op pattern for UpdateView_TimerProc
-        cancel_lines = [l for l in body_lines if "after cancel UpdateView_TimerProc" in l]
-        rename_save_lines = [l for l in body_lines if "rename UpdateView_TimerProc __saved_UpdateView_TimerProc" in l]
-        noop_lines = [l for l in body_lines if "proc UpdateView_TimerProc {args} {}" in l]
-        update_lines = [l for l in body_lines if l.strip() == "update" and "after cancel" not in l]
-        rename_restore_lines = [l for l in body_lines if "rename __saved_UpdateView_TimerProc UpdateView_TimerProc" in l]
-
-        assert len(cancel_lines) >= 1, "Expected after cancel UpdateView_TimerProc"
-        assert len(rename_save_lines) >= 1, "Expected rename UpdateView_TimerProc __saved_..."
-        assert len(noop_lines) >= 1, "Expected proc UpdateView_TimerProc {args} {}"
-        assert len(update_lines) >= 1, "Expected 'update' after no-op proc"
-        assert len(rename_restore_lines) >= 1, "Expected restore of UpdateView_TimerProc"
-
-        # Verify ordering: height bump finished -> cancel -> rename -> no-op -> update
-        hb_restore_idx = next(i for i, l in enumerate(body_lines)
-                              if "rename __orig_during_bump CheckViewPort" in l)
-        cancel_idx = next(i for i, l in enumerate(body_lines)
-                          if "after cancel UpdateView_TimerProc" in l)
-        rename_save_idx = next(i for i, l in enumerate(body_lines)
-                               if "rename UpdateView_TimerProc __saved_UpdateView_TimerProc" in l)
-        noop_idx = next(i for i, l in enumerate(body_lines)
-                        if "proc UpdateView_TimerProc {args} {}" in l)
-        update_idx = next(i for i, l in enumerate(body_lines)
-                          if l.strip() == "update" and "after cancel" not in l)
-
-        assert hb_restore_idx < cancel_idx
-        assert cancel_idx < rename_save_idx
-        assert rename_save_idx < noop_idx
-        assert noop_idx < update_idx
-
-        # Verify 'update idletasks' is NOT used (known to cause FBO Creation errors)
-        assert "update idletasks" not in body_lines
-
+        # DIAG_SKIP_ENSURE printed when dimensions already match
+        skip_msg = [l for l in body_lines if "DIAG_SKIP_ENSURE" in l]
+        assert len(skip_msg) >= 1, "Expected DIAG_SKIP_ENSURE message when dimensions match"
 
 class TestCheckViewPortRecursionGuard:
     def test_disable_sends_guarded_wrapper(self, cmctrl, monkeypatch, tmp_path):

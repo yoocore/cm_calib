@@ -563,12 +563,13 @@ class TestMovieFboCaptureScript:
         assert any("after 100" in l for l in body_lines)
         assert any("UpdateView $vno_int" in l for l in body_lines)
 
-    def test_capture_movie_has_update_after_height_bump_to_stabilize_gl_context(self, tmp_path):
-        """Verify 'update' appears after height bump try-finally and before UpdateView.
+    def test_capture_movie_has_minimize_restore_and_branch_ordering(self, tmp_path):
+        """Verify capture Tcl: minimize restore guard appears before if/else branch and UpdateView.
 
-        Without this 'update', the GL context remains unstable after 2x View::SetSize
-        resize, and IPG-MOVIE's internal UpdateView fails with 'FBO error: id not mapped'.
-        Single 'update' is safe (Phase 4 data: 1x update = 20/20 clean).
+        The capture script restores from minimized state before the iconic/normal
+        branch to ensure Win32 capture works reliably. This test verifies that
+        the minimize restore guard and VP_SIZE diagnostic precede the wm state
+        branch check and UpdateView.
         """
         cfg = _make_minimal_cfg(tmp_path)
         with patch.object(CameraCalibrator, "_materialize_custom_maker_templates"):
@@ -586,83 +587,26 @@ class TestMovieFboCaptureScript:
                 calib._capture_movie_via_dde("probe")
 
         body_lines = captured["body_lines"]
-        # Find key line indices to verify ordering of the UpdateView_TimerProc
-        # defense block: cancel -> rename -> no-op -> update -> restore
-        hb_finally_end = next(i for i, l in enumerate(body_lines) if "rename __orig_during_bump CheckViewPort" in l)
 
-        # Cancel timer
-        cancel_lines = [l for l in body_lines if "after cancel UpdateView_TimerProc" in l]
-        assert len(cancel_lines) >= 1, "Expected after cancel UpdateView_TimerProc"
-        cancel_idx = next(i for i, l in enumerate(body_lines) if "after cancel UpdateView_TimerProc" in l)
+        # VP_SIZE diagnostic after widget dimension reads
+        vp_size_lines = [l for l in body_lines if "DIAG_VP_SIZE" in l]
+        assert len(vp_size_lines) >= 1, "Expected DIAG_VP_SIZE diagnostic"
 
-        # Rename original to no-op
-        rename_save_lines = [l for l in body_lines if "rename UpdateView_TimerProc __saved_UpdateView_TimerProc" in l]
-        assert len(rename_save_lines) >= 1, "Expected rename UpdateView_TimerProc __saved_..."
-        rename_save_idx = next(i for i, l in enumerate(body_lines) if "rename UpdateView_TimerProc __saved_UpdateView_TimerProc" in l)
+        # The minimize restore guard: set __cap_ws / if {$__cap_ws eq {iconic}}
+        cap_ws_lines = [l for l in body_lines if "set __cap_ws" in l]
+        assert len(cap_ws_lines) >= 1, "Expected __cap_ws variable for minimize restore guard"
+        cap_ws_idx = next(i for i, l in enumerate(body_lines) if "set __cap_ws" in l)
 
-        # No-op proc definition
-        noop_lines = [l for l in body_lines if "proc UpdateView_TimerProc {args} {}" in l]
-        assert len(noop_lines) >= 1, "Expected proc UpdateView_TimerProc {args} {}"
-        noop_idx = next(i for i, l in enumerate(body_lines) if "proc UpdateView_TimerProc {args} {}" in l)
-
-        # update (the actual event processing)
-        update_lines_without_cancel = [l for l in body_lines if l.strip() == "update" and "after cancel" not in l]
-        assert len(update_lines_without_cancel) >= 1, "Expected 'update' after no-op proc"
-        update_idx = next(i for i, l in enumerate(body_lines) if l.strip() == "update" and "after cancel" not in l)
-
-        # Restore original
-        rename_restore_lines = [l for l in body_lines if "rename __saved_UpdateView_TimerProc UpdateView_TimerProc" in l]
-        assert len(rename_restore_lines) >= 1, "Expected rename __saved_UpdateView_TimerProc UpdateView_TimerProc"
-
-        # Verify ordering: cancel → rename → no-op → update
-        assert hb_finally_end < cancel_idx
-        assert cancel_idx < rename_save_idx
-        assert rename_save_idx < noop_idx
-        assert noop_idx < update_idx
-
-        # IMPORTANT: There are 2 wm state occurrences:
-        #   1. DIAG_WM_STATE: diagnostic BEFORE height bump (earlier index)
-        #   2. if {[wm state $_top] eq {iconic}}: the actual branch check AFTER update
-        # We need to find the SECOND one (the branch condition).
+        # The if/else branch check (only 1 now: no duplicate from height bump)
         wm_check_lines = [i for i, l in enumerate(body_lines) if "if {[wm state" in l]
         assert len(wm_check_lines) == 1, f"Expected 1 wm state if-check, got {len(wm_check_lines)}"
         wm_branch_idx = wm_check_lines[0]
 
+        # UpdateView in Win32 (non-iconic) path
         update_view_idx = next(i for i, l in enumerate(body_lines) if "UpdateView $vno_int" in l)
 
-        # Verify ordering: update → if/else branch → UpdateView
-        assert update_idx < wm_branch_idx, \
-            f"update (idx={update_idx}) must come before wm state check (idx={wm_branch_idx})"
-        assert update_idx < update_view_idx, \
-            f"update (idx={update_idx}) must come before UpdateView (idx={update_view_idx})"
-
-    def test_capture_movie_has_height_bump_before_update_view(self, tmp_path):
-        """Verify height bump (View::SetSize h+1 then h) forces View dict sync, bypassing View::SetSize no-op."""
-        cfg = _make_minimal_cfg(tmp_path)
-        with patch.object(CameraCalibrator, "_materialize_custom_maker_templates"):
-            with patch.object(CameraCalibrator, "_load_custom_templates", return_value={}):
-                calib = CameraCalibrator(cfg)
-
-        captured = {}
-
-        def _capture_script(_result_path, _target_topic, body_lines, **_kwargs):
-            captured["body_lines"] = list(body_lines)
-            raise RuntimeError("stop after capture")
-
-        with patch("camera_calibration.render_dde_execute_script", side_effect=_capture_script):
-            with pytest.raises(RuntimeError, match="stop after capture"):
-                calib._capture_movie_via_dde("probe")
-
-        body_lines = captured["body_lines"]
-        # height bump: View::SetSize h+1 then h (forces View dict sync, bypasses no-op guard)
-        bump1 = [l for l in body_lines if "View::SetSize $vp_w [expr {$vp_h + 1}]" in l]
-        bump2 = [l for l in body_lines if "View::SetSize $vp_w $vp_h $wpath" in l]
-        assert len(bump1) == 1, f"Expected 1 height bump+1 line, got {len(bump1)}"
-        assert len(bump2) == 1, f"Expected 1 height bump restore line, got {len(bump2)}"
-        # CheckViewPort rename must come BEFORE height bump
-        rename_idx = next(i for i, l in enumerate(body_lines) if "catch {rename CheckViewPort __orig_during_bump}" in l)
-        bump1_idx = next(i for i, l in enumerate(body_lines) if "View::SetSize $vp_w [expr {$vp_h + 1}]" in l)
-        assert rename_idx < bump1_idx, "CheckViewPort rename must come before height bump"
-        # restore must come after height bump
-        restore_idx = next(i for i, l in enumerate(body_lines) if "rename __orig_during_bump CheckViewPort" in l)
-        assert restore_idx > bump1_idx, "CheckViewPort restore must come after height bump"
+        # Verify ordering: minimize guard -> wm state branch -> UpdateView
+        assert cap_ws_idx < wm_branch_idx, \
+            f"minimize guard (idx={cap_ws_idx}) must come before wm state check (idx={wm_branch_idx})"
+        assert cap_ws_idx < update_view_idx, \
+            f"minimize guard (idx={cap_ws_idx}) must come before UpdateView (idx={update_view_idx})"

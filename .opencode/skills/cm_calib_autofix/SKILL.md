@@ -117,7 +117,7 @@ python -c "import sys; sys.path.insert(0,'.'); from cmapi_testrun_control import
 |------|------|------|
 | Phase 30: 渲染冻结 | **单相机已修复** | 根因：`after cancel` 杀死渲染定时器后未重新调度（commit 47e8d79）。三相机切换仍有问题（Phase 32） |
 | Phase 32: 相机切换 View() 丢失 | **未修复** | 相机切换后 View(0) 数组元素不存在，View::SetSize 崩溃。不能用不完整的 dict 初始化（缺 DistortionSrc 等 key） |
-| Phase 32: Prepare 阶段渲染冻结 | **未修复** | 新鲜 CarMaker 启动后 bootstrap 导致 SUV=1，orchestrator health check 无 restart 恢复逻辑 |
+| Phase 32: fresh-start DDE 桥接 | **未修复** | 新启动 HIL.exe → IPG-MOVIE 的 `dde execute` 桥接不会立即就绪，`wait_for_movie_scene_ready` 超时。解决：先 `cm prepare` 再 orchestrator + `--skip-prepare-for-first-camera` |
 | 问题 4: 标定分数偏高 | **算法问题** | right_rear ~43, rear_tv ~1055, left_tv ~811，远超 target <5.0。不是 capture bug，是标定算法/初始参数问题 |
 
 遇到这些问题时，不要重复调查已知原因，直接在已知约束下工作。
@@ -200,6 +200,10 @@ python cmapi_testrun_control.py --mode status
 python camera_calibration.py --precheck --camera <NAME>
 ```
 
+# 注意：orchestrator 的 main() 开头会杀所有 CarMaker+Movie 进程重建。
+# 如果环境已经 prepare 好、只想复用，加 --skip-prepare-for-first-camera 跳过杀进程。
+python calibration_orchestrator.py --testrun <Name> --camera CAM1 ... --skip-prepare-for-first-camera
+
 #### 常用参数（完整列表用 `--help`）
 
 | 参数 | 用途 |
@@ -253,6 +257,8 @@ python camera_calibration.py --precheck --camera <NAME>
 | `APO connect timeout` | SimControlInteractive 连接失败 | — |
 | `Scene not ready` | Movie 场景加载超时 | — |
 | start_score ≈ final_score 且参数无变化 | 标定系统异常（board 检测/模板不匹配） | — |
+| `dde command failed` (fresh start) | CarMaker→IPG-MOVIE DDE 桥接未就绪 | — |
+| orchestrator 杀完所有进程后失败 | `main()` 开头 `kill_existing_cm_processes()` 杀了已 prepare 好的环境。加 `--skip-prepare-for-first-camera` 跳过 | orchestrator main() |
 
 ---
 

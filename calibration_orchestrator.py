@@ -245,6 +245,7 @@ def _prepare_runtime_for_camera(
 ) -> dict[str, Any]:
     # --- Step 0: Ensure CarMaker is running (sync_gui/bootstrap both need it) ---
     existing = cmctrl.list_carmaker_processes()
+    _fresh_start = not existing
     if not existing:
         executable = cmctrl.resolve_carmaker_executable(args.cm_install.resolve())
         print(f"Starting CarMaker: {executable} -projectdir {project_root}")
@@ -305,12 +306,17 @@ def _prepare_runtime_for_camera(
         # --- Movie restart re-registers CheckViewPort, re-guard ---
         cmctrl.disable_checkviewport_recursion()
     # --- Step 6: Wait for Movie scene ready ---
+    # Fresh-start (Step 0 just launched CarMaker): Movie's DDE service may take
+    # 20-40 seconds to register after first launch. Use a longer timeout so the
+    # scene-ready probe doesn't fail with "dde command failed" before Movie DDE is ready.
+    # Re-use path (no _fresh_start): Movie already running, 45s default is sufficient.
+    _movie_settle = max(float(args.movie_settle_sec), 120.0) if _fresh_start else float(args.movie_settle_sec)
     movie_scene = cmctrl.wait_for_movie_scene_ready(
         cm_install=args.cm_install.resolve(),
         movie_apphost=str(args.movie_apphost),
         project_root=project_root,
         carmaker_pid=carmaker_pid,
-        timeout_sec=float(args.movie_settle_sec),
+        timeout_sec=_movie_settle,
         poll_interval_sec=float(args.movie_ready_poll_sec),
     )
     # --- Step 7: Configure Movie for this camera ---

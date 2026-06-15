@@ -345,6 +345,29 @@ Select-String -Path tmp/*.log -Pattern "(error|ERROR|invalid|unknown|failed|FAIL
 3. **新鲜启动时序：** 新启动的 CarMaker 上 IPG-MOVIE 初始化需要 >60s，用 `--movie-settle-sec 120` 解决。
 **详见 Phase 32。**
 
+### 教训8：渲染冻结会自动恢复（orchestrator retry 一次）
+
+**场景：** 相机切换后 IPG-MOVIE 渲染冻结（画面卡死，UC 不增长），camera_calibration.py 检测到 freeze 并报错退出。orchestrator 自动杀全部进程、重启、重跑该相机。
+
+**条件：** freeze 检测抛出的 RuntimeError 包含 "rendering frozen" 或 "View(FBO)" 字样。
+
+**注意：** 
+- RuntimeError 必须 **propagate** 不能用 `except Exception` 吞掉（commit 8c960ce）
+- 只 retry 一次，第二次失败则直接放弃
+- FBO 探针现在是 **非致命** 的（commit 5b7ef9e）——FBO 损坏只打 [INFO] 日志，不触发 kill+retry，因为 Win32 capture 不需要 FBO
+
+**相关代码位置：**
+- `camera_calibration.py:8017-8020`: `except RuntimeError: raise` 确保 freeze 透传
+- `calibration_orchestrator.py` 相机循环: retry 包装，kill_all_processes 后重新 prepare
+
+### 教训9：`wm lower` 紧接 `UpdateView` 触发 NaN
+
+**场景：** capture Tcl 中 `catch {wm lower .}` 紧接着 `UpdateView $vno_int` → IPG-MOVIE 内部 `SM::ConfigureShader` 的 `CSM gettextelsize` 返回 NaN → 渲染报错。
+
+**原因：** `wm lower` 触发 Windows 窗口事件，IPG-MOVIE C++ 层处理时破坏了 GL 上下文的稳定性。
+
+**修复：** `wm lower` + `wm attributes -topmost 0` 从 capture Tcl 移除，改由 orchestrator 层**独立 DDE 调用** `_movie_background_tcl_commands()`（在 `start_simulation_via_tcl` 之前执行），与 capture 渲染解耦。
+
 ### 教训7：GPUSensor Movie 导致 "dde command failed"
 
 **场景：** 通过 GUI 启动标定，Task 立刻失败 `Timed out waiting for IPG-MOVIE calibration scene readiness: result_error: dde command failed`。桌面上看不到 IPG-MOVIE 窗口。

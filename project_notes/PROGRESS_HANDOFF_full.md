@@ -2092,3 +2092,48 @@ if {$vp_w > 0 && $vp_h > 0} {
 | 鏃ц繘绋嬫湭琚潃姝?| 鉁?kill_all_processes() 鍦?FBO 鍥為€€璺緞涓?|
 | 娓叉煋瀹氭椂鍣ㄦ浜?| 鉁?UpdateView_TimerProc rename 淇 |
 | View 灏哄涓嶅尮閰?| 鉁?璺宠繃 height bump 瀹堝崼 |
+
+
+## Phase 38: GUI cleanup
+
+Removed CM Prepare / Query Status buttons and ~1300 lines of runtime state management from main_window.py.
+The GUI now calls the orchestrator directly. commit 07b0747.
+
+## Phase 39: Orchestrator kill + skip-prepare fix
+
+kill_existing_cm_processes() now only runs when NOT using --skip-prepare-for-first-camera.
+_prepare_runtime_for_camera() Step 0 auto-starts HIL.exe when no CarMaker found.
+Added fresh-start timeout max(45,120)s. commits 596e00c, 7880e91, 198eee3.
+
+## Phase 40: GPUSensor Movie detection fix
+
+Step 5 changed from list_gpusensor_movie_processes() to list_gui_movie_processes().
+GPUSensor Movie (headless) has no Tcl GUI - DDE send IPG-MOVIE fails silently.
+Root cause of CLI vs GUI result differences. commits 4841fdb, 4cae2a9.
+
+## Phase 41: history_best anchor + log level fix
+
+(a) _resolve_round_seed_anchor() checks history_best FIRST when prefer_history_best=True.
+(b) "Warning: could not ..." changed to [INFO] prefix; _classify_log_level checks markers first.
+commit fe2cd51.
+
+## Phase 42: Window management
+
+User requested: keep IPG-MOVIE behind. Capture Tcl: wm state . normal (restore minimized) + wm lower.
+wm lower right before UpdateView triggers NaN in SM::ConfigureShader (CSM gettextelsize).
+Fix: wm lower from capture Tcl -> orchestrator-level DDE call _movie_background_tcl_commands().
+Fixed try/finally nesting: stop_sim always runs. commits fd7dd05, 1e9aef6, f17f766, 87e4aff.
+
+## Phase 43: FBO non-fatal + freeze auto-recovery
+
+(a) FBO probe diagnostic-only: failure prints [INFO] log, no kill+retry (Win32 capture independent).
+(b) except RuntimeError: raise before except Exception - freeze RuntimeError no longer swallowed.
+(c) orchestrator camera loop retry: on freeze, kill all -> re-prepare -> retry once.
+commits 5b7ef9e, 8c960ce, 90732b1.
+
+### Post-v1.0 stability
+
+| Test | rear_tv | left_tv | right_rear | Note |
+|------|---------|---------|------------|------|
+| fresh start (no skip-prepare) | 1090.6 | 810.7 | 43.5 | all finished |
+| --multi-start-count 1 | 1090.6 | 153.2 | 43.5 | left_tv S3 better |

@@ -546,6 +546,11 @@ def main() -> None:
     config_dir = args.config_dir.resolve()
     testrun_rel_path = cmctrl.normalize_testrun_path(project_root, args.testrun)
 
+    # --- Kill any stale CarMaker/Movie processes before starting fresh ---
+    killed = cmctrl.kill_existing_cm_processes()
+    if killed:
+        print(f"Killed {len(killed)} stale process(es): {cmctrl.summarize_processes(killed)}")
+
     output_dir = _task_output_dir(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     _EVENT_LOG_PATH = output_dir / "events.jsonl"

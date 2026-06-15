@@ -2061,6 +2061,24 @@ def _update_params_pool_with_result(pool: dict, boards: list, score: float, para
     }
     return pool
 
+def _evaluate_params_on_current_config(
+    config_path: Path,
+    cfg: dict,
+    camera_name: str,
+    params: Dict[str, float],
+) -> Optional[float]:
+    """Apply params as initial values and capture+score on current boards.
+
+    Returns the score, or None on failure.
+    """
+    try:
+        temp_cfg = _cfg_with_initial_values(copy.deepcopy(cfg), params)
+        calib = CameraCalibrator(temp_cfg, config_path=config_path)
+        score = calib._apply_initial_value_map_with_retry()
+        return float(score)
+    except Exception as exc:
+        print(f"[eval_on_current] Failed to evaluate {camera_name}: {exc}")
+        return None
 
 def _vehicle_writeback_backup_path(vehicle_path: Path) -> Path:
     return vehicle_path.parent / f"{vehicle_path.name}.calib.bk"
@@ -2410,24 +2428,42 @@ def _write_best_values_to_vehicle_config(
     if not vehicle_path.exists():
         print(f"Skipped vehicle writeback: vehicle file not found at {vehicle_path}")
         return None
-
-    # Check params pool: don't overwrite vehicle if current score is not an improvement
+    # Pool-based write protection: re-evaluate all pool entries on current boards.
+    # Historical scores came from different board configurations, so the only
+    # fair comparison is to test each pool entry's params on CURRENT boards.
+    best_re_eval_score: Optional[float] = None
     pool = _load_params_pool(camera_name)
-    boards = cfg.get("boards")
-    pool_entry = _pool_entry_for_current_config(pool, cfg) if boards else None
-    if pool_entry is not None:
-        try:
-            pool_best_score = float(pool_entry.get("best_score", float("inf")))
-            if float(best_score) > pool_best_score + 1e-6:
+    pool_entries = pool.get("entries", {})
+    if pool_entries:
+        print(f"[write_protect] Re-evaluating {len(pool_entries)} pool entries on current boards...")
+        for sig_hash, entry in pool_entries.items():
+            entry_params = entry.get("best_params", {})
+            if not entry_params:
+                continue
+            original_score = entry.get("best_score")
+            entry_score = _evaluate_params_on_current_config(
+                config_path, cfg, camera_name, entry_params,
+            )
+            if entry_score is not None:
+                print(f"  entry {sig_hash[:8]}: original={original_score}, re-evaluated={entry_score:.2f}")
+                if best_re_eval_score is None or entry_score < best_re_eval_score:
+                    best_re_eval_score = entry_score
+            else:
+                print(f"  entry {sig_hash[:8]}: re-eval FAILED, original={original_score}")
+        if best_re_eval_score is not None:
+            if float(best_score) > best_re_eval_score + 1e-6:
                 print(
-                    f"Skipped vehicle writeback: current score {float(best_score):.2f} ",
-                    f"worse than pool best {pool_best_score:.2f} ",
+                    f"Skipped vehicle writeback: current score {float(best_score):.2f} "
+                    f"worse than re-evaluated best {best_re_eval_score:.2f} "
                     f"(camera={camera_name}, vehicle={vehicle_path})",
                 )
                 return None
-        except Exception:
-            pass
+            print(
+                f"[write_protect] Write OK: current {float(best_score):.2f} "
+                f"<= re-eval best {best_re_eval_score:.2f}",
+            )
 
+    boards = cfg.get("boards")
     text = vehicle_path.read_text(encoding="utf-8")
     lines = text.splitlines(keepends=True)
     sensor_name_by_index: Dict[str, str] = {}

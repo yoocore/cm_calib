@@ -292,11 +292,12 @@ def _prepare_runtime_for_camera(
     # For the first camera, this is sufficient (no prior timers to worry about).
     # For camera switches, the outer cycle calls disable_movie_updateview_timer().
     cmctrl.cancel_movie_updateview_timer(timeout_sec=10.0)
-    # --- Step 5: Ensure IPG-Movie is alive ---
-    # Strategy:
-    #   GPUSensor present → Movie keeps running throughout bootstrap, nothing to do
-    #   No GPUSensor     → bootstrap already quit stale Movie; launch a fresh one
-    if not cmctrl.list_gpusensor_movie_processes():
+    # --- Step 5: Ensure IPG-MOVIE GUI instance is running ---
+    # The calibration flow sends Tcl commands via `send IPG-MOVIE`
+    # (View widget, camera dialog, capture, etc.). A GPUSensor-only Movie
+    # does NOT have these Tcl GUI commands, causing "dde command failed".
+    # We MUST have a GUI Movie instance, even if GPUSensor already exists.
+    if not cmctrl.list_gui_movie_processes():
         cmctrl.restart_gui_movie_for_send_recovery(
             cm_install=args.cm_install.resolve(),
             movie_apphost=str(args.movie_apphost),

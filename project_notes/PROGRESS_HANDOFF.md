@@ -313,7 +313,7 @@ catch {after 0 UpdateView_TimerProc}
 
 | # | 问题 | 状态 | 说明 |
 |---|------|------|------|
-| 1 | rear_tv 分数偏高（1090 vs 预期 1053） | ❌ CarMaker 内部 | 相机切换时 C++ ConfigFBO 破坏 GL 上下文 → Win32 捕获到失真帧。非标定脚本问题 |
+| 1 | rear_tv 分数偏高（1090 vs 预期 1053） | ❌ 待查 | 仅首次相机（fresh prepare 路径）出现。复用运行时的 `--skip-prepare` 路径 rear_tv=1053 正常。怀疑是新鲜启动后首次 capture 时序问题，非 Win32 capture 失真 |
 | 2 | left_tv S3 board 评分主导（score ~731/810） | ⚠️ 算法 | 评分主要受 S3 checkerboard 误差驱动 |
 | 3 | 渲染冻结 | ✅ 已修复 | freeze 检测透传 + 杀全部进程 + 自动重试一次 |
 | 4 | 窗口被置前 | ✅ 已解决 | orchestrator 层独立 DDE 调用 `_movie_background_tcl_commands()` |

@@ -7803,7 +7803,7 @@ class CameraCalibrator:
                     "        catch {rename __saved_UpdateView_TimerProc UpdateView_TimerProc}",
                     "    }",
                     "}",
-                    "# --- If minimized, restore window so Win32 capture works; push behind after ---",
+                    "# --- If minimized, restore window so Win32 capture works ---",
                     "set __cap_ws [wm state .]",
                     "if {$__cap_ws eq {iconic}} {",
                     "    wm state . normal",
@@ -7811,9 +7811,6 @@ class CameraCalibrator:
                     "    update",
                     "    after 300",
                     "}",
-                    "# --- Keep IPG-MOVIE behind user's active windows ---",
-                    "catch {wm attributes . -topmost 0}",
-                    "catch {wm lower .}",
 
                     "if {[wm state $_top] eq {iconic}} {",
                     "    # --- window minimized: use persistent FBO (offscreen) ---",

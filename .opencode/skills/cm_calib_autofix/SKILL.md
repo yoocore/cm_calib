@@ -392,6 +392,20 @@ Select-String -Path tmp/*.log -Pattern "(error|ERROR|invalid|unknown|failed|FAIL
 
 **验证方法：** 重新通过 GUI 启动标定，应有 IPG-MOVIE 窗口弹出，标定正常进行。
 
+### 教训10：分数 >100000 = 工具链问题，不是 board 检测问题
+
+**场景：** 初始评估报 `S2:1000000.000(checkerboard not detected)` 或 `G1_left:1000000.000(template match below threshold: X < Y)`。容易误判为 board 不在画面中。
+
+**根因：** 1000000 级别的分数不是 board 匹配不上产生的——board 匹配不上通常是几千到几万的合理范围。1000000 是标定工具的 fail-safe 默认值，说明图像采集层已经出问题了：画面不是目标 camera（camera 未正确切换）、渲染卡死（多帧返回相同图像）、或 DDE 通信断连导致 capture 返回无效数据。
+
+**排查顺序：**
+1. 检查 run.log 中初始 `start_score` 是否有好几个 board 同时 >100000（是 = 画面整体不对，不是 = 个别 board 真没匹配上）
+2. 检查渲染循环：`python rendering_health.py`，确认 UC 在增长、SUV=0
+3. 检查 capture 图像：查看输出目录下的 `initial.png`，确认是否是目标 camera 的画面
+4. 检查 DDE 健康：`python dde_health_check.py`
+5. 如果以上都正常，再怀疑 board 模板/位置问题
+
+**教训：看到百万级异常分，第一反应不是查 board 配置，而是查工具链。**
 ---
 
 ## 日志位置速查

@@ -117,8 +117,9 @@ python -c "import sys; sys.path.insert(0,'.'); from cmapi_testrun_control import
 |------|------|------|
 | Phase 30: 渲染冻结 | **单相机已修复** | 根因：`after cancel` 杀死渲染定时器后未重新调度（commit 47e8d79）。三相机切换仍有问题（Phase 32） |
 | Phase 32: 相机切换 View() 丢失 | **未修复** | 相机切换后 View(0) 数组元素不存在，View::SetSize 崩溃。不能用不完整的 dict 初始化（缺 DistortionSrc 等 key） |
-| Phase 32: fresh-start DDE 桥接 | **未修复** | 新启动 HIL.exe → IPG-MOVIE 的 `dde execute` 桥接不会立即就绪，`wait_for_movie_scene_ready` 超时。解决：先 `cm prepare` 再 orchestrator + `--skip-prepare-for-first-camera` |
-| 问题 4: 标定分数偏高 | **算法问题** | right_rear ~43, rear_tv ~1055, left_tv ~811，远超 target <5.0。不是 capture bug，是标定算法/初始参数问题 |
+| Phase 32: fresh-start DDE 桥接 | **未修复** | 新启动 HIL.exe → IPG-MOVIE 的 `dde execute` 桥接不会立即就绪，`wait_for_movie_scene_ready` 超时。orchestrator 自动处理启动，必要时加 `--movie-settle-sec 120` 延长等待 |
+| 问题 4: rear_tv 分数偏高 1055→1090 | **已修复** | 根因：board 配置变更后精确签名匹配失败→live_read→CarMaker 默认值（分差+30）。修复：`historical_params_pool.json` 按 board signature hash 存储最佳参数，支持跨签名兜底。seed resolution 路径：pool 精确签名→pool 跨签名→config_initial→live_read。写车保护会对所有池条目在当前板配置下**重新评分**，确保比较基准正确。commit 9019710 + 62efd70 |
+| 问题 5: right_rear ~43, left_tv ~811 | **算法问题** | 不是 capture bug，是标定算法/初始参数问题 |
 
 遇到这些问题时，不要重复调查已知原因，直接在已知约束下工作。
 
@@ -183,26 +184,21 @@ python -m pytest tests/test_persistent_counters.py -v 2>&1 | Tee-Object -FilePat
 
 #### 完整标定管线
 
+orchestrator 负责全流程（启动 CarMaker/Movie、prepare、标定、切换相机、写车）。不需要手动 `cm prepare`。
+
 ```
-# 第1步：准备标定环境
-python cmapi_testrun_control.py --mode prepare --testrun <Name> --camera-sensor <NAME> --open-movie --keep-carmaker-open --keep-movie-open
+# 完整多相机标定（orchestrator 自动完成所有步骤）
+python calibration_orchestrator.py --testrun <TestRunName> --camera left_tv rear_tv right_rear [--explore-then-refine]
 
-# 第2步：单相机标定（prepare 之后运行）
-python camera_calibration.py --config configs/camera.<name>.json [--explore-then-refine] [--campaign-rounds N]
+# 单相机标定（orchestrator handle 所有准备步骤）
+python calibration_orchestrator.py --testrun <TestRunName> --camera rear_tv [--explore-then-refine]
 
-# 第2b步：多相机编排（自动完成切换+标定）
-python calibration_orchestrator.py --testrun <Name> --camera CAM1 CAM2 ... [--explore-then-refine]
-
-# 查看当前状态
-python cmapi_testrun_control.py --mode status
+# 复用已有 CarMaker 环境（不杀进程、不重 prepare）
+python calibration_orchestrator.py --testrun <TestRunName> --camera CAM1 ... --skip-prepare-for-first-camera
 
 # 只读检查（不启动 CarMaker）
 python camera_calibration.py --precheck --camera <NAME>
 ```
-
-# 注意：orchestrator 的 main() 开头会杀所有 CarMaker+Movie 进程重建。
-# 如果环境已经 prepare 好、只想复用，加 --skip-prepare-for-first-camera 跳过杀进程。
-python calibration_orchestrator.py --testrun <Name> --camera CAM1 ... --skip-prepare-for-first-camera
 
 #### 常用参数（完整列表用 `--help`）
 
@@ -266,8 +262,8 @@ python calibration_orchestrator.py --testrun <Name> --camera CAM1 ... --skip-pre
 
 修复涉及完整标定流程的问题时，典型循环：
 
-1. **观察**：`cmapi_testrun_control.py --mode status` / `--mode prepare` → 分析输出
-2. **标定**：`camera_calibration.py --config ... --explore-then-refine` → 分析结果
+1. **观察**：`python rendering_health.py` + `python camera_calibration.py --precheck --camera <NAME>` → 分析输出
+2. **标定**：`python calibration_orchestrator.py --testrun <Name> --camera <NAME> [--skip-prepare-for-first-camera]` → 分析结果
 3. **回归**：`python -m pytest tests/ -v -k "not dde and not fbo_after_prepare"`
 
 每轮 `2>&1 | Tee-Object -FilePath tmp/<step>.log` 保存完整日志。
@@ -367,6 +363,24 @@ Select-String -Path tmp/*.log -Pattern "(error|ERROR|invalid|unknown|failed|FAIL
 **原因：** `wm lower` 触发 Windows 窗口事件，IPG-MOVIE C++ 层处理时破坏了 GL 上下文的稳定性。
 
 **修复：** `wm lower` + `wm attributes -topmost 0` 从 capture Tcl 移除，改由 orchestrator 层**独立 DDE 调用** `_movie_background_tcl_commands()`（在 `start_simulation_via_tcl` 之前执行），与 capture 渲染解耦。
+
+### 教训9：跨签名 params pool→历史分必须在当前板配置下重评
+
+**场景：** board 配置变更（比如 12 板→10 板）后，旧历史精确签名匹配失败，seed resolution 降级为 live_read → CarMaker 默认值 → rear_tv 得分从 1055 跳升到 1090（+35 分）。写车保护也因签名不匹配失效，坏参数写入了 .car 文件。
+
+**根因：** `_resolve_round_seed_anchor` 用 `_load_history_best_run_for_config` 精确匹配 board signature。签名不匹配→找不到历史→fallthrough 到 live_read。两个错误：
+1. **没有跨签名兜底**：旧代码只精确匹配，不尝试其他签名的最佳参数
+2. **写保护比较错误**：直接把不同签名下的原始得分做比较（比如 12 板得分 23.99 vs 10 板得分 1090），不同板配置下的分**不可比**
+
+**修复设计（`historical_params_pool.json`）：**
+- 每相机一个 `SimOutput/<camera>/historical_params_pool.json`
+- key 为 board signature 的 SHA256 前 16 位 hash
+- 存储每个签名的最佳参数 + 得分 + 板数
+- `_load_params_pool` 在池不存在时自动从历史 result.json 迁移
+- seed resolution 路径：池精确签名 → 池跨签名 → config_initial → live_read
+- **写车保护：所有池条目在当前板配置下 `_apply_initial_value_map_with_retry()` 重新评分，取最低分作为比较基准**
+
+**验证方法：** rear_tv 得分应从 1090 回到 ~1055。
 
 ### 教训7：GPUSensor Movie 导致 "dde command failed"
 

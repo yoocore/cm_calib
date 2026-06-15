@@ -643,16 +643,15 @@ def main() -> None:
                     reused_existing_runtime=bool(runtime_state.get("reused_existing_runtime")),
                 )
 
-                # Start the simulation so camera_calibration.py can capture rendered frames
                 start_simulation_via_tcl(
                     running_timeout_sec=float(args.bootstrap_running_timeout_sec),
                     probe_name=f"start_sim_pre_calib_{camera_name}",
                 )
-                # Force IPG-MOVIE to reload the scene while sim is running
-                # (bootstrap's StopSim clears View() / scene data; a StartSim alone does not re-populate)
-                cmctrl.sync_gui_testrun_selection(project_root, testrun_rel_path)
-                cmctrl.disable_checkviewport_recursion()
                 try:
+                    # Force IPG-MOVIE to reload the scene while sim is running
+                    # (bootstrap's StopSim clears View() / scene data; a StartSim alone does not re-populate)
+                    cmctrl.sync_gui_testrun_selection(project_root, testrun_rel_path)
+                    cmctrl.disable_checkviewport_recursion()
                     calibration_summary = _run_single_camera_process(
                         task_id=task_id,
                         camera_name=camera_name,
@@ -666,6 +665,7 @@ def main() -> None:
                     )
             finally:
                 cmctrl.restore_checkviewport()
+
             per_camera_results.append(
                 {
                     "camera": camera_name,

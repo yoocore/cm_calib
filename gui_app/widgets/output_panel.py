@@ -85,6 +85,16 @@ def _classify_log_level(message: str) -> str:
     text = message.casefold()
     if not text:
         return "info"
+    # Explicit level markers at message start take priority over text pattern matching
+    stripped = message.strip()
+    if stripped.startswith("[INFO]"):
+        return "info"
+    if stripped.startswith("[WARN]"):
+        return "warning"
+    if stripped.startswith("[ERROR]"):
+        return "error"
+    if stripped.startswith("[SUCCESS]"):
+        return "success"
     if any(token in text for token in ("traceback", " exception", "runtimeerror", "fatal")):
         return "error"
     if " critical " in text or text.startswith("critical ") or text.endswith(" critical"):

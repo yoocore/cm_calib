@@ -1368,11 +1368,11 @@ def cancel_movie_updateview_timer(*, timeout_sec: float = 10.0) -> None:
             timeout_sec=timeout_sec,
         )
         if not result.get("ok"):
-            print(f"Warning: could not cancel Movie UpdateView timer (non-fatal): {result.get('detail')}")
+            print(f"[INFO] could not cancel Movie UpdateView timer (non-fatal): {result.get('detail')}")
         else:
             print("Canceled Movie UpdateView_TimerProc before timer fire")
     except Exception as exc:
-        print(f"Warning: cancel Movie UpdateView timer failed (non-fatal): {exc}")
+        print(f"[INFO] cancel Movie UpdateView timer failed (non-fatal): {exc}")
 
 
 def disable_movie_updateview_timer(*, timeout_sec: float = 10.0) -> None:
@@ -1403,11 +1403,11 @@ def disable_movie_updateview_timer(*, timeout_sec: float = 10.0) -> None:
             timeout_sec=timeout_sec,
         )
         if not result.get("ok"):
-            print(f"Warning: could not disable Movie UpdateView timer (non-fatal): {result.get('detail')}")
+            print(f"[INFO] could not disable Movie UpdateView timer (non-fatal): {result.get('detail')}")
         else:
             print("Disabled Movie UpdateView_TimerProc (rename + no-op)")
     except Exception as exc:
-        print(f"Warning: disable Movie UpdateView timer failed (non-fatal): {exc}")
+        print(f"[INFO] disable Movie UpdateView timer failed (non-fatal): {exc}")
 
 
 def enable_movie_updateview_timer(*, timeout_sec: float = 10.0) -> None:
@@ -1437,11 +1437,11 @@ def enable_movie_updateview_timer(*, timeout_sec: float = 10.0) -> None:
             timeout_sec=timeout_sec,
         )
         if not result.get("ok"):
-            print(f"Warning: could not enable Movie UpdateView timer (non-fatal): {result.get('detail')}")
+            print(f"[INFO] could not enable Movie UpdateView timer (non-fatal): {result.get('detail')}")
         else:
             print("Enabled Movie UpdateView_TimerProc (restored + after 0)")
     except Exception as exc:
-        print(f"Warning: enable Movie UpdateView timer failed (non-fatal): {exc}")
+        print(f"[INFO] enable Movie UpdateView timer failed (non-fatal): {exc}")
 
 
 def wrap_checkviewport(*, timeout_sec: float = 10.0) -> None:
@@ -1502,11 +1502,11 @@ def wrap_checkviewport(*, timeout_sec: float = 10.0) -> None:
             timeout_sec=timeout_sec,
         )
         if not result.get("ok"):
-            print(f"Warning: could not wrap CheckViewPort (non-fatal): {result.get('detail')}")
+            print(f"[INFO] could not wrap CheckViewPort (non-fatal): {result.get('detail')}")
         else:
             print("Wrapped CheckViewPort with re-entrant guard + auto-reinstall delete-trace")
     except Exception as exc:
-        print(f"Warning: wrap CheckViewPort failed (non-fatal): {exc}")
+        print(f"[INFO] wrap CheckViewPort failed (non-fatal): {exc}")
 
 
 def disable_checkviewport_recursion(*, timeout_sec: float = 10.0) -> None:
@@ -1574,11 +1574,11 @@ def disable_checkviewport_recursion(*, timeout_sec: float = 10.0) -> None:
             timeout_sec=timeout_sec,
         )
         if not result.get("ok"):
-            print(f"Warning: could not disable CheckViewPort (non-fatal): {result.get('detail')}")
+            print(f"[INFO] could not disable CheckViewPort (non-fatal): {result.get('detail')}")
         else:
             print("Disabled CheckViewPort recursion guard for prepare+capture cycle")
     except Exception as exc:
-        print(f"Warning: disable CheckViewPort failed (non-fatal): {exc}")
+        print(f"[INFO] disable CheckViewPort failed (non-fatal): {exc}")
 
 
 def restore_checkviewport(*, timeout_sec: float = 10.0) -> None:
@@ -1606,11 +1606,11 @@ def restore_checkviewport(*, timeout_sec: float = 10.0) -> None:
             timeout_sec=timeout_sec,
         )
         if not result.get("ok"):
-            print(f"Warning: could not restore CheckViewPort (non-fatal): {result.get('detail')}")
+            print(f"[INFO] could not restore CheckViewPort (non-fatal): {result.get('detail')}")
         else:
             print("Restored CheckViewPort to original implementation")
     except Exception as exc:
-        print(f"Warning: restore CheckViewPort failed (non-fatal): {exc}")
+        print(f"[INFO] restore CheckViewPort failed (non-fatal): {exc}")
 
 
 def install_view_sync_trace(*, timeout_sec: float = 10.0) -> None:
@@ -1651,11 +1651,11 @@ def install_view_sync_trace(*, timeout_sec: float = 10.0) -> None:
             timeout_sec=timeout_sec,
         )
         if not result.get("ok"):
-            print(f"Warning: could not install View::SetSize trace (non-fatal): {result.get('detail')}")
+            print(f"[INFO] could not install View::SetSize trace (non-fatal): {result.get('detail')}")
         else:
             print("Installed persistent View::SetSize trace to auto-sync View() dict")
     except Exception as exc:
-        print(f"Warning: install View::SetSize trace failed (non-fatal): {exc}")
+        print(f"[INFO] install View::SetSize trace failed (non-fatal): {exc}")
 
 
 def remove_view_sync_trace(*, timeout_sec: float = 10.0) -> None:
@@ -1682,11 +1682,11 @@ def remove_view_sync_trace(*, timeout_sec: float = 10.0) -> None:
             timeout_sec=timeout_sec,
         )
         if not result.get("ok"):
-            print(f"Warning: could not remove View::SetSize trace (non-fatal): {result.get('detail')}")
+            print(f"[INFO] could not remove View::SetSize trace (non-fatal): {result.get('detail')}")
         else:
             print("Removed View::SetSize trace")
     except Exception as exc:
-        print(f"Warning: remove View::SetSize trace failed (non-fatal): {exc}")
+        print(f"[INFO] remove View::SetSize trace failed (non-fatal): {exc}")
 
 
 async def start_or_reuse_carmaker_for_open_movie(
@@ -1894,9 +1894,9 @@ def restart_movie_rendering(*, timeout_sec: float = 10.0) -> None:
         if result.get("ok"):
             print("Restarted IPG-MOVIE rendering via direct after scheduling")
         else:
-            print(f"Warning: restart movie rendering non-fatal: {result.get('detail')}")
+            print(f"[INFO] restart movie rendering non-fatal: {result.get('detail')}")
     except Exception as exc:
-        print(f"Warning: restart movie rendering failed (non-fatal): {exc}")
+        print(f"[INFO] restart movie rendering failed (non-fatal): {exc}")
 
 
 def _parse_probe_detail(detail: str) -> dict[str, str]:

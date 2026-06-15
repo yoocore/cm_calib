@@ -4409,42 +4409,42 @@ def _resolve_round_seed_anchor(
     anchor_score: Optional[float] = None
     anchor_source = "config_initial"
 
-    # If config has initial values (from vehicle file), use them as authoritative source
-    # Only fall back to history_best if config doesn't have initial values
+    prefer_history = bool(policy.get("prefer_history_best", True))
+
+    # When prefer_history_best is True, check history_best BEFORE config initial values
+    if prefer_history:
+        history_best_run = _load_history_best_run_for_config(config_path, camera_name)
+        if isinstance(history_best_run, dict):
+            history_values = history_best_run.get("final_values")
+            if isinstance(history_values, dict) and history_values:
+                anchor_values = {
+                    name: float(value)
+                    for name, value in history_values.items()
+                    if isinstance(value, (int, float))
+                }
+                parameters = cfg.get("parameters", {})
+                for name in list(anchor_values.keys()):
+                    param_cfg = parameters.get(name)
+                    if param_cfg is None:
+                        continue
+                    raw = anchor_values[name]
+                    clamped = _clamp_to_parameter_bounds(param_cfg, raw)
+                    if abs(clamped - raw) > 1e-9:
+                        print(f"[WARN] clamping history {name}={raw} to {clamped} (out of current config range)")
+                    anchor_values[name] = clamped
+                anchor_source = "history_best"
+                try:
+                    anchor_score = float(history_best_run.get("final_score"))
+                except Exception:
+                    anchor_score = None
+                print(f"Using history_best as seed anchor (score={anchor_score})")
+                return anchor_values, anchor_score, anchor_source
+
+    # Fall back to config initial values if no history_best
     if anchor_values:
         print(f"Using config initial values as seed anchor (from vehicle file)")
         return anchor_values, anchor_score, anchor_source
 
-    if not bool(policy.get("prefer_history_best", True)):
-        return anchor_values, anchor_score, anchor_source
-
-    history_best_run = _load_history_best_run_for_config(config_path, camera_name)
-    if not isinstance(history_best_run, dict):
-        return anchor_values, anchor_score, anchor_source
-
-    history_values = history_best_run.get("final_values")
-    if isinstance(history_values, dict) and history_values:
-        anchor_values = {
-            name: float(value)
-            for name, value in history_values.items()
-            if isinstance(value, (int, float))
-        }
-        parameters = cfg.get("parameters", {})
-        for name in list(anchor_values.keys()):
-            param_cfg = parameters.get(name)
-            if param_cfg is None:
-                continue
-            raw = anchor_values[name]
-            clamped = _clamp_to_parameter_bounds(param_cfg, raw)
-            if abs(clamped - raw) > 1e-9:
-                print(f"Warning: clamping history {name}={raw} to {clamped} (out of current config range)")
-            anchor_values[name] = clamped
-        anchor_source = "history_best"
-
-    try:
-        anchor_score = float(history_best_run.get("final_score"))
-    except Exception:
-        anchor_score = None
     return anchor_values, anchor_score, anchor_source
 
 

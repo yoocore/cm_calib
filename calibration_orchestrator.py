@@ -262,7 +262,7 @@ def _prepare_runtime_for_camera(
         try:
             cmctrl.ensure_movie_view_size(view_width, view_height, timeout_sec=10.0)
         except Exception as exc:
-            print(f"Warning: could not sync movie view size (Step 1): {exc}")
+            print(f"[INFO] could not sync movie view size (Step 1): {exc}")
     # --- Step 2: Activate sensor & sync TestRun in CarMaker GUI ---
     vehicle_path, vehicle_key = cmctrl.resolve_vehicle_path(project_root, testrun_rel_path)
     activation = cmctrl.activate_single_vehicle_sensor(vehicle_path, camera_name)
@@ -277,7 +277,7 @@ def _prepare_runtime_for_camera(
         except Exception as exc:
             # Non-fatal: Movie may not have View(ev.view) yet before bootstrap;
             # Step 7 will re-apply after Movie is fully ready
-            print(f"Warning: could not sync movie view size before bootstrap: {exc}")
+            print(f"[INFO] could not sync movie view size before bootstrap: {exc}")
     # --- Step 3: StartSim / StopSim (bootstrap the TestRun for Movie) ---
     carmaker_pid, bootstrap_testrun = cmctrl.bootstrap_testrun_for_movie_via_cmapi_sync(
         project_root=project_root,

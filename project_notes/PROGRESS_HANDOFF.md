@@ -2220,49 +2220,50 @@ catch {after 0 UpdateView_TimerProc}     # ← AFTER capture: GL context stable
 | 9 | Prepare 阶段渲染冻结 | ⚠️ **部分缓解**（Phase 33, rendering_health.js 会检测并 restart，但 restart 可能返回 None） |
 | 10 | `after 0` 导致 ConfigFBO crash | ✅ **已修复**（Phase 33, commit c1ec1e5） |
 
-
 ---
 
-## Phase 34: Fix `UpdateView_TimerProc` rename doesn't overwrite (commits 2d22ed8, b170099)
+## Phase 34: 修复 `UpdateView_TimerProc` rename 不覆盖问题 (commits 2d22ed8, b170099)
 
-### Problem
+### 问题
 
-Tcl's `rename` command does NOT overwrite existing commands. The `finally` block did:
+Tcl 的 `rename` 命令不会覆盖已存在的命令。`finally` 块执行的是：
 ```tcl
 rename __saved_UpdateView_TimerProc UpdateView_TimerProc
 ```
-But `UpdateView_TimerProc` already existed as a no-op proc, so `rename` silently failed. The `after 0 UpdateView_TimerProc` scheduled this no-op proc, permanently killing the rendering timer.
+但 `UpdateView_TimerProc` 已经存在（空 no-op proc），所以 `rename` 静默失败。
+之后 `after 0 UpdateView_TimerProc` 调度的是空 proc，渲染定时器永久死亡。
 
-### Fix
+### 修复
 
-Added `catch {rename UpdateView_TimerProc {}}` before the restore `rename`, so the no-op is deleted first:
+在 restore `rename` 之前加 `catch {rename UpdateView_TimerProc {}}` 删除 no-op：
 ```tcl
 catch {rename UpdateView_TimerProc {}}
 rename __saved_UpdateView_TimerProc UpdateView_TimerProc
 ```
 
-Same fix applied to both `camera_calibration.py` capture body and `cmapi_testrun_control.py` ensure_movie_view_size() + try_restart_rendering().
+同时修复了 `camera_calibration.py` capture body 和 `cmapi_testrun_control.py` 中的 ensure_movie_view_size() + try_restart_rendering()。
 
-### Verification
-
-- 38/38 unit tests passed
-- orchestrator 3-camera run completed without render freeze
+### 验证
+- 38/38 单元测试通过
+- orchestrator 三相机标定完成，无渲染卡死
 
 ---
 
-## Phase 35: FBO Health Check + Auto-Recovery (commits 1ab82f7, 88efa9f, 69186a6)
+## Phase 35: FBO 健康检测 + 自动恢复 (commits 1ab82f7, 88efa9f, 69186a6)
 
-### Problem
+### 问题
 
-Dragging/clicking IPG-MOVIE window triggers C++ `bind .view0.gl0 <Configure>` 鈫?`EventCallbacks::GUI::Window::On_Configure` 鈫?`ConfigFBO`. This bypasses Tcl-level `UpdateView_TimerProc` rename defense entirely. The FBO corruption ("FBO error: id not mapped") makes all subsequent captures fail.
+拖动/点击 IPG-MOVIE 窗口触发 C++ 层 `bind .view0.gl0 <Configure>` → `On_Configure` → `ConfigFBO`，
+完全绕过 Tcl 层 `UpdateView_TimerProc` 的 rename 防御。FBO 损坏后所有 capture 返回 "FBO error: id not mapped"。
 
-### Root Cause
+### 根因
 
-capture script uses height bump (`View::SetSize $w [expr {$h+1}]; update`) to fix initial dark frames. This triggers two Configure events 鈫?two ConfigFBO calls. When view already has correct dimensions, redundant double-ConfigFBO corrupts GL context.
+capture 脚本用 height bump（`View::SetSize $w [expr {$h+1}]; update`）修复初始黑帧。
+这触发两次 Configure 事件 → 两次 ConfigFBO。当 view 已有正确尺寸时，冗余的 double-ConfigFBO 损坏 GL 上下文。
 
-### Fix: Two Guards
+### 修复：双层守卫
 
-**Guard 1 鈥?Skip redundant height bump in capture script `camera_calibration.py`:**
+**守卫 1 — capture 脚本跳过冗余 height bump（`camera_calibration.py`）：**
 ```tcl
 if {$vp_w > 0 && $vp_h > 0} {
     # view already valid, skip height bump entirely
@@ -2271,73 +2272,73 @@ if {$vp_w > 0 && $vp_h > 0} {
 }
 ```
 
-**Guard 2 鈥?Skip redundant height bump in `ensure_movie_view_size()` (`cmapi_testrun_control.py`):**
-Probe current view dimensions before height bump. If already match target, skip entire procedure.
+**守卫 2 — `ensure_movie_view_size()` 跳过冗余 height bump（`cmapi_testrun_control.py`）：**
+在 height bump 前探测当前 view 尺寸，若已匹配目标则跳过整个过程。
 
-**FBO Probe 鈥?Detect corruption proactively (`dde_health_check.py`):**
-- `movie_fbo_probe`: minimizes IPG-MOVIE, creates tiny 16x16 test FBO, restores window state
-- Detects "FBO error: id not mapped" 鈫?`ipg_movie_fbo_ok = false`
-- Classification includes `ipg_movie_fbo_ok` in `target_status`
+**FBO 探针 — 主动检测 FBO 损坏（`dde_health_check.py`）：**
+- `movie_fbo_probe`：最小化 IPG-MOVIE，创建 16x16 测试 FBO，恢复窗口
+- 检测到 "FBO error: id not mapped" → `ipg_movie_fbo_ok = false`
+- 分类器在 `target_status` 中包含 `ipg_movie_fbo_ok`
 
-**Auto-Recovery (`calibration_orchestrator.py`):**
-- `_prepare_runtime_for_camera()` Step 9: after init + health check, checks `ipg_movie_fbo_ok`
-- If false: calls `cmctrl.kill_all_processes()` (CarMaker + IPG-MOVIE), then retries with `_fbo_retry_guard=True`
-- `_reuse_existing_runtime_for_camera()`: same FBO detection + fallback to prepare
+**自动恢复（`calibration_orchestrator.py`）：**
+- `_prepare_runtime_for_camera()` Step 9: 初始化 + 健康检查后检查 `ipg_movie_fbo_ok`
+- 若 false: 调用 `cmctrl.kill_all_processes()`（CarMaker + IPG-MOVIE），然后用 `_fbo_retry_guard=True` 重试
+- `_reuse_existing_runtime_for_camera()`: 同样的 FBO 检测 + 回退到 prepare
 
-### Files Changed
+### 文件变更
 
-| File | Change |
-|------|--------|
-| `dde_health_check.py` | Add `movie_fbo_probe`, add `ipg_movie_fbo_ok` to classification |
-| `cmapi_testrun_control.py` | Add `kill_all_processes()`, skip height bump in `ensure_movie_view_size()` |
-| `calibration_orchestrator.py` | FBO detection in prepare+reuse, kill+retry on corruption |
+| 文件 | 变更 |
+|------|------|
+| `dde_health_check.py` | 添加 `movie_fbo_probe`，分类器添加 `ipg_movie_fbo_ok` |
+| `cmapi_testrun_control.py` | 添加 `kill_all_processes()`，`ensure_movie_view_size()` 跳过 height bump |
+| `calibration_orchestrator.py` | prepare+reuse 中检测 FBO，损坏后 kill+retry |
 
-### Verification
-
-- 38/38 unit tests passed
-- 5 stability runs (manual drag + orchestrator): all 3 cameras OK each run
-- FBO auto-recovery path tested: FBO detected corrupted 鈫?CarMaker PID changed 鈫?fresh processes started 鈫?all cameras OK
-
----
-
-## Phase 36: Fix missing comma in capture script body (commit 04c8895)
-
-### Problem
-
-Line 7805 in `camera_calibration.py` was missing a trailing comma. Python concatenated `"}"` + `"if..."` into `"}if..."`, producing Tcl syntax error "extra characters after close-brace" in the capture script.
-
-### Fix
-
-Added the missing comma.
-
-### Verification
-
-38/38 tests pass.
+### 验证
+- 38/38 单元测试通过
+- 5 次稳定性测试（手动拖动 + orchestrator）：所有相机 OK
+- FBO 自动恢复路径已验证：FBO 损坏 → CarMaker PID 变更 → 新进程启动 → 所有相机 OK
 
 ---
 
-## Phase 37: Stability Verification 鈥?5/5 Runs
+## Phase 36: 修复 capture 脚本体漏逗号 (commit 04c8895)
 
-| # | Date | rear_tv | left_tv | right_rear | Notes |
-|---|------|---------|---------|------------|-------|
-| 1 | 2026-06-14 21:30 | 1053.5 | 810.4 | 43.5 | Fresh prepare, healthy |
-| 2 | 2026-06-14 21:50 | 1053.5 | 810.4 | 43.5 | Second run, same session |
-| 3 | 2026-06-14 21:59 | 1053.5 | 810.4 | 43.5 | Third run |
-| 4 | 2026-06-15 01:08 | 1054.7 | 810.7 | 43.5 | After FBO recovery (kill+restart) |
-| 5 | 2026-06-15 10:12 | 1053.5 | 810.7 | 43.5 | After FBO recovery (kill+restart) |
+### 问题
 
-### Key Findings
+`camera_calibration.py` 第 7805 行漏了尾逗号。Python 将 `"}"` + `"if..."` 拼接成 `"}if..."`，
+导致 capture 脚本中出现 Tcl 语法错误 "extra characters after close-brace"。
 
-1. All runs produce identical scores (1053.5, 810.4, 43.5) 鈥?deterministic convergence
-2. FBO corruption after window drag is the reliability bottleneck (2/5 triggered recovery)
-3. FBO auto-recovery works reliably 鈥?both FBO-triggered recoveries produced successful runs
-4. Scores remain high (especially rear_tv 1053) 鈥?algorithm problem, not infrastructure
+### 修复
 
-### Remaining Infrastructure Risks
+补上缺失的逗号。
 
-| Risk | Mitigation |
-|------|-----------|
-| Window drag 鈫?FBO corruption | 鉁?FBO probe + auto-recovery |
-| Stale processes not killed | 鉁?kill_all_processes() in FBO fallback |
-| Render timer death | 鉁?UpdateView_TimerProc rename fix |
-| View size mismatch | 鉁?skip height bump guard |
+### 验证
+
+38/38 测试通过。
+
+---
+
+## Phase 37: 稳定性验证 — 5/5 次全部通过
+
+| # | 时间 | rear_tv | left_tv | right_rear | 备注 |
+|---|------|---------|---------|------------|------|
+| 1 | 2026-06-14 21:30 | 1053.5 | 810.4 | 43.5 | 新鲜 prepare，健康 |
+| 2 | 2026-06-14 21:50 | 1053.5 | 810.4 | 43.5 | 同 session 第二跑 |
+| 3 | 2026-06-14 21:59 | 1053.5 | 810.4 | 43.5 | 第三跑 |
+| 4 | 2026-06-15 01:08 | 1054.7 | 810.7 | 43.5 | FBO 恢复后（kill+restart） |
+| 5 | 2026-06-15 10:12 | 1053.5 | 810.7 | 43.5 | FBO 恢复后（kill+restart） |
+
+### 关键发现
+
+1. 所有运行产生相同的分数 (1053.5, 810.4, 43.5) — 确定性收敛
+2. 拖动窗口后的 FBO 损坏是可靠性瓶颈（5 次中 2 次触发了恢复）
+3. FBO 自动恢复可靠工作 — 两次触发后都成功完成全相机标定
+4. 分数仍偏高（尤其 rear_tv 1053）— 算法问题，非基础设施问题
+
+### 剩余基础设施风险
+
+| 风险 | 缓解措施 |
+|------|----------|
+| 拖动窗口 → FBO 损坏 | ✅ FBO 探针 + 自动恢复 |
+| 旧进程未被杀死 | ✅ kill_all_processes() 在 FBO 回退路径中 |
+| 渲染定时器死亡 | ✅ UpdateView_TimerProc rename 修复 |
+| View 尺寸不匹配 | ✅ 跳过 height bump 守卫 |

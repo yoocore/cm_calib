@@ -1,10 +1,65 @@
-# IPG-MOVIE Intermittent FBO Failure - Progress Handoff
+# CameraCalibration — v1.0 版本记录
 
-> Last updated: 2026-06-13
-> Latest commit: a1d6583 fix(capture): stabilize GL context after height bump with single update
-> Previous major fix: e0c858b fix(ensure_movie_view_size): remove update idletasks
+> 版本: v1.0 (git tag: v1.0)
+> 发布日期: 2026-06-15
+> 最新提交: c7bb1ca docs: PROGRESS_HANDOFF.md Phases 34-37 转为中文
+> 作者: Bytes (OpenCode agent)
 
-> Author: Bytes (OpenCode agent)
+---
+
+## v1.0 版本说明
+
+历经约三周（2026-05-20 ~ 2026-06-15）的反复调试，三相机标定管线（rear_tv → left_tv → right_rear）首次达到**可稳定连续运行的里程碑**。经过 5 次手动拖动窗口破坏 FBO 后的验证，系统均能正确检测 FBO 损坏、自动重启干净进程、完成全部三相机标定。
+
+---
+
+### 为什么这花了这么长时间？
+
+根本原因是：**多个严重 bug 互相掩盖，打地鼠式修复**。具体来说：
+
+| 阶段 | 时间 | 核心问题 |
+|------|------|----------|
+| Phase 1-12 | 5/20-6/2 | FBO 创建时机不对 + View dict 不一致 |
+| Phase 13-16 | 6/3-6/5 | `update idletasks` 在 Tcl execute 内触发 FBO 创建错误 |
+| Phase 17-27 | 6/5-6/10 | CheckViewPort 递归 — 持续打地鼠，修好一个触发另一个 |
+| Phase 28-33 | 6/10-6/13 | Height bump → GL 上下文不稳定；UpdateView_TimerProc rename 模式错误 |
+| Phase 34-37 | 6/14-6/15 | Tcl `rename` 不覆盖 + C++ Configure→ConfigFBO 绕过 Tcl 层 — 真正根因 |
+
+### 几个会误导的方向
+
+**1. CheckViewPort 递归 (Phase 17-27) 是最重的误导。**
+
+这是 IPG-MOVIE 内部的一个 Tcl proc，被 `trace add` 绑定到 View() 数组的写入。每次 `View::SetSize` 或 `set View(...)` 都会触发它。因为 capture 脚本中的 height bump（修改 view 尺寸→再改回正）会写入 View()，导致 CheckViewPort 被递归调用，进而触发 `update` → 更多 View() 写入。花了整整 10 个 Phase（20+ 次提交）来修复这个。
+
+但 CheckViewPort 递归**不是 FBO 损坏的原因**。它只是把流水搅浑了——只要 FBO 创建时 CheckViewPort 在乱跳，你永远分不清是 FBO 本身有问题还是被 CheckViewPort 触发了什么不该触发的事。
+
+**2. `after cancel` 不够。Tcl 8.6 的 `rename` 不覆盖。**
+
+Phase 28-33 用了 `after cancel UpdateView_TimerProc` 来防止 timer 在 height bump 过程中触发。但 `after cancel` 只取消一个定时器实例（tclTimer.c 的 TimerCancelDo 在首次匹配后 break）。改用 `rename UpdateView_TimerProc {}`（删除此 proc，让 `after` 找不到命令而忽略）看似解决了，但 Tcl 8.6 的 `rename` **不覆盖**——如果 `UpdateView_TimerProc` 已经被设为一个 no-op proc，`rename __saved_UpdateView_TimerProc UpdateView_TimerProc` 会静默失败，导致原来的 real proc 再也回不来了。这解释了很多次的不可复现的渲染卡死。
+
+**3. C++ Configure→ConfigFBO 绕过 Tcl 层 (Phase 34-35)。**
+
+这是真正的最后谜底。IPG-MOVIE 在 C++ 层绑定了一个 `bind .view0.gl0 <Configure>` → `EventCallbacks::GUI::Window::On_Configure %W`。当用户拖动窗口时，Windows 发送 `WM_SIZE` → Tcl 触发 `<Configure>` 事件 → C++ `On_Configure` → 直接调用 `ConfigFBO`。这**完全绕过**了 Tcl 层的 UpdateView_TimerProc rename 保护。所以无论 Tcl 层怎么防御，拖动窗口必然触发 FBO 重建，在 UpdateViewActive=1 时竞争 GL 上下文。
+
+而且更隐蔽的是：capture 脚本中做 height bump 时，`View::SetSize H+1` 也会触发两次 `<Configure>` 事件（H+1→H），即使窗口没有被拖动。所以当 view 尺寸已经有效时做 height bump 等于在安全环境中触发了一次 FBO 破坏。
+
+**4. 漏了个逗号 (Phase 36)。**
+
+修复了 10 几个复杂 bug 后，Python 的字符串拼接少写了一个逗号，Tcl 脚本里多出一个 `}if{$vp_w...}`，Tcl parser 报 `extra characters after close-brace`。这个在 review 时很容易漏掉，因为很难注意到 `"}"` 后面缺了 `,`。
+
+### 最终可靠的原因
+
+修复完成后，三相机标定在 5 次手动窗口拖动破坏后的验证中全部成功：
+
+| 测试 | rear_tv | left_tv | right_rear |
+|------|---------|---------|------------|
+| Run 1 | 1053.5 | 810.4 | 43.5 |
+| Run 2 | 1053.5 | 810.4 | 43.5 |
+| Run 3 | 1053.5 | 810.4 | 43.5 |
+| Run 4 | 1054.7 | 810.7 | 43.5 |
+| Run 5 | 1053.5 | 810.7 | 43.5 |
+
+所有运行分数一致，无 FBO 错误，无渲染卡死。FBO 损坏自动恢复路径每次被触发都成功。
 
 ---
 

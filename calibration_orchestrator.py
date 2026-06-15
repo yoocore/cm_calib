@@ -296,15 +296,20 @@ def _prepare_runtime_for_camera(
     # The calibration flow sends Tcl commands via `send IPG-MOVIE`
     # (View widget, camera dialog, capture, etc.). A GPUSensor-only Movie
     # does NOT have these Tcl GUI commands, causing "dde command failed".
-    # We MUST have a GUI Movie instance, even if GPUSensor already exists.
+    # Start a GUI Movie alongside any existing GPUSensor movie rather than
+    # killing the GPUSensor (which would break gpusensor_ping health checks).
     if not cmctrl.list_gui_movie_processes():
-        cmctrl.restart_gui_movie_for_send_recovery(
-            cm_install=args.cm_install.resolve(),
-            movie_apphost=str(args.movie_apphost),
-            project_root=project_root,
-            carmaker_pid=carmaker_pid,
+        existing_gui_pids = {int(p["ProcessId"]) for p in cmctrl.list_gui_movie_processes()}
+        cmd = cmctrl.build_gui_movie_command(
+            args.cm_install.resolve(),
+            str(args.movie_apphost),
+            project_root,
+            carmaker_pid,
         )
-        # --- Movie restart re-registers CheckViewPort, re-guard ---
+        subprocess.Popen(cmd, cwd=str((args.cm_install.resolve() / "GUI").resolve()))
+        new_gui_pid = cmctrl.wait_for_gui_movie_pid(existing_gui_pids)
+        print(f"Started GUI Movie (PID {new_gui_pid}) alongside existing Movie stack")
+        # --- Movie start re-registers CheckViewPort, re-guard ---
         cmctrl.disable_checkviewport_recursion()
     # --- Step 6: Wait for Movie scene ready ---
     # Fresh-start (Step 0 just launched CarMaker): Movie's DDE service may take

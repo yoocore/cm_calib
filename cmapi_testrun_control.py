@@ -738,7 +738,51 @@ def build_status_summary(
     }
 
 
-async def execute_prepare_mode(args: argparse.Namespace) -> dict[str, Any]:
+def check_movie_fbo(*, timeout_sec: float = 5.0) -> None:
+    """Probe IPG-MOVIE FBO health by creating a tiny test FBO.
+    Raises RuntimeError if FBO is corrupted or DDE fails.
+    """
+    output_dir = default_output_dir()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    probe_name = "cmapi_testrun_control_fbo_probe"
+    result = run_check_attempt(
+        name=probe_name,
+        service="TclEval",
+        topic="CarMaker",
+        output_dir=output_dir,
+        script_text=render_dde_execute_script(
+            output_dir / f"{probe_name}.txt",
+            "IPG-MOVIE",
+            [
+                r"set orig_state [wm state .]",
+                r"if {$orig_state ne {iconic}} {",
+                r"    wm state . iconic",
+                r"    after 100",
+                r"}",
+                r"set fbo_rc [catch {",
+                r"    set fbo [FBO new 16 16 -tex rgb -noclear]",
+                r"    FBO begin $fbo",
+                r"    FBO end",
+                r"    FBO delete $fbo",
+                r"} fbo_msg]",
+                r"if {$orig_state ne {iconic}} {",
+                r"    wm state . $orig_state",
+                r"}",
+                r"if {$fbo_rc != 0} {",
+                r'    error "FBO probe failed: $fbo_msg"',
+                r"}",
+                r"list ok {FBO probe passed}",
+            ],
+        ),
+        timeout_sec=timeout_sec,
+    )
+    if not result.get("ok"):
+        raise RuntimeError(
+            f"IPG-MOVIE FBO corruption detected: {result.get('kind')}: {result.get('detail')}"
+        )
+
+
+async def execute_prepare_mode(args: argparse.Namespace, *, _fbo_retry: bool = False) -> dict[str, Any]:
     project_root = args.project_root.resolve()
     cm_install = args.cm_install.resolve()
     config_dir = args.config_dir.resolve()
@@ -835,6 +879,18 @@ async def execute_prepare_mode(args: argparse.Namespace) -> dict[str, Any]:
                 poll_interval_sec=args.movie_ready_poll_sec,
             )
             movie_scene["strict_scene_ready_fallback"] = str(exc)
+        # --- FBO health check: detect corrupted GL context from stale processes ---
+        try:
+            check_movie_fbo(timeout_sec=args.health_check_timeout_sec)
+            print("IPG-MOVIE FBO health check passed")
+        except RuntimeError as fbo_exc:
+            if not _fbo_retry:
+                killed = kill_all_processes()
+                print(f"IPG-MOVIE FBO corruption detected: {fbo_exc}")
+                print(f"Killed {len(killed)} stale processes (CarMaker+Movie), retrying prepare with clean state...")
+                time.sleep(3)
+                return await execute_prepare_mode(args, _fbo_retry=True)
+            raise
         abraxas = ensure_movie_abraxas_enabled(timeout_sec=args.health_check_timeout_sec)
         if sensor_activation_result is not None:
             camera_selection = ensure_movie_camera_selected(

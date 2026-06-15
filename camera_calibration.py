@@ -8016,6 +8016,8 @@ class CameraCalibrator:
                 self._last_capture_uc = uc
         except ImportError:
             pass  # rendering_health module not available
+        except RuntimeError:
+            raise  # Rendering frozen — abort, don't continue to capture
         except Exception as exc:
             print(f"[health] Rendering check error: {exc}")
 

@@ -179,8 +179,6 @@ class _SectionGroup(QGroupBox):
 
 
 class CalibrationPanel(QGroupBox):
-    prepare_clicked = Signal()
-    status_query_clicked = Signal()
     estimated_time_changed = Signal()
 
     def __init__(self, parent: QWidget | None = None):
@@ -230,16 +228,6 @@ class CalibrationPanel(QGroupBox):
         self.phase_label = QLabel("")
         self.phase_label.setWordWrap(True)
         self.phase_label.hide()
-
-        self.prepare_button = QPushButton("CM Prepare")
-        self.prepare_button.clicked.connect(self.prepare_clicked.emit)
-        self.prepare_button.setStyleSheet(_SECONDARY_BUTTON_STYLE)
-        self.prepare_button.setMinimumHeight(38)
-
-        self.status_query_button = QPushButton("Query Status")
-        self.status_query_button.clicked.connect(self.status_query_clicked.emit)
-        self.status_query_button.setStyleSheet(_TERTIARY_BUTTON_STYLE)
-        self.status_query_button.setMinimumHeight(38)
 
         cm_versions = detect_cm_versions()
         self.cm_version_combo = QComboBox()
@@ -337,7 +325,6 @@ class CalibrationPanel(QGroupBox):
         cm_layout.setContentsMargins(0, 0, 0, 0)
         cm_layout.addWidget(QLabel("CarMaker"))
         cm_layout.addWidget(self.cm_version_combo, 1)
-        cm_layout.addWidget(self.prepare_button)
 
         button_row = QWidget(self.control_group)
         button_layout = QHBoxLayout(button_row)
@@ -352,7 +339,6 @@ class CalibrationPanel(QGroupBox):
         control_layout.addWidget(cm_row)
         control_layout.addLayout(status_row)
         control_layout.addWidget(self.phase_label)
-        control_layout.addWidget(self.status_query_button)
         control_layout.addWidget(button_row)
         layout.addWidget(self.control_group)
 
@@ -463,7 +449,6 @@ class CalibrationPanel(QGroupBox):
         self._er_refine_iters_spin.setEnabled(not locked)
         self.jitter_spin.setEnabled(not locked)
         self.strategy_tabs.setEnabled(not locked)
-        self.prepare_button.setEnabled(not locked)
         self.cm_version_combo.setEnabled(not locked)
 
     def sizeHint(self) -> QSize:

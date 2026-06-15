@@ -65,7 +65,10 @@ class TestCalibrationPanel:
         phase_row = control_layout.itemAt(2).widget()
         assert isinstance(phase_row, QLabel)
         assert phase_row is panel.phase_label
-        assert control_layout.itemAt(3).widget() is panel.status_query_button
+        button_row = control_layout.itemAt(3).widget()
+        assert isinstance(button_row, QWidget)
+        assert button_row.layout().itemAt(0).widget() is panel.start_button
+        assert button_row.layout().itemAt(1).widget() is panel.stop_button
 
     def test_outer_title_is_stronger_than_inner_sections(self, qtbot):
         panel = CalibrationPanel()

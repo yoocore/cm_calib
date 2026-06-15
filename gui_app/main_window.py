@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import ctypes
-import re
 import time
 from collections import deque
 from pathlib import Path
@@ -26,15 +25,9 @@ class MainWindow(QMainWindow):
     def __init__(self, project_root: Path):
         super().__init__()
         self.project_root = project_root.resolve()
-        self._runtime_mode: str | None = None
-        self._pending_launch: CalibrationLaunchConfig | None = None
         self._last_runtime_summary: dict | None = None
         self._runtime_recent_lines: deque[str] = deque(maxlen=12)
-        self._prepare_trace_state: dict[str, object] = {}
-        self._prepare_trace_emitted: set[str] = set()
         self._status_summary_lines: deque[str] = deque(maxlen=10)
-        self._health_check_active = False
-        self._health_verification_pending = False
         self._calibration_recent_lines: deque[str] = deque(maxlen=20)
         self._calibration_task_started_at: float | None = None
         self._camera_started_at: dict[str, float] = {}
@@ -98,17 +91,9 @@ class MainWindow(QMainWindow):
         self._refresh_static_timer.setInterval(1000)
         self._refresh_static_timer.timeout.connect(self._refresh_static_info)
         self._refresh_static_timer.start()
-        self._health_timer = QTimer(self)
-        self._health_timer.setInterval(3000)
-        self._health_timer.timeout.connect(self._check_runtime_health)
-        self._ready_pending = False
-        self._health_check_timeout = QTimer(self)
-        self._health_check_timeout.setSingleShot(True)
-        self._health_check_timeout.timeout.connect(self._on_health_check_timeout)
         self._wire_signals()
         self._refresh_camera_list()
         self._apply_status(AppStatus.IDLE)
-        self._status_summary_lines.clear()
         self.calibration_panel.clear_failure_summary()
 
     def _wire_signals(self) -> None:
@@ -117,8 +102,6 @@ class MainWindow(QMainWindow):
         self.cm_settings_panel.precheck_clicked.connect(self._run_precheck)
         self.cm_settings_panel.generate_config_clicked.connect(self._generate_configs)
         self.cm_settings_panel.wizard_clicked.connect(self._open_board_wizard)
-        self.calibration_panel.prepare_clicked.connect(self._prepare_runtime)
-        self.calibration_panel.status_query_clicked.connect(self._query_runtime_status)
         self.cm_settings_panel.project_root_changed.connect(self._on_project_root_changed)
         self.cm_settings_panel.testrun_changed.connect(self._on_testrun_changed)
         self.cm_settings_panel.camera_selection_changed.connect(self._rebuild_sensor_progress_plan)
@@ -434,98 +417,29 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            self.output_panel.append_log("─" * 60, source="system")
-            self._set_status_summary("Calib Start triggered. Running precheck and runtime validation.")
             cm_install = self.calibration_panel.cm_install_path
             if cm_install is None:
                 raise ValueError("CM version is not selected. Choose a CM version first.")
             self.calibration_service.set_cm_install(cm_install)
-            if not self._is_runtime_ready_for_direct_start(launch):
-                if self._is_runtime_almost_ready(launch):
-                    if self.runtime_service.is_running:
-                        self.output_panel.append_log(
-                            "runtime_service is busy (health probe?); stopping probe and proceeding...",
-                            source="system",
-                        )
-                        self.runtime_service.stop()
-                        deadline = time.monotonic() + 3.0
-                        while self.runtime_service.is_running and time.monotonic() < deadline:
-                            QCoreApplication.processEvents()
-                            time.sleep(0.05)
-                    self._auto_prepare_and_start(launch)
-                    return
-                summary_text = self._build_start_requires_prepare_summary(launch)
-                self.calibration_panel.set_failure_summary(summary_text)
-                QMessageBox.warning(self, "Runtime Not Ready", summary_text)
-                self._sync_control_states()
-                return
-            launch.skip_prepare_for_first_camera = True
-            self.output_panel.append_log("Calib Start will reuse the existing prepared runtime for the first camera", source="runtime")
-            self._append_status_summary_line("Calib Start will reuse the current prepared runtime.")
             if self.calibration_service.is_running:
                 self.output_panel.append_log(
-                    f"calibration_service already running (qprocess state={self.calibration_service.process_service._process.state().name}); stopping first",
+                    f"calibration_service already running; stopping first",
                     source="system",
                 )
                 self.calibration_service.stop()
+            self.output_panel.append_log("─" * 60, source="system")
+            self._set_status_summary("Calib Start triggered. Starting calibration...")
             self.calibration_service.start(launch)
         except Exception as exc:
-            if "already running" in str(exc).lower():
-                from PySide6.QtCore import QProcess
-                try:
-                    c_state = self.calibration_service.process_service._process.state().name
-                except Exception:
-                    c_state = "N/A"
-                try:
-                    r_state = self.runtime_service.process_service._process.state().name
-                except Exception:
-                    r_state = "N/A"
-                diag = (
-                    f"_start_calibration diagnostic: calibration.start() failed with 'already running'. "
-                    f"calib.is_running={self.calibration_service.is_running} calib._process.state={c_state} "
-                    f"runtime.is_running={self.runtime_service.is_running} runtime._process.state={r_state}"
-                )
-                self.output_panel.append_log(diag, source="system")
-                try:
-                    log_path = Path(self.project_root) / "SimOutput" / "camera_orchestration" / "start_diag.log"
-                    log_path.parent.mkdir(parents=True, exist_ok=True)
-                    log_path.write_text(diag + "\n")
-                except Exception:
-                    pass
             self._set_status_summary(str(exc))
             QMessageBox.critical(self, "Start Failed", str(exc))
             self._sync_control_states()
 
     @Slot()
     def _stop_calibration(self) -> None:
-        if self.state.status == AppStatus.PREPARING:
-            self._pending_launch = None
-            self.runtime_service.stop()
-        elif self.state.status == AppStatus.RUNNING:
+        if self.state.status == AppStatus.RUNNING:
             self.calibration_service.stop()
 
-    @Slot()
-    def _prepare_runtime(self) -> None:
-        try:
-            project_root = Path(self.cm_settings_panel.project_root_edit.text().strip() or self.project_root)
-            testrun = self.cm_settings_panel.testrun_edit.text().strip()
-            if not testrun:
-                raise ValueError("TestRun is required")
-            selected_cameras = self.cm_settings_panel.selected_cameras()
-            if not selected_cameras:
-                raise ValueError("Please select at least one camera")
-            self.state.selected_cameras = selected_cameras
-            cm_install = self.calibration_panel.cm_install_path
-            if cm_install is None:
-                raise ValueError("CM version is not selected. Choose a CM version first.")
-            self.calibration_service.set_cm_install(cm_install)
-            self._runtime_mode = "prepare"
-            self._set_status_summary("CM Prepare triggered. Waiting for the runtime process to start.")
-            self.runtime_service.prepare_runtime(project_root, testrun, cameras=selected_cameras, cm_install=cm_install)
-        except Exception as exc:
-            self._runtime_mode = None
-            self._set_status_summary(str(exc))
-            QMessageBox.critical(self, "Prepare Failed", str(exc))
 
     @Slot()
     def _run_precheck(self) -> None:
@@ -586,111 +500,24 @@ class MainWindow(QMainWindow):
         dialog = BootstrapWizardDialog(self)
         dialog.exec()
 
-    def _query_runtime_status(self) -> None:
-        try:
-            if self.runtime_service.is_running or self.calibration_service.is_running:
-                return
-            if self.state.status not in {AppStatus.FINISHED, AppStatus.FAILED, AppStatus.STOPPED, AppStatus.PASSIVE}:
-                return
-            project_root = Path(self.cm_settings_panel.project_root_edit.text().strip() or self.project_root)
-            testrun = self.cm_settings_panel.testrun_edit.text().strip()
-            if not testrun:
-                raise ValueError("TestRun is required")
-            cm_install = self.calibration_panel.cm_install_path
-            if cm_install is None:
-                raise ValueError("CM version is not selected. Choose a CM version first.")
-            self.output_panel.append_log("Query Status triggered", source="system")
-            self._runtime_mode = "status"
-            self._health_check_active = False
-            self._set_status_summary("Querying runtime status...")
-            self.runtime_service.probe_status(
-                project_root,
-                testrun,
-                verify_health=True,
-                cm_install=cm_install,
-            )
-        except Exception as exc:
-            self._runtime_mode = None
-            self._set_status_summary(str(exc))
-            QMessageBox.critical(self, "Status Query Failed", str(exc))
-
-    def _check_runtime_health(self, force: bool = False) -> None:
-        if not force and self.state.status != AppStatus.READY:
-            return
-        if self._health_check_active or self.runtime_service.is_running:
-            return
-        if self.calibration_service.is_running:
-            return
-        project_root = Path(self.cm_settings_panel.project_root_edit.text().strip() or self.project_root)
-        testrun = self.cm_settings_panel.testrun_edit.text().strip()
-        if not testrun:
-            return
-        self._runtime_mode = "status"
-        self._health_check_active = True
-        try:
-            self.runtime_service.probe_status(
-                project_root,
-                testrun,
-                verify_health=True,
-                cm_install=self.calibration_panel.cm_install_path,
-            )
-        except Exception:
-            self._runtime_mode = None
-            self._health_check_active = False
-
     def _apply_status(self, status: AppStatus) -> None:
         self.state.status = status
         self.calibration_panel.set_status(status.value)
-        if status == AppStatus.READY:
-            self._health_timer.start()
-        else:
-            self._health_timer.stop()
-            if not self.runtime_service.is_running:
-                self._health_check_active = False
-                if status not in {AppStatus.FINISHED, AppStatus.FAILED, AppStatus.STOPPED}:
-                    self._health_verification_pending = False
         if status in {AppStatus.FINISHED, AppStatus.FAILED, AppStatus.STOPPED}:
             self._calibration_task_started_at = None
-            self._health_verification_pending = True
             self._refresh_calibration_progress()
         self._sync_control_states()
 
-    def _runtime_status_probe_can_update_status(self) -> bool:
-        if self.state.status == AppStatus.PREPARING:
-            return self._health_check_active
-        if self.state.status == AppStatus.RUNNING:
-            return False
-        if self.calibration_service.is_running:
-            return False
-        return True
-
     def _sync_control_states(self) -> None:
-        runtime_busy = self.runtime_service.is_running and not self._health_check_active
         calibration_running = self.state.status == AppStatus.RUNNING
-        preparing = self.state.status == AppStatus.PREPARING
         can_start = self.state.status in {AppStatus.IDLE, AppStatus.READY, AppStatus.FINISHED, AppStatus.FAILED, AppStatus.STOPPED, AppStatus.PASSIVE}
-        can_query_status = (
-            not runtime_busy
-            and not calibration_running
-            and not preparing
-            and self.state.status in {AppStatus.FINISHED, AppStatus.FAILED, AppStatus.STOPPED, AppStatus.PASSIVE}
-        )
-
-        self.calibration_panel.start_button.setEnabled(can_start and not runtime_busy and not calibration_running and not self.calibration_service.is_running and not self._health_verification_pending and not self._ready_pending)
-        self.calibration_panel.stop_button.setEnabled(calibration_running or preparing)
-        controls_enabled = not runtime_busy and not calibration_running and not preparing
+        running_or_locked = calibration_running or self.calibration_service.is_running
+        self.calibration_panel.start_button.setEnabled(can_start and not running_or_locked)
+        self.calibration_panel.stop_button.setEnabled(calibration_running)
+        controls_enabled = not running_or_locked
         self.cm_settings_panel.precheck_button.setEnabled(controls_enabled)
         self.cm_settings_panel.set_inputs_locked(not controls_enabled)
         self.calibration_panel.set_inputs_locked(not controls_enabled)
-        self.calibration_panel.status_query_button.setEnabled(can_query_status)
-        if preparing or calibration_running:
-            self.calibration_panel.status_query_button.setToolTip("Manual query is unavailable during CM Prepare or calibration.")
-        elif self.state.status == AppStatus.READY:
-            self.calibration_panel.status_query_button.setToolTip("Runtime polling runs automatically when Status=ready.")
-        elif self.state.status in {AppStatus.FINISHED, AppStatus.FAILED, AppStatus.STOPPED, AppStatus.PASSIVE}:
-            self.calibration_panel.status_query_button.setToolTip("" if can_query_status else "A background command is still running. Query is temporarily unavailable.")
-        else:
-            self.calibration_panel.status_query_button.setToolTip("Manual query is not needed for the current state.")
 
     @Slot()
     def _on_process_started(self) -> None:
@@ -722,107 +549,20 @@ class MainWindow(QMainWindow):
 
     @Slot(str)
     def _on_runtime_process_failed(self, error_text: str) -> None:
-        was_health_check = self._health_check_active
-        self._health_check_active = False
-        self._health_verification_pending = False
-        if self._ready_pending:
-            self._ready_pending = False
-            self._health_check_timeout.stop()
-        self._pending_launch = None
         self.calibration_panel.set_failure_summary(self._build_failure_summary("Runtime process error", [error_text, *self._runtime_recent_lines]))
-        if self._runtime_mode == "prepare":
-            self.calibration_panel.set_phase_label("CM Prepare failed")
-            self._apply_status(AppStatus.PASSIVE)
-        else:
-            if was_health_check:
-                self._append_status_summary_line(f"Runtime polling failed: {error_text}")
-            self._sync_control_states()
-        self._runtime_mode = None
-        if not was_health_check:
-            QMessageBox.critical(self, "Runtime Process Error", error_text)
+        self._sync_control_states()
+        QMessageBox.critical(self, "Runtime Process Error", error_text)
 
     @Slot()
     def _on_runtime_process_started(self) -> None:
         self._runtime_recent_lines.clear()
-        if self._runtime_mode == "prepare":
-            self._reset_prepare_trace_state()
-            if self._pending_launch is None:
-                self._set_status_summary("CM Prepare in progress...")
-                self.calibration_panel.set_phase_label("CM Prepare in progress...")
-            self.output_panel.append_log(self._build_prepare_start_log(), source="runtime")
-            self.output_panel.append_log(
-                "CM Prepare steps: activate sensor -> sync TestRun -> bootstrap run -> reuse/start IPG-MOVIE -> wait scene ready -> initialize camera widgets/dialogs -> capture initials -> health check",
-                source="runtime",
-            )
-            self._append_status_summary_line(self._build_prepare_start_log())
-            self._append_status_summary_line(
-                "Prepare steps: activate sensor -> sync TestRun -> bootstrap run -> IPG-MOVIE ready -> widgets/dialogs -> capture initials -> health check"
-            )
-            self._apply_status(AppStatus.PREPARING)
-        else:
-            self._sync_control_states()
-
-    @Slot()
-    def _on_health_check_timeout(self) -> None:
-        if not self._ready_pending:
-            return
-        self._ready_pending = False
-        self._health_check_active = False
-        self.runtime_service.stop()
-        self._append_status_summary_line("Health check timed out. Setting runtime status to ready.")
-        self._apply_status(AppStatus.READY)
+        self._sync_control_states()
 
     @Slot(int)
     def _on_runtime_process_finished(self, exit_code: int) -> None:
-        was_health_check = self._health_check_active
-        self._health_check_active = False
-        if self._ready_pending:
-            self._ready_pending = False
-            self._health_check_timeout.stop()
-            self._apply_status(AppStatus.READY)
-            return
-        if self._runtime_mode == "prepare":
-            if self._pending_launch is None and exit_code != 0:
-                self.calibration_panel.set_failure_summary(
-                    self._build_failure_summary("Prepare failed", self._runtime_recent_lines)
-                )
-                self._set_status_summary(self._build_failure_summary("Prepare failed", self._runtime_recent_lines))
-                self.calibration_panel.set_phase_label("")
-                self._apply_status(AppStatus.PASSIVE)
-            elif exit_code != 0:
-                self._pending_launch = None
-                if self.state.status == AppStatus.PREPARING:
-                    self.calibration_panel.set_failure_summary(
-                        self._build_failure_summary("Prepare failed", self._runtime_recent_lines)
-                    )
-                    self._set_status_summary(self._build_failure_summary("Prepare failed", self._runtime_recent_lines))
-                    self.calibration_panel.set_phase_label("CM Prepare failed")
-                    self._apply_status(AppStatus.PASSIVE)
-                else:
-                    self._sync_control_states()
-            elif self._pending_launch is not None:
-                self._pending_launch = None
-                self.calibration_panel.set_failure_summary(
-                    self._build_failure_summary("Prepare finished but no runtime summary received", self._runtime_recent_lines)
-                )
-                self._set_status_summary(self._build_failure_summary("Prepare finished but no runtime summary received", self._runtime_recent_lines))
-                self.calibration_panel.set_phase_label("CM Prepare ended without a valid runtime summary")
-                self._apply_status(AppStatus.PASSIVE)
-            else:
-                if self.state.status == AppStatus.PREPARING:
-                    self._append_status_summary_line("CM Prepare process finished.")
-                else:
-                    self._sync_control_states()
-        else:
-            if was_health_check and exit_code != 0:
-                self._append_status_summary_line("Runtime polling process ended unexpectedly.")
-            self._sync_control_states()
-        if self._health_verification_pending and was_health_check:
-            self._health_verification_pending = False
-        if self._health_verification_pending and not was_health_check:
-            self._check_runtime_health(force=True)
-        self._reset_prepare_trace_state()
-        self._runtime_mode = None
+        if exit_code != 0:
+            self.calibration_panel.set_failure_summary(self._build_failure_summary("Runtime process error", self._runtime_recent_lines))
+        self._sync_control_states()
 
     @Slot(dict)
     def _on_runtime_summary(self, payload: dict) -> None:
@@ -835,69 +575,7 @@ class MainWindow(QMainWindow):
         if testrun_control:
             summary_parts.append(f"testrun_control={testrun_control}")
         self.output_panel.append_log(f"summary {' '.join(summary_parts)}", source="runtime")
-        mode = str(payload.get("mode") or "")
-        status = str(payload.get("status") or "")
-        if mode == "prepare":
-            self._set_status_summary(self._build_prepare_summary(payload))
-            if status == "ready" and self._pending_launch is not None:
-                launch = self._pending_launch
-                self._pending_launch = None
-                self.calibration_panel.set_phase_label("CM Prepare finished. Starting calibration...")
-                self._append_status_summary_line("CM Prepare finished. Starting calibration.")
-                try:
-                    self.calibration_service.start(launch)
-                except Exception as exc:
-                    self.calibration_panel.set_phase_label("")
-                    self._set_status_summary("Calibration start failed: " + str(exc))
-                    self._apply_status(AppStatus.FAILED)
-                    QMessageBox.critical(self, "Calibration Start Failed", str(exc))
-                return
-            if status == "ready":
-                self._health_verification_pending = True
-                if not self._health_check_active:
-                    self._check_runtime_health(force=True)
-            else:
-                self._apply_status(AppStatus.PASSIVE)
-        elif mode == "status":
-            if self._pending_launch is not None:
-                launch = self._pending_launch
-                self._pending_launch = None
-                if self._is_runtime_ready_for_launch(payload, launch):
-                    self._set_status_summary("Runtime validation passed. Starting calibration.")
-                    try:
-                        self.calibration_service.start(launch)
-                    except Exception as exc:
-                        self._set_status_summary("Calibration start failed: " + str(exc))
-                        self._apply_status(AppStatus.FAILED)
-                        QMessageBox.critical(self, "Calibration Start Failed", str(exc))
-                    return
-                self._set_status_summary(self._build_runtime_unhealthy_summary(payload, launch))
-                self._apply_status(AppStatus.PASSIVE)
-            elif status:
-                status_reason = self._as_text(payload.get("status_reason"))
-                summary_prefix = "Runtime poll" if self._health_check_active else "Runtime query"
-                summary_line = f"{summary_prefix}: status={status}"
-                if status_reason and status_reason != "runtime ready":
-                    summary_line += f" | {status_reason}"
-                if self._runtime_status_probe_can_update_status():
-                    self._append_status_summary_line(summary_line)
-                    if status == "ready":
-                        self._health_verification_pending = False
-                        self._set_status_summary("Runtime ready.")
-                        self.calibration_panel.set_phase_label("")
-                        self._ready_pending = True
-                        self._health_check_timeout.start(120_000)
-                    else:
-                        self._apply_status(AppStatus.PASSIVE)
-                else:
-                    self._append_status_summary_line(
-                        f"{summary_line} | keeping current Status={self.state.status.value}"
-                    )
-                    self._sync_control_states()
-            else:
-                self._sync_control_states()
-        else:
-            self._sync_control_states()
+        self._sync_control_states()
 
     @Slot(dict)
     def _on_orchestration_event(self, payload: dict) -> None:
@@ -1156,197 +834,8 @@ class MainWindow(QMainWindow):
         text = line.strip()
         if text:
             self._runtime_recent_lines.append(text)
-            if self._runtime_mode == "prepare":
-                self._append_prepare_runtime_trace(text)
             if self._should_surface_status_line(text, source="runtime"):
                 self._append_status_summary_line(text)
-
-    def _reset_prepare_trace_state(self) -> None:
-        self._prepare_trace_state = {}
-        self._prepare_trace_emitted = set()
-
-    def _append_prepare_runtime_trace(self, text: str) -> None:
-        self._update_prepare_trace_state(text)
-        for line in self._build_incremental_prepare_trace_lines():
-            self.output_panel.append_log(line, source="runtime")
-            self._append_status_summary_line(line)
-
-    def _update_prepare_trace_state(self, text: str) -> None:
-        state = self._prepare_trace_state
-        if text.startswith("Project root: "):
-            state["project_root"] = text.partition(": ")[2].strip()
-            return
-        if text.startswith("TestRun: "):
-            state["testrun"] = text.partition(": ")[2].strip()
-            return
-        if text.startswith("Vehicle: "):
-            state["vehicle"] = text.partition(": ")[2].strip()
-            return
-        if text.startswith("Activated vehicle sensor: "):
-            match = re.match(r"^Activated vehicle sensor:\s*(.+?)\s*\(Sensor\.(\d+)\.Active\s*=\s*1\)$", text)
-            if match:
-                state["sensor_name"] = match.group(1).strip()
-                state["sensor_index"] = match.group(2).strip()
-            return
-        if text == "Vehicle file already matched the requested single-sensor state":
-            state["sensor_changed"] = "no"
-            return
-        if text.startswith("Vehicle file updated in place: "):
-            state["sensor_changed"] = "yes"
-            return
-        if text.startswith("CarMaker action: "):
-            state["carmaker_action"] = text.partition(": ")[2].strip()
-            return
-        if text.startswith("CarMaker PID: "):
-            state["carmaker_pid"] = text.partition(": ")[2].strip()
-            return
-        if text.startswith("CarMaker GUI TestRun selected: "):
-            state["selected_testrun"] = text.partition(": ")[2].strip()
-            return
-        if text.startswith("Bootstrap run: "):
-            detail = text.partition(": ")[2].strip()
-            label = detail.partition(" reached ")[0].strip() or detail
-            bootstrapped_testrun = detail.rpartition(" for TestRun ")[2].strip() or detail
-            state["bootstrap_label"] = label
-            state["bootstrapped_testrun"] = bootstrapped_testrun
-            return
-        if text.startswith("IPG-MOVIE action: "):
-            action = text.partition(": ")[2].strip()
-            state["movie_action"] = action
-            pid_match = re.search(r"\bPID\s+(\d+)\b", action)
-            if pid_match:
-                state.setdefault("movie_pid", pid_match.group(1))
-            return
-        if text.startswith("IPG-MOVIE PID: "):
-            state["movie_pid"] = text.partition(": ")[2].strip()
-            return
-        if text.startswith("IPG-MOVIE scene ready: "):
-            state["scene"] = self._parse_prepare_key_value_fields(text.partition(": ")[2].strip())
-            return
-        if text.startswith("IPG-MOVIE ABRAXAS: "):
-            state["abraxas"] = self._parse_prepare_key_value_fields(text.partition(": ")[2].strip())
-            return
-        if text.startswith("IPG-MOVIE selected camera sensor: "):
-            state["camera_selection"] = self._parse_prepare_key_value_fields(text.partition(": ")[2].strip())
-            return
-        if text.startswith("IPG-MOVIE camera widgets: "):
-            state["camera_widgets"] = self._parse_prepare_key_value_fields(text.partition(": ")[2].strip())
-            return
-        if text.startswith("IPG-MOVIE captured current initial values: "):
-            state["initial_capture"] = self._parse_prepare_key_value_fields(text.partition(": ")[2].strip())
-            return
-        if text.startswith("IPG-MOVIE health check: "):
-            state["health"] = self._parse_prepare_key_value_fields(text.partition(": ")[2].strip())
-
-    def _build_incremental_prepare_trace_lines(self) -> list[str]:
-        state = self._prepare_trace_state
-        lines: list[str] = []
-
-        def emit(key: str, line: str | None) -> None:
-            if not line or key in self._prepare_trace_emitted:
-                return
-            self._prepare_trace_emitted.add(key)
-            lines.append(line)
-
-        project_root = self._as_text(state.get("project_root"))
-        testrun = self._as_text(state.get("testrun"))
-        vehicle = self._as_text(state.get("vehicle"))
-        if project_root and testrun and vehicle:
-            emit("target", f"Prepare target: project={project_root} | testrun={testrun} | vehicle={vehicle}")
-
-        sensor_name = self._as_text(state.get("sensor_name"))
-        sensor_index = self._as_text(state.get("sensor_index"))
-        sensor_changed = self._as_text(state.get("sensor_changed"))
-        if sensor_name and sensor_index and sensor_changed:
-            emit(
-                "sensor_activation",
-                f"Prepare sensor activation: {sensor_name} (Sensor.{sensor_index}.Active=1, changed={sensor_changed})",
-            )
-
-        selected_testrun = self._as_text(state.get("selected_testrun"))
-        if selected_testrun:
-            emit("selected_testrun", f"Prepare GUI TestRun selection: {selected_testrun}")
-
-        bootstrap_label = self._as_text(state.get("bootstrap_label"))
-        bootstrapped_testrun = self._as_text(state.get("bootstrapped_testrun"))
-        if bootstrap_label and bootstrapped_testrun:
-            emit("bootstrap", f"Prepare bootstrap: {bootstrap_label} -> {bootstrapped_testrun}")
-
-        carmaker_action = self._as_text(state.get("carmaker_action"))
-        carmaker_pid = self._as_text(state.get("carmaker_pid"))
-        if carmaker_action and carmaker_pid:
-            emit("carmaker", f"Prepare CarMaker: action={carmaker_action} | pid={carmaker_pid}")
-
-        movie_action = self._as_text(state.get("movie_action"))
-        movie_pid = self._as_text(state.get("movie_pid"))
-        if movie_action and movie_pid:
-            emit("movie", f"Prepare IPG-MOVIE: action={movie_action} | pid={movie_pid}")
-
-        scene = state.get("scene") if isinstance(state.get("scene"), dict) else {}
-        scene_mode = self._as_text(scene.get("mode"))
-        scene_camera = self._as_text(scene.get("camera_name"))
-        scene_size = self._as_text(scene.get("size"))
-        scene_widget = self._as_text(scene.get("camera_widget"))
-        if scene_mode and scene_camera and scene_size and scene_widget:
-            emit(
-                "scene",
-                f"Prepare IPG-MOVIE scene: mode={scene_mode} | camera={scene_camera} | size={scene_size} | view_widget={scene_widget}",
-            )
-
-        abraxas = state.get("abraxas") if isinstance(state.get("abraxas"), dict) else {}
-        abraxas_before = self._as_text(abraxas.get("before"))
-        abraxas_after = self._as_text(abraxas.get("after"))
-        if abraxas_before and abraxas_after:
-            emit("abraxas", f"Prepare ABRAXAS: before={abraxas_before} | after={abraxas_after}")
-
-        camera_selection = state.get("camera_selection") if isinstance(state.get("camera_selection"), dict) else {}
-        requested = self._as_text(camera_selection.get("requested"))
-        current = self._as_text(camera_selection.get("current"))
-        if requested and current:
-            emit(
-                "camera_selection",
-                f"Prepare camera selection: requested={requested} | current={current}",
-            )
-
-        camera_widgets = state.get("camera_widgets") if isinstance(state.get("camera_widgets"), dict) else {}
-        camera_widget = self._as_text(camera_widgets.get("camera"))
-        lens_widget = self._as_text(camera_widgets.get("lens"))
-        lens_state = self._as_text(camera_widgets.get("lens_state"))
-        if camera_widget and lens_widget and lens_state:
-            emit(
-                "camera_widgets",
-                f"Prepare camera widgets: camera={camera_widget} | lens={lens_widget} | lens_state={lens_state}",
-            )
-
-        initial_capture = state.get("initial_capture") if isinstance(state.get("initial_capture"), dict) else {}
-        config_path = self._as_text(initial_capture.get("config"))
-        captured_names = self._as_text(initial_capture.get("names"))
-        if config_path and captured_names:
-            emit(
-                "initial_capture",
-                f"Prepare initial capture: config={config_path} | names={captured_names}",
-            )
-
-        health = state.get("health") if isinstance(state.get("health"), dict) else {}
-        all_ok = self._as_text(health.get("all_ok"))
-        health_code = self._as_text(health.get("code"))
-        if all_ok and health_code:
-            emit("health", f"Prepare health check: all_ok={all_ok} | code={health_code}")
-
-        return lines
-
-    @staticmethod
-    def _parse_prepare_key_value_fields(text: str) -> dict[str, str]:
-        matches = list(re.finditer(r"(\w+)=", text))
-        if not matches:
-            return {}
-        values: dict[str, str] = {}
-        for index, match in enumerate(matches):
-            key = match.group(1)
-            value_start = match.end()
-            value_end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
-            values[key] = text[value_start:value_end].strip()
-        return values
 
     @Slot(str)
     def _on_calibration_line(self, line: str) -> None:
@@ -1375,312 +864,7 @@ class MainWindow(QMainWindow):
             return title
         return "\n".join([title, *details])
 
-    def _is_runtime_ready_for_launch(self, payload: dict, launch: CalibrationLaunchConfig) -> bool:
-        expected_project_root = launch.project_root.resolve()
-        running_project_root_text = self._as_text(payload.get("running_projectdir")) or self._as_text(payload.get("project_root"))
-        running_project_root = Path(running_project_root_text).resolve() if running_project_root_text else None
-        counts = payload.get("process_counts") if isinstance(payload.get("process_counts"), dict) else {}
-        active_sensors = payload.get("active_sensors") if isinstance(payload.get("active_sensors"), list) else []
-        health = payload.get("health") if isinstance(payload.get("health"), dict) else None
-        mode = self._as_text(payload.get("mode"))
 
-        if str(payload.get("status") or "") != "ready":
-            return False
-        if running_project_root is None or running_project_root != expected_project_root:
-            return False
-        if mode == "prepare":
-            if not active_sensors:
-                return False
-            if health is not None and str(health.get("code") or "") != "ok":
-                return False
-            return True
-        if int(counts.get("carmaker_runtime", counts.get("carmaker", 0))) != 1:
-            return False
-        if int(counts.get("carmaker_gui", 1)) < 1:
-            return False
-        if int(counts.get("gui_movie", 0)) < 1:
-            return False
-        if not active_sensors:
-            return False
-        if health is not None and str(health.get("code") or "") != "ok":
-            return False
-        return True
-
-    def _is_runtime_ready_for_direct_start(self, launch: CalibrationLaunchConfig) -> bool:
-        payload = self._last_runtime_summary if isinstance(self._last_runtime_summary, dict) else None
-        if payload is None:
-            return False
-        if not self._is_runtime_ready_for_launch(payload, launch):
-            return False
-        active_sensors = payload.get("active_sensors") if isinstance(payload.get("active_sensors"), list) else []
-        first_camera = launch.cameras[0] if launch.cameras else None
-        if first_camera is None:
-            return False
-        return first_camera in [str(sensor) for sensor in active_sensors]
-
-    def _is_runtime_almost_ready(self, launch: CalibrationLaunchConfig) -> bool:
-        payload = self._last_runtime_summary if isinstance(self._last_runtime_summary, dict) else None
-        if payload is None:
-            return False
-        return self._is_runtime_ready_for_launch(payload, launch)
-
-    def _auto_prepare_and_start(self, launch: CalibrationLaunchConfig) -> None:
-        payload = self._last_runtime_summary if isinstance(self._last_runtime_summary, dict) else {}
-        old_sensors = ", ".join(str(s) for s in payload.get("active_sensors", []))
-        first_camera = launch.cameras[0]
-        self.state.selected_cameras = launch.cameras
-        cm_install = self.calibration_panel.cm_install_path
-        if cm_install is None:
-            raise ValueError("CM version is not selected. Choose a CM version first.")
-        self.calibration_service.set_cm_install(cm_install)
-        self._runtime_mode = "prepare"
-        self._pending_launch = launch
-        self.output_panel.append_log(
-            f"[INFO] Active sensor mismatch: current=[{old_sensors}], required={first_camera}. Triggering CM Prepare automatically.",
-            source="runtime",
-        )
-        self._set_status_summary(f"Switching active sensor from [{old_sensors}] to {first_camera}...")
-        self.calibration_panel.set_phase_label("Switching active sensor...")
-        self.runtime_service.prepare_runtime(
-            launch.project_root, launch.testrun, cameras=launch.cameras, cm_install=cm_install,
-        )
-
-    def _build_start_requires_prepare_summary(self, launch: CalibrationLaunchConfig) -> str:
-        payload = self._last_runtime_summary if isinstance(self._last_runtime_summary, dict) else None
-        details = ["Runtime state is unknown. Run CM Prepare first."]
-        if payload is None:
-            details.append("No runtime summary has been received yet.")
-            return "\n".join(details)
-
-        status = self._as_text(payload.get("status"))
-        if status and status != "ready":
-            details.append(f"Current status = {status}")
-
-        status_reason = self._as_text(payload.get("status_reason"))
-        if status_reason and status_reason != "runtime ready":
-            details.append(status_reason)
-
-        active_sensors = payload.get("active_sensors") if isinstance(payload.get("active_sensors"), list) else []
-        first_camera = launch.cameras[0] if launch.cameras else None
-        if first_camera and active_sensors and first_camera not in [str(sensor) for sensor in active_sensors]:
-            details.append(
-                f"Current active sensor = {', '.join(str(sensor) for sensor in active_sensors)}, "
-                f"which does not match the first camera to run = {first_camera}."
-            )
-        elif not active_sensors:
-            details.append("No active sensor is currently detected.")
-
-        return "\n".join(details[:4])
-
-    def _build_runtime_unhealthy_summary(self, payload: dict, launch: CalibrationLaunchConfig) -> str:
-        details: list[str] = []
-        testrun_control = self._as_text(payload.get("testrun_control"))
-        if testrun_control:
-            details.append(f"CM Prepare TestRun control: {testrun_control}")
-
-        status_reason = self._as_text(payload.get("status_reason"))
-        if status_reason and status_reason != "runtime ready":
-            details.append(status_reason)
-
-        running_project_root = self._as_text(payload.get("running_projectdir"))
-        expected_project_root = launch.project_root.resolve().as_posix()
-        if running_project_root and Path(running_project_root).resolve().as_posix() != expected_project_root:
-            details.append(f"expected projectdir {expected_project_root}, got {Path(running_project_root).resolve().as_posix()}")
-
-        counts = payload.get("process_counts") if isinstance(payload.get("process_counts"), dict) else {}
-        if int(counts.get("carmaker_runtime", counts.get("carmaker", 0))) != 1:
-            details.append(f"CarMaker backend runtime count = {counts.get('carmaker_runtime', counts.get('carmaker', 0))}")
-        if int(counts.get("carmaker_gui", 1)) < 1:
-            details.append("CarMaker GUI (HIL.exe) is not running")
-        if int(counts.get("gui_movie", 0)) < 1:
-            details.append("GUI Movie is not running")
-
-        active_sensors = payload.get("active_sensors") if isinstance(payload.get("active_sensors"), list) else []
-        if not active_sensors:
-            details.append("no active camera sensor found")
-
-        health = payload.get("health") if isinstance(payload.get("health"), dict) else None
-        if health is not None and str(health.get("code") or "") != "ok":
-            details.append(str(health.get("message") or health.get("code") or "Movie remote-control health check failed"))
-
-        if not details:
-            details.append("runtime probe did not return a ready state")
-        return "\n".join([
-            "Runtime is not healthy enough to start calibration. Run CM Prepare first.",
-            *details[:6],
-        ])
-
-    def _build_prepare_summary(self, payload: dict) -> str:
-        details: list[str] = []
-        status = self._as_text(payload.get("status")) or "passive"
-        counts = payload.get("process_counts") if isinstance(payload.get("process_counts"), dict) else {}
-        active_sensors = payload.get("active_sensors") if isinstance(payload.get("active_sensors"), list) else []
-        testrun_control = self._as_text(payload.get("testrun_control"))
-        status_reason = self._as_text(payload.get("status_reason"))
-
-        if testrun_control:
-            details.append(f"TestRun control: {testrun_control}")
-        if active_sensors:
-            details.append(f"Active sensors: {', '.join(str(sensor) for sensor in active_sensors)}")
-        runtime_count = int(counts.get("carmaker_runtime", counts.get("carmaker", 0)))
-        gui_count = int(counts.get("carmaker_gui", 0))
-        gui_movie_count = int(counts.get("gui_movie", 0))
-        gpu_movie_count = int(counts.get("gpusensor_movie", 0))
-        if counts:
-            details.append(
-                "Processes: "
-                f"CarMaker GUI={gui_count}, backend={runtime_count}, "
-                f"GUI Movie={gui_movie_count}, GPUSensor Movie={gpu_movie_count}"
-            )
-
-        if status == "ready":
-            return "\n".join([
-                "CM Prepare succeeded. Runtime is ready.",
-                *details[:5],
-            ])
-
-        if status_reason and status_reason != "runtime ready":
-            details.insert(0, status_reason)
-        if not details:
-            details.append("prepare did not return a ready state")
-        return "\n".join([
-            "CM Prepare did not reach a ready state.",
-            *details[:6],
-        ])
-
-    def _build_prepare_start_log(self) -> str:
-        project_root = Path(self.cm_settings_panel.project_root_edit.text().strip() or self.project_root)
-        testrun = self.cm_settings_panel.testrun_edit.text().strip() or "<unset>"
-        selected_cameras = self.cm_settings_panel.selected_cameras()
-        camera_text = ", ".join(selected_cameras) if selected_cameras else "<none>"
-        return (
-            "CM Prepare started: "
-            f"project={project_root} | testrun={testrun} | cameras={camera_text}"
-        )
-
-    def _append_prepare_trace(self, payload: dict) -> None:
-        lines: list[str] = []
-
-        project_root = self._as_text(payload.get("project_root"))
-        testrun = self._as_text(payload.get("testrun"))
-        vehicle = self._as_text(payload.get("vehicle"))
-        target_parts = [part for part in (
-            f"project={project_root}" if project_root else None,
-            f"testrun={testrun}" if testrun else None,
-            f"vehicle={vehicle}" if vehicle else None,
-        ) if part]
-        if target_parts:
-            lines.append("Prepare target: " + " | ".join(target_parts))
-
-        sensor_activation = payload.get("sensor_activation") if isinstance(payload.get("sensor_activation"), dict) else None
-        if sensor_activation is not None:
-            sensor_name = self._as_text(sensor_activation.get("selected_sensor_name")) or "<unknown>"
-            sensor_index = sensor_activation.get("selected_sensor_index")
-            changed = "yes" if bool(sensor_activation.get("changed")) else "no"
-            index_text = f"Sensor.{sensor_index}" if sensor_index is not None else "Sensor.?"
-            lines.append(
-                f"Prepare sensor activation: {sensor_name} ({index_text}.Active=1, changed={changed})"
-            )
-
-        selected_testrun = self._as_text(payload.get("selected_testrun"))
-        if selected_testrun:
-            lines.append(f"Prepare GUI TestRun selection: {selected_testrun}")
-
-        bootstrap = payload.get("testrun_bootstrap") if isinstance(payload.get("testrun_bootstrap"), dict) else None
-        if bootstrap is not None:
-            bootstrap_label = self._as_text(bootstrap.get("label")) or self._as_text(payload.get("testrun_control")) or "unknown"
-            bootstrap_testrun = self._as_text(bootstrap.get("testrun")) or self._as_text(payload.get("bootstrapped_testrun")) or "<unknown>"
-            lines.append(f"Prepare bootstrap: {bootstrap_label} -> {bootstrap_testrun}")
-
-        carmaker = payload.get("carmaker") if isinstance(payload.get("carmaker"), dict) else None
-        if carmaker is not None:
-            action = self._as_text(carmaker.get("action")) or "unknown"
-            pid = self._as_int(carmaker.get("pid"))
-            pid_text = str(pid) if pid is not None else "-"
-            lines.append(f"Prepare CarMaker: action={action} | pid={pid_text}")
-
-        movie = payload.get("movie") if isinstance(payload.get("movie"), dict) else None
-        if movie is not None:
-            action = self._as_text(movie.get("action")) or "unknown"
-            pid = self._as_int(movie.get("pid"))
-            pid_text = str(pid) if pid is not None else "-"
-            lines.append(f"Prepare IPG-MOVIE: action={action} | pid={pid_text}")
-
-            scene = movie.get("scene") if isinstance(movie.get("scene"), dict) else None
-            if scene is not None:
-                scene_parts = [part for part in (
-                    f"mode={self._as_text(scene.get('mode'))}" if self._as_text(scene.get("mode")) else None,
-                    f"camera={self._as_text(scene.get('camera_name'))}" if self._as_text(scene.get("camera_name")) else None,
-                    f"size={self._as_text(scene.get('width'))}x{self._as_text(scene.get('height'))}" if self._as_text(scene.get("width")) and self._as_text(scene.get("height")) else None,
-                    f"view_widget={self._as_text(scene.get('view_widget'))}" if self._as_text(scene.get("view_widget")) else None,
-                ) if part]
-                if scene_parts:
-                    lines.append("Prepare IPG-MOVIE scene: " + " | ".join(scene_parts))
-
-            abraxas = movie.get("abraxas") if isinstance(movie.get("abraxas"), dict) else None
-            if abraxas is not None:
-                before = self._as_text(abraxas.get("before")) or "unknown"
-                after = self._as_text(abraxas.get("after")) or "unknown"
-                lines.append(f"Prepare ABRAXAS: before={before} | after={after}")
-
-            camera_selection = movie.get("camera_selection") if isinstance(movie.get("camera_selection"), dict) else None
-            if camera_selection is not None:
-                requested = self._as_text(camera_selection.get("selected")) or "<unknown>"
-                current = self._as_text(camera_selection.get("current")) or "<unknown>"
-                lines.append(f"Prepare camera selection: requested={requested} | current={current}")
-
-            camera_widgets = movie.get("camera_widgets") if isinstance(movie.get("camera_widgets"), dict) else None
-            if camera_widgets is not None:
-                widget_parts = [part for part in (
-                    f"camera={self._as_text(camera_widgets.get('after_camera'))}" if self._as_text(camera_widgets.get("after_camera")) else None,
-                    f"lens={self._as_text(camera_widgets.get('after_lens'))}" if self._as_text(camera_widgets.get("after_lens")) else None,
-                    f"lens_state={self._as_text(camera_widgets.get('lens_state'))}" if self._as_text(camera_widgets.get("lens_state")) else None,
-                ) if part]
-                if widget_parts:
-                    lines.append("Prepare camera widgets: " + " | ".join(widget_parts))
-
-            camera_dialogs = movie.get("camera_dialogs") if isinstance(movie.get("camera_dialogs"), dict) else None
-            if camera_dialogs is not None:
-                dialog_parts = [part for part in (
-                    f"camera_state={self._as_text(camera_dialogs.get('camera_state'))}" if self._as_text(camera_dialogs.get("camera_state")) else None,
-                    f"lens_state={self._as_text(camera_dialogs.get('lens_state'))}" if self._as_text(camera_dialogs.get("lens_state")) else None,
-                ) if part]
-                if dialog_parts:
-                    lines.append("Prepare camera dialogs: " + " | ".join(dialog_parts))
-
-        initial_capture = payload.get("config_initial_capture") if isinstance(payload.get("config_initial_capture"), dict) else None
-        if initial_capture is not None:
-            config_path = self._as_text(initial_capture.get("config_path"))
-            captured_names = initial_capture.get("captured_names") if isinstance(initial_capture.get("captured_names"), list) else []
-            capture_parts = [part for part in (
-                f"config={config_path}" if config_path else None,
-                f"names={', '.join(str(name) for name in captured_names)}" if captured_names else None,
-            ) if part]
-            if capture_parts:
-                lines.append("Prepare initial capture: " + " | ".join(capture_parts))
-
-        health = payload.get("health") if isinstance(payload.get("health"), dict) else None
-        if health is not None:
-            health_code = self._as_text(health.get("code")) or "unknown"
-            health_message = self._as_text(health.get("message"))
-            health_line = f"Prepare health check: code={health_code}"
-            if health_message and health_message != health_code:
-                health_line += f" | {health_message}"
-            lines.append(health_line)
-
-        active_sensors = payload.get("active_sensors") if isinstance(payload.get("active_sensors"), list) else []
-        status = self._as_text(payload.get("status")) or "passive"
-        status_reason = self._as_text(payload.get("status_reason"))
-        status_parts = [f"status={status}"]
-        if active_sensors:
-            status_parts.append(f"active_sensors={', '.join(str(sensor) for sensor in active_sensors)}")
-        if status_reason and status_reason != "runtime ready":
-            status_parts.append(status_reason)
-        lines.append("Prepare result: " + " | ".join(status_parts))
-
-        for line in lines:
-            self.output_panel.append_log(line, source="runtime")
-            self._append_status_summary_line(line)
 
     @staticmethod
     def _should_surface_status_line(text: str, *, source: str) -> bool:

@@ -2,9 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QProcessEnvironment, Signal
+from PySide6.QtCore import QObject, Signal
 
-from portable_runtime import build_cmapi_pythonpath
 from gui_app.services.process_service import ProcessService
 
 
@@ -30,61 +29,5 @@ class RuntimeService(QObject):
     def is_running(self) -> bool:
         return self.process_service.is_running
 
-    def probe_status(
-        self,
-        project_root: Path,
-        testrun: str,
-        *,
-        verify_health: bool = False,
-        cm_install: Path | None = None,
-    ) -> None:
-        self._start_mode("status", project_root, testrun, verify_health=verify_health, cm_install=cm_install)
-
-    def prepare_runtime(self, project_root: Path, testrun: str, *, cameras: list[str] | None = None, cm_install: Path | None = None) -> None:
-        self._start_mode("prepare", project_root, testrun, cameras=cameras, cm_install=cm_install)
-
     def stop(self) -> None:
         self.process_service.stop()
-
-    @staticmethod
-    def _resolve_calibration_root(project_root: Path) -> Path:
-        return project_root / "Data" / "Script" / "CameraCalibration"
-
-    def _start_mode(
-        self,
-        mode: str,
-        project_root: Path,
-        testrun: str,
-        *,
-        verify_health: bool = False,
-        cameras: list[str] | None = None,
-        cm_install: Path | None = None,
-    ) -> None:
-        calibration_root = self._resolve_calibration_root(project_root)
-        script_path = calibration_root / "cmapi_testrun_control.py"
-        arguments = [
-            str(script_path),
-            "--mode",
-            mode,
-            "--project-root",
-            str(project_root.resolve()),
-            "--testrun",
-            testrun,
-            "--print-summary-json",
-        ]
-        if mode == "status" and verify_health:
-            arguments.append("--health-check-after-start")
-        if mode == "prepare":
-            for camera_name in cameras or []:
-                arguments.extend(["--camera-sensor", camera_name])
-        env = QProcessEnvironment.systemEnvironment()
-        if cm_install is not None:
-            arguments.extend(["--cm-install", str(cm_install)])
-            pythonpath, _paths = build_cmapi_pythonpath(
-                cm_install,
-                existing_pythonpath=env.value("PYTHONPATH", ""),
-            )
-            if pythonpath:
-                env.insert("PYTHONPATH", pythonpath)
-        self.process_service._process.setProcessEnvironment(env)
-        self.process_service.start_python(script_path, arguments[1:], calibration_root)

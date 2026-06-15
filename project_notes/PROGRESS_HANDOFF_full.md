@@ -2094,46 +2094,172 @@ if {$vp_w > 0 && $vp_h > 0} {
 | View 灏哄涓嶅尮閰?| 鉁?璺宠繃 height bump 瀹堝崼 |
 
 
-## Phase 38: GUI cleanup
+## Phase 38: GUI cleanup (commit 07b0747)
 
-Removed CM Prepare / Query Status buttons and ~1300 lines of runtime state management from main_window.py.
-The GUI now calls the orchestrator directly. commit 07b0747.
+### 问题
 
-## Phase 39: Orchestrator kill + skip-prepare fix
+GUI 之前有一个完整的 runtime 准备流程：3s 轮询 health、自动 cm prepare、状态机切换（IDLE -> PREPARING -> READY -> RUNNING）。这个流程与 orchestrator 自身的 `_prepare_runtime_for_camera()` 逻辑重复，且因健康检测状态判断错误经常导致标定无法启动。同时维护两套状态判断逻辑（GUI + orchestrator）增加了维护负担。
 
-kill_existing_cm_processes() now only runs when NOT using --skip-prepare-for-first-camera.
-_prepare_runtime_for_camera() Step 0 auto-starts HIL.exe when no CarMaker found.
-Added fresh-start timeout max(45,120)s. commits 596e00c, 7880e91, 198eee3.
+### 修复
 
-## Phase 40: GPUSensor Movie detection fix
+删除所有 GUI 层的 runtime 管理代码：
 
-Step 5 changed from list_gpusensor_movie_processes() to list_gui_movie_processes().
-GPUSensor Movie (headless) has no Tcl GUI - DDE send IPG-MOVIE fails silently.
-Root cause of CLI vs GUI result differences. commits 4841fdb, 4cae2a9.
+| 文件 | 删除内容 |
+|------|---------|
+| `calibration_panel.py` | `prepare_button`、`status_query_button` 和相关信号 |
+| `main_window.py` | ~1300 行：`_prepare_runtime`、`_query_runtime_status`、`_auto_prepare_and_start`、`_is_runtime_ready_for_direct_start`、`_check_runtime_health` (3s 定时器) 等 |
+| `runtime_service.py` | `prepare_runtime()`、`probe_status()` 方法 |
 
-## Phase 41: history_best anchor + log level fix
+`_start_calibration()` 简化为：precheck -> 直接调用 orchestrator。不再做任何 runtime readiness 检查（orchestrator 自己会处理）。
 
-(a) _resolve_round_seed_anchor() checks history_best FIRST when prefer_history_best=True.
-(b) "Warning: could not ..." changed to [INFO] prefix; _classify_log_level checks markers first.
-commit fe2cd51.
+### 影响测试
 
-## Phase 42: Window management
+- 删除 17 个测试（test_calib_start_flow.py 中原有的 prepare/status 相关用例）
+- 保留 9 个核心测试
+- GUI 测试 61/61 通过
 
-User requested: keep IPG-MOVIE behind. Capture Tcl: wm state . normal (restore minimized) + wm lower.
-wm lower right before UpdateView triggers NaN in SM::ConfigureShader (CSM gettextelsize).
-Fix: wm lower from capture Tcl -> orchestrator-level DDE call _movie_background_tcl_commands().
-Fixed try/finally nesting: stop_sim always runs. commits fd7dd05, 1e9aef6, f17f766, 87e4aff.
+## Phase 39: Orchestrator kill + skip-prepare 修复 (commits 596e00c, 7880e91, 198eee3)
 
-## Phase 43: FBO non-fatal + freeze auto-recovery
+### 问题
 
-(a) FBO probe diagnostic-only: failure prints [INFO] log, no kill+retry (Win32 capture independent).
-(b) except RuntimeError: raise before except Exception - freeze RuntimeError no longer swallowed.
-(c) orchestrator camera loop retry: on freeze, kill all -> re-prepare -> retry once.
-commits 5b7ef9e, 8c960ce, 90732b1.
+`calibration_orchestrator.py::main()` 开头无条件调用 `kill_existing_cm_processes()`。当用户已经通过 `cm prepare` 准备好环境后，再用 orchestrator + `--skip-prepare-for-first-camera` 时，orchestrator 杀了健康进程，然后从零重建。但新鲜 CarMaker -> IPG-MOVIE 的 DDE 桥接需要时间，`wait_for_movie_scene_ready` 在默认 45s 内超时。
 
-### Post-v1.0 stability
+用户页面上出现 `invalid command name "CheckViewPort"` —— 被杀后又重建的 Movie 实例异常。
 
-| Test | rear_tv | left_tv | right_rear | Note |
+### 修复
+
+1. `main()`：`kill_existing_cm_processes()` 只在非 `--skip-prepare-for-first-camera` 时执行
+2. `_prepare_runtime_for_camera()`：新增 Step 0，检测不到 CarMaker 进程时自动启动 HIL.exe
+3. fresh-start 超时从 45s 提升到 max(45, 120)s
+
+### 验证
+
+- 38/38 测试通过
+- 全链路标定成功（cm prepare + orchestrator --skip-prepare-for-first-camera）
+- rear_tv=1053.5, left_tv=810.4, right_rear=43.5
+
+## Phase 40: GPUSensor Movie detection fix (commits 4841fdb, 4cae2a9)
+
+### 问题
+
+用户通过 GUI 启动标定失败：`Timed out waiting for IPG-MOVIE calibration scene readiness: result_error: dde command failed`。桌面上看不到 IPG-MOVIE 窗口。
+
+### 根因
+
+`_prepare_runtime_for_camera()` Step 5 的检测条件是 `if not cmctrl.list_gpusensor_movie_processes()` —— 找到 GPUSensor Movie（`-mode GPUSensor -headless`，无窗口进程）就认为"Movie 没问题"，跳过了 `restart_gui_movie_for_send_recovery()`。但 calibration 需要 **GUI Movie** 才能执行 `send IPG-MOVIE` 的 Tcl 命令 —— GPUSensor Movie 没有 Tcl GUI 环境（View widget、camera dialog、capture 等），DDE 发送全部失败。
+
+这是 **"命令行和 GUI 执行结果不同"的根本原因**：CLI 流程先 `cm prepare`（启动 GUI Movie），再用 `--skip-prepare-for-first-camera` 复用。GUI 直接调 orchestrator，而重建路径只看到 GPUSensor，以为 Movie 已就绪，实际运行的是无 GUI 的 GPUSensor 进程。
+
+### 修复
+
+Step 5 条件从 `list_gpusensor_movie_processes()` 改为 `list_gui_movie_processes()`。只要没有 GUI Movie 就执行 restart（会先 quit 已有 Movie 包括 GPUSensor，再启动 GUI Movie）。
+
+同时修正：`restart_gui_movie_for_send_recovery()` 内部 `stop_movie_stack_via_movie_quit()` 杀了 GPUSensor Movie，而 CarMaker 随后又会自动重建 GPUSensor。但 health check 的 gpusensor_ping 需要 GPUSensor 存在。改为 `start GUI Movie alongside GPUSensor` —— 不杀 GPUSensor，直接用 `build_gui_movie_command()` + `wait_for_gui_movie_pid()` 启动 GUI Movie，两者共存。
+
+### 验证
+
+- 38/38 测试通过
+- orchestrator 完整运行：rear_tv=1053.5, left_tv=810.7, right_rear=43.5
+- health check 显示 `all {IPG-MOVIE GPUSensor_1_0 CarMaker}` —— 两者共存
+
+## Phase 41: history_best anchor + log level fix (commit fe2cd51)
+
+### 问题 A：history_best 未被用作初始值
+
+`_resolve_round_seed_anchor()` 优先使用 config 中的初始值（来自 board wizard 写入），然后才查 history_best。但 config 可能有陈旧值（right_rear 初始 score 46-59），导致 history_best（43.13）从未被使用。标定从更差的起点开始，浪费迭代。
+
+**修复：** `prefer_history_best=True`（默认）时先查 history_best。config 值仅在无历史记录时作为后备。
+
+### 问题 B：非致命警告在 GUI 中被标为 WARNING/ERROR
+
+"Warning: could not disable CheckViewPort (non-fatal)"、"Warning: could not sync movie view size" 等预期内的日志（在 prepare 初期 DDE 未就绪时必然出现）被 GUI 输出面板的 `_classify_log_level()` 分类为 WARNING 级别，因为该函数基于文本模式匹配（"warning" token 命中）。
+
+**修复（两层）：**
+1. `_classify_log_level()` 先检查显式 `[INFO]/[WARN]/[ERROR]` 标记，再回退到文本模式匹配
+2. 将 `cmapi_testrun_control.py` 和 `calibration_orchestrator.py` 中 16+2 处 "Warning: could not ..." 改为 `[INFO]` 前缀
+
+### 验证
+
+- 38/38 项目测试通过
+- 61/61 GUI 测试通过
+
+## Phase 42: Window management (commits fd7dd05, 1e9aef6, f17f766, 87e4aff, c5baf24)
+
+### 用户需求
+
+IPG-MOVIE 窗口不跳到前面，不影响其他工作。
+
+### 修复历程（4 次迭代）
+
+**第 1 次（fd7dd05）：** capture Tcl 开头加 `wm state . normal`（最小化时自动恢复桌面显示，确保 Win32 capture 可工作）+ `catch {wm lower .}` + `catch {wm attributes . -topmost 0}`（推至后台）。同时 FBO probe（dde_health_check.py + cmapi_testrun_control.py）恢复窗口后也加 `wm lower`。
+
+产生问题：`wm lower` 触发 Windows 窗口事件 -> IPG-MOVIE C++ 层处理 -> 紧接着 `UpdateView` -> 渲染引擎访问 GL 上下文时发现被破坏 -> `SM::ConfigureShader` 中 `CSM gettextelsize` 返回 NaN -> 渲染报错 `floating point value is Not a Number`。
+
+**第 2 次（1e9aef6）：** 增加 `after 500 + update + after 300` 延时让 GL 稳定。但用户反馈窗口没最小化也出现 NaN —— 说明 `wm lower` 本身就会触发 GL 不稳定。
+
+**第 3 次（f17f766）：** 从 capture Tcl 移除 `wm lower` + `wm attributes -topmost 0`。窗口置后由 `_movie_background_tcl_commands()` 在 cmapi_testrun_control.py 的 5 处调用覆盖（prepare、camera switch 阶段），不紧接 UpdateView。
+
+同时发现 `start_simulation_via_tcl` 和 try/finally 之间的 `sync_gui_testrun_selection` + `disable_checkviewport_recursion` 如果抛异常，会跳过 `stop_simulation_via_tcl` 的 finally 块 —— 重结构 try/finally 嵌套确保 stop_sim 总执行。
+
+**第 4 次（87e4aff, c5baf24）：** 在 orchestrator 的每台相机 capture 前加独立 DDE 调用 `_movie_background_tcl_commands()`（调用 `run_runscript("TclEval", "CarMaker", ...)`），与 capture 渲染完全解耦。
+
+### 最终架构
+
+| 时机 | 方式 | 效果 |
+|------|------|------|
+| orchestrator capture 前 | 独立 DDE `_movie_background_tcl_commands()` | 推至后台 |
+| prepare/camera 切换 | cmapi_testrun_control.py 5 处已有调用 | 推至后台 |
+| FBO probe 恢复后 | check_movie_fbo() + dde_health_check.py `wm lower` | 推至后台 |
+| capture Tcl 内部 | 无窗口操作 | 避免 NaN |
+
+## Phase 43: FBO non-fatal + freeze auto-recovery (commits 5b7ef9e, 8c960ce, 90732b1)
+
+### 问题 A：FBO kill+retry 弊大于利
+
+FBO 探针检测到损坏 -> 杀全部进程 + 重试 -> 重试仍损坏 -> 放弃。但 FBO 在相机切换时必然临时损坏（C++ Configure -> ConfigFBO 冲突），而 Win32 capture 不需要 FBO。kill+retry 滥杀健康进程，浪费 3-5 分钟重启时间，且重试后 FBO 仍可能损坏导致永久失败。
+
+**修复（5b7ef9e）：** FBO 探针改为仅诊断日志。损坏时打印 `[INFO] IPG-MOVIE FBO probe failed (non-fatal). Win32 capture does not require FBO; continuing.`，不再触发 kill+retry。同时删除不再使用的 `_fbo_retry_guard` 参数。
+
+### 问题 B：freeze 检测被 except Exception 吞掉
+
+`_check_render_health_before_capture()` 正确检测到渲染冻结（UC 不增长，restart 失败）并 `raise RuntimeError("IPG-MOVIE rendering frozen (UVA=1 SUV=0 EXP=0 UC=45)...")`。但 line 8019 的 `except Exception as exc:` 捕获了 RuntimeError，只打印日志就继续执行 `self._capture_movie_via_dde(tag)`，浪费 6 次 capture 重试（共 ~6s 的无用 DDE 尝试）。
+
+**修复（8c960ce）：** 在 `except ImportError` 和 `except Exception` 之间加 `except RuntimeError: raise`，让冻结异常透传。
+
+### 问题 C：freeze 无自动恢复
+
+freeze 导致 camera_calibration 子进程以非零码退出后，orchestrator 在 `_run_single_camera_process()` 检测到 `return_code != 0` 并 raise RuntimeError。但该异常被 main() 的 `except Exception` 捕获并标记任务为 `"status": "failed"`。后续相机全部跳过。
+
+**修复（90732b1）：** orchestrator 相机循环加 retry 包装（while True + continue 模式）：
+1. 检测到 freeze 相关 RuntimeError（匹配 "rendering frozen" 或 "View(FBO)"）
+2. 杀全部进程（`cmctrl.kill_all_processes()`）
+3. 标记 `_cam_retry = True`，`continue` 回到循环开头
+4. 重试时执行完整 prepare（忽略 `--skip-prepare-for-first-camera`）
+5. 第二次失败则直接 raise，不再重试
+
+### 影响范围
+
+| 文件 | 变更 |
+|------|------|
+| `calibration_orchestrator.py` | 相机循环 retry 包装 + FBO 非致命 |
+| `camera_calibration.py` | `except RuntimeError: raise` 确保 freeze 透传 |
+
+### 验证
+
+- 38/38 测试通过
+- 快速冒烟（--multi-start-count 1 --multi-start-iters 2）：三台全部 finished，无异常
+- FBO probe 失败时日志：`[INFO] IPG-MOVIE FBO probe failed (non-fatal). Win32 capture does not require FBO; continuing.`
+
+## Phase 37-43 稳定性汇总
+
+| 测试 | rear_tv | left_tv | right_rear | 说明 |
 |------|---------|---------|------------|------|
-| fresh start (no skip-prepare) | 1090.6 | 810.7 | 43.5 | all finished |
-| --multi-start-count 1 | 1090.6 | 153.2 | 43.5 | left_tv S3 better |
+| Run 1 (Phase 37) | 1053.5 | 810.4 | 43.5 | 新鲜 prepare |
+| Run 2 (Phase 37) | 1053.5 | 810.4 | 43.5 | 同 session |
+| Run 3 (Phase 37) | 1053.5 | 810.4 | 43.5 | 同 session |
+| Run 4 (Phase 37) | 1054.7 | 810.7 | 43.5 | FBO 恢复后 |
+| Run 5 (Phase 37) | 1053.5 | 810.7 | 43.5 | FBO 恢复后 |
+| Run 6 (Phase 43) | 1090.6 | 810.7 | 43.5 | 全新启动 |
+| Run 7 (Phase 43) | 1090.6 | 153.2 | 43.5 | --multi-start-count 1 |
+
+> rear_tv 1090 分偏高 = C++ ConfigFBO 在相机切换时破坏 GL 上下文，Win32 capture 捕获到失真帧。非标定脚本问题。

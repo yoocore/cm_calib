@@ -609,86 +609,92 @@ def main() -> None:
 
             config_path = _resolve_config_path(config_dir, camera_name)
             movie_view_size = _load_movie_view_size(config_path)
-            _emit_event(task_id, "camera_prepare_started", camera=camera_name, config_path=str(config_path))
-            # --- Disable CheckViewPort recursion for entire prepare+capture cycle ---
-            # Prevents "too many nested evaluations" during SIM_START, widget resize,
-            # and async C++ callbacks that fire between our individual DDE calls.
-            cmctrl.disable_checkviewport_recursion()
-            try:
-                if camera_name == cameras[0] and args.skip_prepare_for_first_camera:
-                    runtime_state = _reuse_existing_runtime_for_camera(
-                        args,
-                        project_root,
-                        testrun_rel_path,
-                        camera_name,
-                        config_path,
-                        movie_view_size=movie_view_size,
-                    )
-                else:
-                    runtime_state = _prepare_runtime_for_camera(
-                        args,
-                        project_root,
-                        testrun_rel_path,
-                        camera_name,
-                        config_path,
-                        movie_view_size=movie_view_size,
-                    )
-                _emit_event(
-                    task_id,
-                    "camera_prepare_finished",
-                    camera=camera_name,
-                    selected_sensor=runtime_state["activation"]["selected_sensor_name"],
-                    vehicle_path=runtime_state["vehicle_path"],
-                    carmaker_pid=runtime_state["carmaker_pid"],
-                    reused_existing_runtime=bool(runtime_state.get("reused_existing_runtime")),
-                )
 
-                # Push IPG-MOVIE windows behind active windows before the capture cycle
+            # Retry once on render freeze: kill all, re-prepare, re-run
+            _cam_retry = False
+            while True:
                 try:
-                    _lower_commands = cmctrl._movie_background_tcl_commands()
-                    _lower_script = cmctrl.render_dde_execute_script(
-                        output_dir / f"lower_ipgmovie_{camera_name}.txt",
-                        "IPG-MOVIE",
-                        _lower_commands,
-                    )
-                    _lower_path = output_dir / f"lower_ipgmovie_{camera_name}.tcl"
-                    _lower_path.write_text(_lower_script, encoding="utf-8")
-                    run_runscript("TclEval", "CarMaker", _lower_path)
-                except Exception as _lower_exc:
-                    print(f"[INFO] could not lower IPG-MOVIE windows (non-fatal): {_lower_exc}")
-
-                start_simulation_via_tcl(
-                    running_timeout_sec=float(args.bootstrap_running_timeout_sec),
-                    probe_name=f"start_sim_pre_calib_{camera_name}",
-                )
-                try:
-                    # Force IPG-MOVIE to reload the scene while sim is running
-                    # (bootstrap's StopSim clears View() / scene data; a StartSim alone does not re-populate)
-                    cmctrl.sync_gui_testrun_selection(project_root, testrun_rel_path)
+                    _emit_event(task_id, "camera_prepare_started", camera=camera_name, config_path=str(config_path))
                     cmctrl.disable_checkviewport_recursion()
-                    calibration_summary = _run_single_camera_process(
-                        task_id=task_id,
-                        camera_name=camera_name,
-                        command=_build_camera_command(args, config_path),
-                        working_dir=Path(__file__).resolve().parent,
-                    )
-                finally:
-                    stop_simulation_via_tcl(
-                        idle_timeout_sec=float(args.bootstrap_idle_timeout_sec),
-                        probe_name=f"stop_sim_post_calib_{camera_name}",
-                    )
-            finally:
-                cmctrl.restore_checkviewport()
+                    try:
+                        if _cam_retry:
+                            # On retry, always re-prepare fresh (processes were killed)
+                            runtime_state = _prepare_runtime_for_camera(
+                                args, project_root, testrun_rel_path, camera_name, config_path,
+                                movie_view_size=movie_view_size,
+                            )
+                        elif camera_name == cameras[0] and args.skip_prepare_for_first_camera:
+                            runtime_state = _reuse_existing_runtime_for_camera(
+                                args, project_root, testrun_rel_path, camera_name, config_path,
+                                movie_view_size=movie_view_size,
+                            )
+                        else:
+                            runtime_state = _prepare_runtime_for_camera(
+                                args, project_root, testrun_rel_path, camera_name, config_path,
+                                movie_view_size=movie_view_size,
+                            )
+                        _emit_event(
+                            task_id, "camera_prepare_finished",
+                            camera=camera_name,
+                            selected_sensor=runtime_state["activation"]["selected_sensor_name"],
+                            vehicle_path=runtime_state["vehicle_path"],
+                            carmaker_pid=runtime_state["carmaker_pid"],
+                            reused_existing_runtime=bool(runtime_state.get("reused_existing_runtime")),
+                        )
 
-            per_camera_results.append(
-                {
+                        # Push IPG-MOVIE windows behind before capture cycle
+                        try:
+                            _lower_commands = cmctrl._movie_background_tcl_commands()
+                            _lower_script = cmctrl.render_dde_execute_script(
+                                output_dir / f"lower_ipgmovie_{camera_name}.txt",
+                                "IPG-MOVIE", _lower_commands,
+                            )
+                            _lower_path = output_dir / f"lower_ipgmovie_{camera_name}.tcl"
+                            _lower_path.write_text(_lower_script, encoding="utf-8")
+                            run_runscript("TclEval", "CarMaker", _lower_path)
+                        except Exception as _lower_exc:
+                            print(f"[INFO] could not lower IPG-MOVIE windows (non-fatal): {_lower_exc}")
+
+                        start_simulation_via_tcl(
+                            running_timeout_sec=float(args.bootstrap_running_timeout_sec),
+                            probe_name=f"start_sim_pre_calib_{camera_name}",
+                        )
+                        try:
+                            cmctrl.sync_gui_testrun_selection(project_root, testrun_rel_path)
+                            cmctrl.disable_checkviewport_recursion()
+                            calibration_summary = _run_single_camera_process(
+                                task_id=task_id, camera_name=camera_name,
+                                command=_build_camera_command(args, config_path),
+                                working_dir=Path(__file__).resolve().parent,
+                            )
+                        finally:
+                            stop_simulation_via_tcl(
+                                idle_timeout_sec=float(args.bootstrap_idle_timeout_sec),
+                                probe_name=f"stop_sim_post_calib_{camera_name}",
+                            )
+                    finally:
+                        cmctrl.restore_checkviewport()
+                except RuntimeError as _cam_err:
+                    if _cam_retry:
+                        raise  # Second attempt also failed
+                    _err_str = str(_cam_err)
+                    if "rendering frozen" not in _err_str and "View(FBO)" not in _err_str:
+                        raise  # Non-freeze error, abort immediately
+                    print(f"[recovery] {camera_name}: render freeze detected. "
+                          f"Killing all processes and retrying once...")
+                    cmctrl.kill_all_processes()
+                    _cam_retry = True
+                    continue  # Retry with fresh processes
+
+                # Success — add result and move to next camera
+                per_camera_results.append({
                     "camera": camera_name,
                     "config_path": str(config_path),
                     "runtime": runtime_state,
                     "calibration": calibration_summary,
                     "status": "finished",
-                }
-            )
+                })
+                break
 
         summary_payload = {
             "task_id": task_id,

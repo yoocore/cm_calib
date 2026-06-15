@@ -18,6 +18,8 @@ from cmapi_testrun_control import (
     start_simulation_via_tcl,
     stop_simulation_via_tcl,
 )
+from dde_health_check import run_runscript
+
 
 
 CALIBRATION_SUMMARY_PREFIX = "CALIBRATION_SUMMARY_JSON:"
@@ -653,7 +655,7 @@ def main() -> None:
                     )
                     _lower_path = output_dir / f"lower_ipgmovie_{camera_name}.tcl"
                     _lower_path.write_text(_lower_script, encoding="utf-8")
-                    cmctrl.run_runscript("TclEval", "CarMaker", _lower_path)
+                    run_runscript("TclEval", "CarMaker", _lower_path)
                 except Exception as _lower_exc:
                     print(f"[INFO] could not lower IPG-MOVIE windows (non-fatal): {_lower_exc}")
 

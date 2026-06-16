@@ -7942,22 +7942,28 @@ class CameraCalibrator:
             _cmctrl.movie_send("UpdateView")
             _time.sleep(0.05)
             _cmctrl.movie_send("UpdateView")
-            _uc_raw = _cmctrl.movie_send("set ::View(UpdateCounter)") or "0"
-            _uc_af = int(_uc_raw.strip())
-            if _uc_af <= _uc_b4:
-                print(f"[health] UC not growing before capture ({_uc_b4} -> {_uc_af}), restarting...")
+        # Proactive CarMaker error check + recovery
+        try:
+            err_text = self._capture_carmaker_error_dialog()
+            if err_text and ("ERROR" in err_text or "invalid" in err_text):
+                print(f"[carmaker] CarMaker NaN/ERROR before capture, attempting rendering restart...")
                 from rendering_health import try_restart_rendering
-                try_restart_rendering()
+                r = try_restart_rendering()
+                if r.get("restart_success"):
+                    print(f"[carmaker] Rendering restarted after NaN, UC growth={r.get('uc_growth')}")
+                    err2 = self._capture_carmaker_error_dialog()
+                    if err2 and ("ERROR" in err2 or "invalid" in err2):
+                        print(f"[carmaker] NaN persists after restart: {err2[:200]}. Aborting.")
+                        raise RuntimeError(f"CarMaker NaN persists after rendering restart: {err2[:200]}")
+                else:
+                    raise RuntimeError(f"CarMaker NaN before capture and rendering restart failed: {err_text[:200]}")
+            if err_text and "FBO" in err_text:
+                print(f"[carmaker] WARNING: CarMaker FBO error before capture: {err_text[:200]}")
+        except RuntimeError:
+            raise
         except Exception:
             pass
 
-        # Proactive CarMaker error check: probe for errors before capture
-        try:
-            err_text = self._capture_carmaker_error_dialog()
-            if err_text and ("ERROR" in err_text or "invalid" in err_text or "FBO" in err_text):
-                print(f"[carmaker] WARNING: CarMaker error detected before capture: {err_text[:200]}")
-        except Exception:
-            pass
 
         return self._capture_movie_via_dde(tag)
 

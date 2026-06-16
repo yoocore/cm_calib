@@ -256,6 +256,9 @@ def _prepare_runtime_for_camera(
         )
         cmctrl.wait_for_carmaker_tcleval_ready(timeout_sec=60.0)
         print("CarMaker started and TclEval ready.")
+        if _fresh_start:
+            # Give GPU driver time to initialize GL context before IPG-MOVIE operations
+            import time as _time; _time.sleep(10.0)
     # --- Step 1: Force-sync Movie view size before any IPG-MOVIE state change ---
     if movie_view_size is not None:
         view_width, view_height = movie_view_size

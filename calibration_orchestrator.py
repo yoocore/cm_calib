@@ -258,7 +258,7 @@ def _prepare_runtime_for_camera(
         print("CarMaker started and TclEval ready.")
         if _fresh_start:
             # Give GPU driver time to initialize GL context before IPG-MOVIE operations
-            import time as _time; _time.sleep(10.0)
+            import time as _time; _time.sleep(20.0)
     # --- Step 1: Activate sensor & sync TestRun in CarMaker GUI ---
     vehicle_path, vehicle_key = cmctrl.resolve_vehicle_path(project_root, testrun_rel_path)
     activation = cmctrl.activate_single_vehicle_sensor(vehicle_path, camera_name)

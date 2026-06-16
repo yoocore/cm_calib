@@ -378,6 +378,7 @@ class BootstrapWizardDialog(QDialog):
         _grid = QGridLayout(params_group)
         _grid.setContentsMargins(8, 8, 8, 8)
         _grid.setHorizontalSpacing(6)
+        _grid.setColumnStretch(2, 1)
         _grid.setColumnStretch(4, 1)
         _row = [0]
 
@@ -387,12 +388,10 @@ class BootstrapWizardDialog(QDialog):
             cols_spin.setRange(0, 50)
             cols_spin.setValue(0)
             cols_spin.setSpecialValueText("auto")
-            cols_spin.setFixedWidth(100)
             rows_spin = QSpinBox()
             rows_spin.setRange(0, 50)
             rows_spin.setValue(0)
             rows_spin.setSpecialValueText("auto")
-            rows_spin.setFixedWidth(100)
             r = _row[0]
             _grid.addWidget(label, r, 0)
             _grid.addWidget(QLabel("Cols:"), r, 1)

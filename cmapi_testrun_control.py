@@ -2219,6 +2219,7 @@ def ensure_movie_view_size(
                 'set __cur_h [$wpath.gl0 cget -height]',
                 f'if {{$__cur_w != {target_width} || $__cur_h != {target_height}}} {{',
                 f'    View::SetSize {target_width} {target_height} $wpath',
+                f'    if {{[info exists View($wno)]}} {{ set ::View($wno) [dict replace $::View($wno) Width {target_width} Height {target_height}] }}',
                 '}',
                 '# Read back from GL widget (no update — safe, View::SetSize resizes synchronously)',
                 'set wi [$wpath.gl0 cget -width]',

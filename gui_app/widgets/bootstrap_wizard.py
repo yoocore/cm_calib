@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import List, Optional
 
@@ -794,7 +795,20 @@ class BootstrapWizardDialog(QDialog):
                 return
 
         cam_name = self._camera_name_label.text()
-        output_path = Path(output_dir) / f"camera.{cam_name}.json"
+        camera_output_dir = Path(output_dir) / cam_name
+        camera_output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = camera_output_dir / f"camera.{cam_name}.json"
+
+        templates_dir = camera_output_dir / "templates"
+        templates_dir.mkdir(exist_ok=True)
+        for board in active:
+            if board.board_type == "custom_maker" and board.template_image:
+                old_path = Path(board.template_image)
+                if old_path.exists():
+                    new_path = templates_dir / old_path.name
+                    if old_path != new_path:
+                        shutil.move(str(old_path), str(new_path))
+                        board.template_image = str(new_path)
 
         try:
             cfg = generate_config(
@@ -806,7 +820,7 @@ class BootstrapWizardDialog(QDialog):
                 camera_name=cam_name,
             )
 
-            preview_path = output_path.parent / f"wizard_preview_{cam_name}.png"
+            preview_path = camera_output_dir / f"wizard_preview_{cam_name}.png"
             generate_preview_image(active, self._tag_grids, self._image_path, preview_path)
 
             self._result_label.setText(

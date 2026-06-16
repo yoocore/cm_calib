@@ -101,7 +101,7 @@ def generate_config(
     camera_name: Optional[str] = None,
 ) -> dict:
     resolved_name = camera_name or _derive_camera_name(real_image_path)
-    output_dir = output_path.parent / resolved_name
+    output_dir = output_path.parent
     output_dir.mkdir(parents=True, exist_ok=True)
 
     cfg: Dict[str, Any] = {}

@@ -393,8 +393,20 @@ class BootstrapWizardDialog(QDialog):
             h.addWidget(cols_spin)
             h.addWidget(QLabel("Rows:"))
             h.addWidget(rows_spin)
+            h.addStretch()
             label = QLabel(f"[{type_label}] Board Size:")
             return label, w, cols_spin, rows_spin
+
+        def _make_combo_widget(type_label: str, items: list) -> tuple:
+            combo = QComboBox()
+            combo.addItems(items)
+            w = QWidget()
+            h = QHBoxLayout(w)
+            h.setContentsMargins(0, 0, 0, 0)
+            h.addWidget(combo)
+            h.addStretch()
+            label = QLabel(f"[{type_label}] Dictionary:")
+            return label, w, combo
 
         cb_label, cb_widget, self._cb_size_cols, self._cb_size_rows = _make_size_widget("Checkerboard")
         params_layout.addRow(cb_label, cb_widget)
@@ -412,37 +424,37 @@ class BootstrapWizardDialog(QDialog):
             "DICT_4X4_50", "DICT_5X5_100", "DICT_6X6_100", "DICT_7X7_100",
         ]
 
-        def _make_dict_combo(type_label: str) -> tuple:
-            combo = QComboBox()
-            combo.addItems(_DICT_ITEMS)
-            label = QLabel(f"[{type_label}] Dictionary:")
-            return label, combo
+        aruco_d_label, aruco_d_widget, self._aruco_dict_combo = _make_combo_widget("ArUco", _DICT_ITEMS)
+        params_layout.addRow(aruco_d_label, aruco_d_widget)
 
-        aruco_d_label, self._aruco_dict_combo = _make_dict_combo("ArUco")
-        params_layout.addRow(aruco_d_label, self._aruco_dict_combo)
+        charuco_d_label, charuco_d_widget, self._charuco_dict_combo = _make_combo_widget("CharUco", _DICT_ITEMS)
+        params_layout.addRow(charuco_d_label, charuco_d_widget)
 
-        charuco_d_label, self._charuco_dict_combo = _make_dict_combo("CharUco")
-        params_layout.addRow(charuco_d_label, self._charuco_dict_combo)
+        aruco_grid_d_label, aruco_grid_d_widget, self._aruco_grid_dict_combo = _make_combo_widget("ArUco Grid", _DICT_ITEMS)
+        params_layout.addRow(aruco_grid_d_label, aruco_grid_d_widget)
 
-        aruco_grid_d_label, self._aruco_grid_dict_combo = _make_dict_combo("ArUco Grid")
-        params_layout.addRow(aruco_grid_d_label, self._aruco_grid_dict_combo)
-
-        self._tag_family_combo = QComboBox()
-        self._tag_family_combo.addItems([
+        tf_combo = QComboBox()
+        tf_combo.addItems([
             "auto", "tagStandard41h12", "tag36h11", "tag25h9", "tag16h5",
         ])
+        tf_widget = QWidget()
+        tf_h = QHBoxLayout(tf_widget)
+        tf_h.setContentsMargins(0, 0, 0, 0)
+        tf_h.addWidget(tf_combo)
+        tf_h.addStretch()
+        self._tag_family_combo = tf_combo
         self._tag_family_label = QLabel("[AprilTag] Family:")
-        params_layout.addRow(self._tag_family_label, self._tag_family_combo)
+        params_layout.addRow(self._tag_family_label, tf_widget)
 
         self._param_widgets = {
             "checkerboard":    (cb_label, cb_widget),
-            "aruco":           (aruco_d_label, self._aruco_dict_combo),
+            "aruco":           (aruco_d_label, aruco_d_widget),
             "charuco":         (charuco_label, charuco_widget),
-            "charuco_dict":    (charuco_d_label, self._charuco_dict_combo),
+            "charuco_dict":    (charuco_d_label, charuco_d_widget),
             "aruco_grid":      (aruco_label, aruco_widget),
-            "aruco_grid_dict": (aruco_grid_d_label, self._aruco_grid_dict_combo),
+            "aruco_grid_dict": (aruco_grid_d_label, aruco_grid_d_widget),
             "circle_grid":     (cg_label, cg_widget),
-            "apriltag":        (self._tag_family_label, self._tag_family_combo),
+            "apriltag":        (self._tag_family_label, tf_widget),
         }
         self._on_type_changed()
         layout.addWidget(params_group)

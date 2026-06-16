@@ -270,6 +270,13 @@ class BoardListPanel(QWidget):
         self._table.cellChanged.connect(self._on_cell_changed)
         layout.addWidget(self._table)
 
+        del_btn_layout = QHBoxLayout()
+        self._delete_btn = QPushButton("Delete Selected")
+        self._delete_btn.clicked.connect(self._on_delete_selected)
+        del_btn_layout.addWidget(self._delete_btn)
+        del_btn_layout.addStretch()
+        layout.addLayout(del_btn_layout)
+
         self._boards: List[DetectedBoard] = []
 
     def set_boards(self, boards: List[DetectedBoard]) -> None:
@@ -305,6 +312,14 @@ class BoardListPanel(QWidget):
             item = self._table.item(row, col)
             if item:
                 self._boards[row].board_id = item.text()
+        self.board_changed.emit()
+
+    def _on_delete_selected(self) -> None:
+        rows = sorted(set(idx.row() for idx in self._table.selectedIndexes()), reverse=True)
+        for row in rows:
+            if 0 <= row < len(self._boards):
+                self._boards.pop(row)
+        self.set_boards(self._boards)
         self.board_changed.emit()
 
     def _on_checkbox_changed(self) -> None:
@@ -486,6 +501,9 @@ class BootstrapWizardDialog(QDialog):
         btn_layout = QHBoxLayout()
         back_btn = QPushButton("< Back")
         back_btn.clicked.connect(lambda: self._stack.setCurrentIndex(0))
+        self._redetect_btn = QPushButton("Re-Detect")
+        self._redetect_btn.setToolTip("Go back to step 1 and re-run detection")
+        self._redetect_btn.clicked.connect(self._on_redetect)
         self._add_custom_btn = QPushButton("Add Custom Board")
         self._add_custom_btn.setCheckable(True)
         self._add_custom_btn.setToolTip(
@@ -496,6 +514,7 @@ class BootstrapWizardDialog(QDialog):
         next_btn = QPushButton("Next >")
         next_btn.clicked.connect(self._on_review_next)
         btn_layout.addWidget(back_btn)
+        btn_layout.addWidget(self._redetect_btn)
         btn_layout.addWidget(self._add_custom_btn)
         btn_layout.addStretch()
         btn_layout.addWidget(next_btn)
@@ -746,6 +765,16 @@ class BootstrapWizardDialog(QDialog):
         finally:
             self._detect_btn.setEnabled(True)
             self._detect_btn.setText("Detect Boards")
+
+    def _on_redetect(self) -> None:
+        self._boards = []
+        self._tag_grids = []
+        self._tags = []
+        self._add_custom_btn.setChecked(False)
+        self._canvas.set_detections([], [])
+        self._board_list.set_boards([])
+        self._stack.setCurrentIndex(0)
+        self._on_detect()
 
     def _on_board_list_changed(self) -> None:
         active = self._board_list.get_active_boards()

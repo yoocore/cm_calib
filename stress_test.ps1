@@ -1,15 +1,16 @@
 # Stress test: 30 smoke + 5 full calibration
 # Usage: powershell -File stress_test.ps1
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 $workdir = "C:\CM_Projects\CMO141_Calibration\Data\Script\CameraCalibration"
 $summary_file = Join-Path $workdir "stress_test_summary.json"
 $results = @{smoke = @(); full = @(); started = (Get-Date -Format "yyyy-MM-ddTHH:mm:ss") }
 
 function Kill-IPG {
-    taskkill /IM HIL.exe /F /T 2>$null
-    taskkill /IM Movie.exe /F /T 2>$null
-    taskkill /IM CarMaker.win64.exe /F /T 2>$null
+    # Silently continue if no matching processes exist
+    taskkill /IM HIL.exe /F /T 2>&1 | Out-Null
+    taskkill /IM Movie.exe /F /T 2>&1 | Out-Null
+    taskkill /IM CarMaker.win64.exe /F /T 2>&1 | Out-Null
     Start-Sleep -Seconds 5
 }
 
@@ -46,7 +47,7 @@ for ($i = 1; $i -le 30; $i++) {
     $r = Invoke-Orchestrator
     $results.smoke += @{round = $i; status = $r.status; elapsed = $r.elapsed; scores = $r.scores; dir = $r.dir; time = (Get-Date -Format "yyyy-MM-ddTHH:mm:ss")}
     Save-Results
-    Write-Host "  Result: $($r.status) ${elapsed}s"
+    Write-Host "  Result: $($r.status) $($r.elapsed)s"
     foreach ($k in $r.scores.Keys) { Write-Host "    $k : $($r.scores[$k])" }
 }
 
@@ -58,7 +59,7 @@ for ($i = 1; $i -le 5; $i++) {
     $r = Invoke-Orchestrator -extraArgs "--explore-then-refine --multi-start-iters 100 --refine-iters 100"
     $results.full += @{round = $i; status = $r.status; elapsed = $r.elapsed; scores = $r.scores; dir = $r.dir; time = (Get-Date -Format "yyyy-MM-ddTHH:mm:ss")}
     Save-Results
-    Write-Host "  Result: $($r.status) ${elapsed}s"
+    Write-Host "  Result: $($r.status) $($r.elapsed)s"
     foreach ($k in $r.scores.Keys) { Write-Host "    $k : $($r.scores[$k])" }
 }
 

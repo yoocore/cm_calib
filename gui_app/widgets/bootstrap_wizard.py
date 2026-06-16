@@ -71,6 +71,8 @@ _IMAGE_SUFFIXES = "*.jpg *.jpeg *.png *.bmp *.tif *.tiff *.webp"
 
 class ImageCanvasWidget(QWidget):
 
+    rectangle_drawn = Signal(int, int, int, int)
+
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self._pixmap: Optional[QPixmap] = None
@@ -78,7 +80,11 @@ class ImageCanvasWidget(QWidget):
         self._tag_grids: List[TagGrid] = []
         self._zoom = 1.0
         self._offset = QPointF(0, 0)
-        self._drag_start: Optional[QPointF] = None
+        self._pan_start: Optional[QPointF] = None
+        self._draw_mode = False
+        self._draw_start: Optional[QPointF] = None
+        self._draw_current: Optional[QPointF] = None
+        self._drawn_rects: List[Tuple[int, int, int, int]] = []
         self.setMinimumSize(400, 300)
         self.setMouseTracking(True)
 
@@ -89,6 +95,7 @@ class ImageCanvasWidget(QWidget):
         self._pixmap = pixmap
         self._zoom = 1.0
         self._offset = QPointF(0, 0)
+        self._drawn_rects.clear()
         self._fit_to_view()
         self.update()
 
@@ -100,6 +107,23 @@ class ImageCanvasWidget(QWidget):
         self._boards = boards
         self._tag_grids = tag_grids or []
         self.update()
+
+    def set_draw_mode(self, enabled: bool) -> None:
+        self._draw_mode = enabled
+        self._draw_start = None
+        self._draw_current = None
+        if enabled:
+            self.setCursor(Qt.CrossCursor)
+        else:
+            self.setCursor(Qt.ArrowCursor)
+        self.update()
+
+    def _screen_to_image(self, screen_pos: QPointF) -> QPointF:
+        if self._zoom == 0:
+            return QPointF(0, 0)
+        img_x = (screen_pos.x() - self._offset.x()) / self._zoom
+        img_y = (screen_pos.y() - self._offset.y()) / self._zoom
+        return QPointF(img_x, img_y)
 
     def _fit_to_view(self) -> None:
         if not self._pixmap:
@@ -126,17 +150,39 @@ class ImageCanvasWidget(QWidget):
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.LeftButton:
-            self._drag_start = event.position()
+            if self._draw_mode:
+                self._draw_start = event.position()
+                self._draw_current = event.position()
+            else:
+                self._pan_start = event.position()
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
-        if self._drag_start is not None:
-            delta = event.position() - self._drag_start
+        if self._draw_mode and self._draw_start is not None:
+            self._draw_current = event.position()
+            self.update()
+        elif not self._draw_mode and self._pan_start is not None:
+            delta = event.position() - self._pan_start
             self._offset += delta
-            self._drag_start = event.position()
+            self._pan_start = event.position()
             self.update()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
-        self._drag_start = None
+        if self._draw_mode and self._draw_start is not None:
+            end_pos = event.position()
+            img_start = self._screen_to_image(self._draw_start)
+            img_end = self._screen_to_image(end_pos)
+            x1, y1 = min(img_start.x(), img_end.x()), min(img_start.y(), img_end.y())
+            x2, y2 = max(img_start.x(), img_end.x()), max(img_start.y(), img_end.y())
+            w, h = x2 - x1, y2 - y1
+            if w > 10 and h > 10:
+                ix, iy = int(max(0, x1)), int(max(0, y1))
+                iw, ih = int(w), int(h)
+                self._drawn_rects.append((ix, iy, iw, ih))
+                self.rectangle_drawn.emit(ix, iy, iw, ih)
+            self._draw_start = None
+            self._draw_current = None
+            self.update()
+        self._pan_start = None
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -182,6 +228,25 @@ class ImageCanvasWidget(QWidget):
             painter.drawRect(QRectF(x, y, w, h))
             painter.setFont(font)
             painter.drawText(QPointF(x + 4, y - 6 / self._zoom), grid.grid_id)
+
+        custom_color = QColor(200, 50, 200)
+        pen.setColor(custom_color)
+        painter.setPen(pen)
+        for rx, ry, rw, rh in self._drawn_rects:
+            painter.drawRect(QRectF(rx, ry, rw, rh))
+
+        if self._draw_start is not None and self._draw_current is not None:
+            img_start = self._screen_to_image(self._draw_start)
+            img_end = self._screen_to_image(self._draw_current)
+            x1 = min(img_start.x(), img_end.x())
+            y1 = min(img_start.y(), img_end.y())
+            x2 = max(img_start.x(), img_end.x())
+            y2 = max(img_start.y(), img_end.y())
+            dash_pen = QPen(QColor(255, 255, 0))
+            dash_pen.setWidthF(max(1.0, 2.0 / self._zoom))
+            dash_pen.setStyle(Qt.DashLine)
+            painter.setPen(dash_pen)
+            painter.drawRect(QRectF(x1, y1, x2 - x1, y2 - y1))
 
         painter.end()
 
@@ -344,6 +409,7 @@ class BootstrapWizardDialog(QDialog):
 
         splitter = QSplitter(Qt.Horizontal)
         self._canvas = ImageCanvasWidget()
+        self._canvas.rectangle_drawn.connect(self._on_rectangle_drawn)
         splitter.addWidget(self._canvas)
 
         right_panel = QWidget()
@@ -361,9 +427,17 @@ class BootstrapWizardDialog(QDialog):
         btn_layout = QHBoxLayout()
         back_btn = QPushButton("< Back")
         back_btn.clicked.connect(lambda: self._stack.setCurrentIndex(0))
+        self._add_custom_btn = QPushButton("Add Custom Board")
+        self._add_custom_btn.setCheckable(True)
+        self._add_custom_btn.setToolTip(
+            "Toggle draw mode: drag a rectangle on the image to mark a partially-visible board.\n"
+            "It will be added as a custom_maker with template_match."
+        )
+        self._add_custom_btn.toggled.connect(self._on_toggle_draw_mode)
         next_btn = QPushButton("Next >")
         next_btn.clicked.connect(self._on_review_next)
         btn_layout.addWidget(back_btn)
+        btn_layout.addWidget(self._add_custom_btn)
         btn_layout.addStretch()
         btn_layout.addWidget(next_btn)
         layout.addLayout(btn_layout)
@@ -568,6 +642,57 @@ class BootstrapWizardDialog(QDialog):
     def _on_board_list_changed(self) -> None:
         active = self._board_list.get_active_boards()
         self._canvas.set_detections(active, self._tag_grids)
+
+    def _on_toggle_draw_mode(self, checked: bool) -> None:
+        self._canvas.set_draw_mode(checked)
+        if checked:
+            self._add_custom_btn.setText("Draw Mode ON (drag rect)")
+            self._add_custom_btn.setStyleSheet("background-color: #ffcc00; color: #333;")
+        else:
+            self._add_custom_btn.setText("Add Custom Board")
+            self._add_custom_btn.setStyleSheet("")
+
+    def _on_rectangle_drawn(self, x: int, y: int, w: int, h: int) -> None:
+        if not self._image_path:
+            return
+
+        img = cv2.imread(self._image_path)
+        if img is None:
+            return
+
+        img_h, img_w = img.shape[:2]
+        x = max(0, min(x, img_w - 1))
+        y = max(0, min(y, img_h - 1))
+        w = min(w, img_w - x)
+        h = min(h, img_h - y)
+        if w < 20 or h < 20:
+            return
+
+        crop = img[y:y + h, x:x + w]
+        template_dir = Path(self._image_path).parent / "wizard_templates"
+        template_dir.mkdir(parents=True, exist_ok=True)
+        custom_idx = sum(1 for b in self._boards if b.board_type == "custom_maker") + 1
+        template_name = f"custom_{custom_idx}.png"
+        template_path = template_dir / template_name
+        cv2.imwrite(str(template_path), crop)
+
+        corners = np.array([
+            [x, y], [x + w, y], [x + w, y + h], [x, y + h],
+        ], dtype=np.float32)
+
+        board = DetectedBoard(
+            board_type="custom_maker",
+            bbox=(x, y, w, h),
+            corners=corners,
+            board_id=f"C{custom_idx}",
+            center=((x + w / 2.0), (y + h / 2.0)),
+            area=float(w * h),
+            weight=0.8,
+        )
+        board.template_image = str(template_path)
+        self._boards.append(board)
+        self._board_list.set_boards(self._boards)
+        self._canvas.set_detections(self._boards, self._tag_grids)
 
     def _on_review_next(self) -> None:
         from gui_app.services.wizard_config_generator import _derive_camera_name

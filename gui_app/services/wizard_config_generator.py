@@ -68,6 +68,13 @@ def _board_entry_from_detected(board: DetectedBoard) -> dict:
         entry["aruco_dictionary"] = "DICT_4X4_50"
         entry["square_size"] = 1.0
         entry["marker_separation"] = 0.5
+    if board.board_type == "custom_maker":
+        entry["custom_detector"] = "template_match"
+        entry["template_match_threshold"] = 0.45
+        entry["template_binary_threshold"] = 150
+        entry["min_detected_points"] = 9
+        if board.template_image:
+            entry["template_image"] = board.template_image
     return entry
 
 

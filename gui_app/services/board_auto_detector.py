@@ -36,6 +36,7 @@ class DetectedBoard:
     center: Tuple[float, float] = (0.0, 0.0)
     area: float = 0.0
     weight: float = 1.0
+    template_image: Optional[str] = None
 
 
 _COMMON_CHECKERBOARD_SIZES = [

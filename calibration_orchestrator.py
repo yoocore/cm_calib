@@ -256,13 +256,27 @@ def _prepare_runtime_for_camera(
         )
         cmctrl.wait_for_carmaker_tcleval_ready(timeout_sec=60.0)
         print("CarMaker started and TclEval ready.")
-    # --- Step 1: Activate sensor & sync TestRun in CarMaker GUI ---
+    # --- Step 1: Force-sync Movie view size before any IPG-MOVIE state change ---
+    if movie_view_size is not None:
+        view_width, view_height = movie_view_size
+        try:
+            cmctrl.ensure_movie_view_size(view_width, view_height, timeout_sec=10.0)
+        except Exception as exc:
+            print(f"[INFO] could not sync movie view size (Step 1): {exc}")
+    # --- Step 2: Activate sensor & sync TestRun in CarMaker GUI ---
     vehicle_path, vehicle_key = cmctrl.resolve_vehicle_path(project_root, testrun_rel_path)
     activation = cmctrl.activate_single_vehicle_sensor(vehicle_path, camera_name)
     selected_testrun = cmctrl.sync_gui_testrun_selection(project_root, testrun_rel_path)
     # --- sync_gui re-initializes IPG-MOVIE (re-registers CheckViewPort), so re-guard ---
     cmctrl.disable_checkviewport_recursion()
-    # --- Step 2: StartSim / StopSim (bootstrap the TestRun for Movie) ---
+    # --- Step 2.5: Sync Movie view size before bootstrap SIM_START ---
+    if movie_view_size is not None:
+        view_width, view_height = movie_view_size
+        try:
+            cmctrl.ensure_movie_view_size(view_width, view_height, timeout_sec=10.0)
+        except Exception as exc:
+            print(f"[INFO] could not sync movie view size before bootstrap: {exc}")
+    # --- Step 3: StartSim / StopSim (bootstrap the TestRun for Movie) ---
     carmaker_pid, bootstrap_testrun = cmctrl.bootstrap_testrun_for_movie_via_cmapi_sync(
         project_root=project_root,
         testrun_rel_path=testrun_rel_path,
@@ -306,10 +320,11 @@ def _prepare_runtime_for_camera(
     )
     if movie_view_size is not None:
         view_width, view_height = movie_view_size
+        applied_view = cmctrl.ensure_movie_view_size(view_width, view_height)
         movie_scene["width"] = str(view_width)
         movie_scene["height"] = str(view_height)
-        movie_scene["view_widget"] = ""
-        movie_scene["mode"] = "skipped"
+        movie_scene["view_widget"] = str(applied_view.get("widget") or "")
+        movie_scene["mode"] = str(applied_view.get("mode") or movie_scene.get("mode") or "")
     abraxas = cmctrl.ensure_movie_abraxas_enabled(timeout_sec=float(args.health_check_timeout_sec))
     camera_selection = cmctrl.ensure_movie_camera_selected(
         activation["ipgmovie_sensor_label"],

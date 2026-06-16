@@ -376,84 +376,79 @@ class BootstrapWizardDialog(QDialog):
 
         params_group = QGroupBox("Parameters (optional)")
         _grid = QGridLayout(params_group)
-        _grid.setColumnStretch(0, 0)
-        _grid.setColumnStretch(1, 1)
+        _grid.setContentsMargins(8, 8, 8, 8)
+        _grid.setHorizontalSpacing(6)
+        _grid.setColumnStretch(4, 1)
         _row = [0]
 
-        def _add_param_row(label: QLabel, widget: QWidget) -> None:
-            label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            _grid.addWidget(label, _row[0], 0)
-            _grid.addWidget(widget, _row[0], 1)
-            _row[0] += 1
-
-        def _make_size_widget(type_label: str) -> tuple:
+        def _add_size_row(label_text: str) -> tuple:
+            label = QLabel(label_text)
             cols_spin = QSpinBox()
             cols_spin.setRange(0, 50)
             cols_spin.setValue(0)
             cols_spin.setSpecialValueText("auto")
+            cols_spin.setFixedWidth(70)
             rows_spin = QSpinBox()
             rows_spin.setRange(0, 50)
             rows_spin.setValue(0)
             rows_spin.setSpecialValueText("auto")
-            w = QWidget()
-            h = QHBoxLayout(w)
-            h.setContentsMargins(0, 0, 0, 0)
-            h.addWidget(QLabel("Cols:"))
-            h.addWidget(cols_spin)
-            h.addWidget(QLabel("Rows:"))
-            h.addWidget(rows_spin)
-            h.addStretch()
-            label = QLabel(f"[{type_label}] Board Size:")
-            return label, w, cols_spin, rows_spin
+            rows_spin.setFixedWidth(70)
+            r = _row[0]
+            _grid.addWidget(label, r, 0)
+            _grid.addWidget(QLabel("Cols:"), r, 1)
+            _grid.addWidget(cols_spin, r, 2)
+            _grid.addWidget(QLabel("Rows:"), r, 3)
+            _grid.addWidget(rows_spin, r, 4)
+            _row[0] += 1
+            return label, cols_spin, rows_spin
 
-        def _make_combo_widget(type_label: str, items: list) -> tuple:
+        def _add_combo_row(label_text: str, items: list) -> tuple:
+            label = QLabel(label_text)
             combo = QComboBox()
             combo.addItems(items)
-            label = QLabel(f"[{type_label}] Dictionary:")
-            return label, combo, combo
+            r = _row[0]
+            _grid.addWidget(label, r, 0)
+            _grid.addWidget(combo, r, 1, 1, 4)
+            _row[0] += 1
+            return label, combo
 
-        cb_label, cb_widget, self._cb_size_cols, self._cb_size_rows = _make_size_widget("Checkerboard")
-        _add_param_row(cb_label, cb_widget)
+        self._param_row_widgets: dict[str, list[QWidget]] = {}
 
-        aruco_label, aruco_widget, self._aruco_size_cols, self._aruco_size_rows = _make_size_widget("ArUco Grid")
-        _add_param_row(aruco_label, aruco_widget)
+        def _track_row(key: str) -> None:
+            row_widgets: list[QWidget] = []
+            r = _row[0] - 1
+            for c in range(_grid.columnCount()):
+                item = _grid.itemAtPosition(r, c)
+                if item and item.widget():
+                    row_widgets.append(item.widget())
+            self._param_row_widgets[key] = row_widgets
 
-        charuco_label, charuco_widget, self._charuco_size_cols, self._charuco_size_rows = _make_size_widget("CharUco")
-        _add_param_row(charuco_label, charuco_widget)
-
-        cg_label, cg_widget, self._cg_size_cols, self._cg_size_rows = _make_size_widget("Circle Grid")
-        _add_param_row(cg_label, cg_widget)
+        cb_label, self._cb_size_cols, self._cb_size_rows = _add_size_row("[Checkerboard] Board Size:")
+        _track_row("checkerboard")
+        aruco_label, self._aruco_size_cols, self._aruco_size_rows = _add_size_row("[ArUco Grid] Board Size:")
+        _track_row("aruco_grid")
+        charuco_label, self._charuco_size_cols, self._charuco_size_rows = _add_size_row("[CharUco] Board Size:")
+        _track_row("charuco")
+        cg_label, self._cg_size_cols, self._cg_size_rows = _add_size_row("[Circle Grid] Board Size:")
+        _track_row("circle_grid")
 
         _DICT_ITEMS = [
             "DICT_4X4_50", "DICT_5X5_100", "DICT_6X6_100", "DICT_7X7_100",
         ]
 
-        aruco_d_label, aruco_d_widget, self._aruco_dict_combo = _make_combo_widget("ArUco", _DICT_ITEMS)
-        _add_param_row(aruco_d_label, aruco_d_widget)
+        aruco_d_label, self._aruco_dict_combo = _add_combo_row("[ArUco] Dictionary:", _DICT_ITEMS)
+        _track_row("aruco")
+        charuco_d_label, self._charuco_dict_combo = _add_combo_row("[CharUco] Dictionary:", _DICT_ITEMS)
+        _track_row("charuco_dict")
+        aruco_grid_d_label, self._aruco_grid_dict_combo = _add_combo_row("[ArUco Grid] Dictionary:", _DICT_ITEMS)
+        _track_row("aruco_grid_dict")
 
-        charuco_d_label, charuco_d_widget, self._charuco_dict_combo = _make_combo_widget("CharUco", _DICT_ITEMS)
-        _add_param_row(charuco_d_label, charuco_d_widget)
+        self._tag_family_label, self._tag_family_combo = _add_combo_row(
+            "[AprilTag] Family:",
+            ["auto", "tagStandard41h12", "tag36h11", "tag25h9", "tag16h5"],
+        )
+        _track_row("apriltag")
 
-        aruco_grid_d_label, aruco_grid_d_widget, self._aruco_grid_dict_combo = _make_combo_widget("ArUco Grid", _DICT_ITEMS)
-        _add_param_row(aruco_grid_d_label, aruco_grid_d_widget)
-
-        self._tag_family_combo = QComboBox()
-        self._tag_family_combo.addItems([
-            "auto", "tagStandard41h12", "tag36h11", "tag25h9", "tag16h5",
-        ])
-        self._tag_family_label = QLabel("[AprilTag] Family:")
-        _add_param_row(self._tag_family_label, self._tag_family_combo)
-
-        self._param_widgets = {
-            "checkerboard":    (cb_label, cb_widget),
-            "aruco":           (aruco_d_label, aruco_d_widget),
-            "charuco":         (charuco_label, charuco_widget),
-            "charuco_dict":    (charuco_d_label, charuco_d_widget),
-            "aruco_grid":      (aruco_label, aruco_widget),
-            "aruco_grid_dict": (aruco_grid_d_label, aruco_grid_d_widget),
-            "circle_grid":     (cg_label, cg_widget),
-            "apriltag":        (self._tag_family_label, self._tag_family_combo),
-        }
         self._on_type_changed()
         layout.addWidget(params_group)
 
@@ -601,17 +596,17 @@ class BootstrapWizardDialog(QDialog):
 
     def _on_type_changed(self) -> None:
         if self._cb_custom.isChecked():
-            for key, (label, widget) in self._param_widgets.items():
-                label.setVisible(False)
-                widget.setVisible(False)
+            for widgets in self._param_row_widgets.values():
+                for w in widgets:
+                    w.setVisible(False)
             return
 
         checked_types = set(self._get_checked_types())
-        for key, (label, widget) in self._param_widgets.items():
+        for key, widgets in self._param_row_widgets.items():
             base_type = key.split("_dict")[0]
             show = base_type in checked_types
-            label.setVisible(show)
-            widget.setVisible(show)
+            for w in widgets:
+                w.setVisible(show)
 
     def _on_detect(self) -> None:
         image_path = self._image_path_edit.text().strip()

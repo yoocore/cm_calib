@@ -7793,7 +7793,10 @@ class CameraCalibrator:
                 if self._runtime_error_needs_dde_recovery_probe(attempt_runtime_error):
                     if self._wait_for_dde_service_recovery():
                         continue
-                time.sleep(retry_sleep_sec)
+                _delay = retry_sleep_sec
+                if attempt_runtime_error and "FBO Creation" in str(attempt_runtime_error):
+                    _delay = max(_delay * 12, 3.0)
+                time.sleep(_delay)
 
         if last_runtime_error is not None:
             self._record_dde_operation_failure(last_runtime_error, "movie_capture")

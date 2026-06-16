@@ -7686,7 +7686,7 @@ class CameraCalibrator:
             raise RuntimeError("movie dde capture requires pywin32 DDE support") from exc
 
         last_runtime_error: Optional[RuntimeError] = None
-        attempt_count = 6
+        attempt_count = 2  # Fast-fail: orchestrator retries with fresh processes
         retry_delay = max(self.script_control_settle_sec, 0.2)
         for attempt in range(attempt_count):
             attempt_no = attempt + 1

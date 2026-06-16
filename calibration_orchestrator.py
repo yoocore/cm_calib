@@ -304,6 +304,12 @@ def _prepare_runtime_for_camera(
         timeout_sec=_movie_settle,
         poll_interval_sec=float(args.movie_ready_poll_sec),
     )
+    # Cancel render timer before View::SetSize to prevent C++ ConfigFBO race
+    # when the view size actually changes (e.g., right_rear: 960x768→960x640)
+    try:
+        cmctrl.cancel_movie_updateview_timer(timeout_sec=5.0)
+    except Exception:
+        pass
     if movie_view_size is not None:
         view_width, view_height = movie_view_size
         applied_view = cmctrl.ensure_movie_view_size(view_width, view_height)

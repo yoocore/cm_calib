@@ -7704,6 +7704,8 @@ class CameraCalibrator:
                     "set wi [dict get $View($vno) Width]",
                     "set he [dict get $View($vno) Height]",
                     "UpdateView $vno",
+                    "after 300",
+                    "update",
                     "catch {gl bindframebuffer_read 0}",
                     "catch {FBO end}",
                     "set captureFBO [FBO new $wi $he -tex rgb -noclear]",

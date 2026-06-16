@@ -2341,8 +2341,7 @@ def ensure_movie_camera_selected(
     select_body_lines = [
         'set _before_camera_state [expr {[winfo exists .camera] ? [wm state .camera] : "missing"}]',
         'set _before_lens_state [expr {[winfo exists .camera.cammoddlg] ? [wm state .camera.cammoddlg] : "missing"}]',
-        '# Cancel pending render timer to prevent NaN (CSM uninitialized) during camera switch',
-        'catch {after cancel UpdateView_TimerProc}',
+        'if {![info exists View(ev.view)]} {error "missing View(ev.view)"}',
         'if {![info exists View(ev.view)]} {error "missing View(ev.view)"}',
         'set vno $View(ev.view)',
         'if {![winfo exists .camera] || ![winfo exists .camera.btn.set]} {',
@@ -2362,6 +2361,8 @@ def ensure_movie_camera_selected(
         'if {$_before_camera_state eq "iconic" && [winfo exists .camera]} { wm iconify .camera }',
         'if {$_before_lens_state eq "iconic" && [winfo exists .camera.cammoddlg]} { wm iconify .camera.cammoddlg }',
         'unset _before_camera_state _before_lens_state',
+        '# Ensure render timer is running after camera selection',
+        'catch {after 0 UpdateView_TimerProc}',
         'if {[info exists Camera::v(Name)]} {set current $Camera::v(Name)} else {set current ""}',
         'format "state=selected;selected=%s;current=%s;view=%s;apply_invoked=1" $target $current $vno',
     ]

@@ -350,22 +350,27 @@ class BootstrapWizardDialog(QDialog):
         file_layout.addWidget(browse_btn)
         layout.addWidget(file_group)
 
-        type_group = QGroupBox("Board Type")
+        type_group = QGroupBox("Board Type (multi-select supported)")
         type_layout = QVBoxLayout(type_group)
-        self._type_group = QButtonGroup(self)
-        self._rb_checkerboard = QRadioButton("Checkerboard")
-        self._rb_aruco = QRadioButton("ArUco")
-        self._rb_apriltag = QRadioButton("AprilTag")
-        self._rb_charuco = QRadioButton("CharUco")
-        self._rb_circle_grid = QRadioButton("Circle Grid")
-        self._rb_aruco_grid = QRadioButton("ArUco Grid Board")
-        self._rb_checkerboard.setChecked(True)
-        for rb in (
-            self._rb_checkerboard, self._rb_aruco, self._rb_apriltag,
-            self._rb_charuco, self._rb_circle_grid, self._rb_aruco_grid,
+        self._cb_checkerboard = QCheckBox("Checkerboard")
+        self._cb_aruco = QCheckBox("ArUco")
+        self._cb_apriltag = QCheckBox("AprilTag")
+        self._cb_charuco = QCheckBox("CharUco")
+        self._cb_circle_grid = QCheckBox("Circle Grid")
+        self._cb_aruco_grid = QCheckBox("ArUco Grid Board")
+        self._cb_custom = QCheckBox("Custom (manual)")
+        self._cb_checkerboard.setChecked(True)
+        for cb in (
+            self._cb_checkerboard, self._cb_aruco, self._cb_apriltag,
+            self._cb_charuco, self._cb_circle_grid, self._cb_aruco_grid,
         ):
-            self._type_group.addButton(rb)
-            type_layout.addWidget(rb)
+            cb.stateChanged.connect(self._on_type_changed)
+            type_layout.addWidget(cb)
+        sep_line = QWidget()
+        sep_line.setFixedHeight(8)
+        type_layout.addWidget(sep_line)
+        self._cb_custom.stateChanged.connect(self._on_type_changed)
+        type_layout.addWidget(self._cb_custom)
         layout.addWidget(type_group)
 
         params_group = QGroupBox("Parameters (optional)")
@@ -538,18 +543,21 @@ class BootstrapWizardDialog(QDialog):
         if path:
             self._output_dir_edit.setText(path)
 
-    def _get_selected_board_type(self) -> str:
-        if self._rb_aruco.isChecked():
-            return "aruco"
-        if self._rb_apriltag.isChecked():
-            return "apriltag"
-        if self._rb_charuco.isChecked():
-            return "charuco"
-        if self._rb_circle_grid.isChecked():
-            return "circle_grid"
-        if self._rb_aruco_grid.isChecked():
-            return "aruco_grid"
-        return "checkerboard"
+    def _get_checked_types(self) -> List[str]:
+        types: List[str] = []
+        if self._cb_checkerboard.isChecked():
+            types.append("checkerboard")
+        if self._cb_aruco.isChecked():
+            types.append("aruco")
+        if self._cb_apriltag.isChecked():
+            types.append("apriltag")
+        if self._cb_charuco.isChecked():
+            types.append("charuco")
+        if self._cb_circle_grid.isChecked():
+            types.append("circle_grid")
+        if self._cb_aruco_grid.isChecked():
+            types.append("aruco_grid")
+        return types
 
     _PARAM_VISIBILITY = {
         "checkerboard":  {"board_size"},
@@ -561,8 +569,16 @@ class BootstrapWizardDialog(QDialog):
     }
 
     def _on_type_changed(self) -> None:
-        board_type = self._get_selected_board_type()
-        visible_params = self._PARAM_VISIBILITY.get(board_type, set())
+        if self._cb_custom.isChecked():
+            for key, (label, widget) in self._param_widgets.items():
+                label.setVisible(False)
+                widget.setVisible(False)
+            return
+
+        checked_types = self._get_checked_types()
+        visible_params: set = set()
+        for bt in checked_types:
+            visible_params.update(self._PARAM_VISIBILITY.get(bt, set()))
         for key, (label, widget) in self._param_widgets.items():
             show = key in visible_params
             label.setVisible(show)
@@ -575,11 +591,30 @@ class BootstrapWizardDialog(QDialog):
             return
 
         self._image_path = image_path
+
+        if self._cb_custom.isChecked():
+            self._boards = []
+            self._tag_grids = []
+            self._tags = []
+            self._canvas.set_image(image_path)
+            self._canvas.set_detections(self._boards, self._tag_grids)
+            self._board_list.set_boards(self._boards)
+            self._stack.setCurrentIndex(1)
+            self._add_custom_btn.setChecked(True)
+            self._status_label.setText("")
+            return
+
+        checked_types = self._get_checked_types()
+        if not checked_types:
+            self._status_label.setText("Please select at least one board type.")
+            return
+
         self._detect_btn.setEnabled(False)
         self._detect_btn.setText("Detecting... please wait")
-        self._status_label.setText("Loading image and running detection...")
+        self._status_label.setText(
+            f"Loading image and detecting ({', '.join(checked_types)})..."
+        )
         QCoreApplication.processEvents()
-        board_type = self._get_selected_board_type()
 
         try:
             img = cv2.imread(image_path)
@@ -591,81 +626,88 @@ class BootstrapWizardDialog(QDialog):
             self._tag_grids = []
             self._tags = []
 
-            if board_type == "checkerboard":
-                cols = self._board_size_cols.value()
-                rows = self._board_size_rows.value()
-                sizes = [(cols, rows)] if cols > 0 and rows > 0 else None
-                self._boards = self._detector.detect_checkerboard_instances(img, sizes)
-                large, small = classify_checkerboards_by_size(self._boards)
-                self._boards = large + small
+            for board_type in checked_types:
+                if board_type == "checkerboard":
+                    cols = self._board_size_cols.value()
+                    rows = self._board_size_rows.value()
+                    sizes = [(cols, rows)] if cols > 0 and rows > 0 else None
+                    boards = self._detector.detect_checkerboard_instances(img, sizes)
+                    large, small = classify_checkerboards_by_size(boards)
+                    self._boards.extend(large + small)
 
-            elif board_type == "aruco":
-                dictionary = self._aruco_dict_combo.currentText()
-                self._tags = self._detector.detect_aruco_tags(img, dictionary)
-                self._tag_grids = group_tags_into_grids(self._tags)
-                for grid in self._tag_grids:
-                    bbox = grid.bbox
-                    corners = np.concatenate([t.corners for t in grid.tags], axis=0)
-                    self._boards.append(DetectedBoard(
-                        board_type="aruco",
-                        bbox=bbox,
-                        corners=corners,
-                        board_id=grid.grid_id,
-                        tags=grid.tags,
-                        center=grid.center,
-                        area=float(bbox[2] * bbox[3]),
-                    ))
+                elif board_type == "aruco":
+                    dictionary = self._aruco_dict_combo.currentText()
+                    tags = self._detector.detect_aruco_tags(img, dictionary)
+                    grids = group_tags_into_grids(tags)
+                    self._tags.extend(tags)
+                    self._tag_grids.extend(grids)
+                    for grid in grids:
+                        bbox = grid.bbox
+                        corners = np.concatenate([t.corners for t in grid.tags], axis=0)
+                        self._boards.append(DetectedBoard(
+                            board_type="aruco",
+                            bbox=bbox,
+                            corners=corners,
+                            board_id=grid.grid_id,
+                            tags=grid.tags,
+                            center=grid.center,
+                            area=float(bbox[2] * bbox[3]),
+                        ))
 
-            elif board_type == "apriltag":
-                family_text = self._tag_family_combo.currentText()
-                auto = family_text == "auto"
-                family = "tagStandard41h12" if auto else family_text
-                self._tags = self._detector.detect_apriltags(img, family, auto_family=auto)
-                self._tag_grids = group_tags_into_grids(self._tags)
-                for grid in self._tag_grids:
-                    bbox = grid.bbox
-                    corners = np.concatenate([t.corners for t in grid.tags], axis=0)
-                    self._boards.append(DetectedBoard(
-                        board_type="apriltag",
-                        bbox=bbox,
-                        corners=corners,
-                        board_id=grid.grid_id,
-                        tags=grid.tags,
-                        center=grid.center,
-                        area=float(bbox[2] * bbox[3]),
-                    ))
+                elif board_type == "apriltag":
+                    family_text = self._tag_family_combo.currentText()
+                    auto = family_text == "auto"
+                    family = "tagStandard41h12" if auto else family_text
+                    tags = self._detector.detect_apriltags(img, family, auto_family=auto)
+                    grids = group_tags_into_grids(tags)
+                    self._tags.extend(tags)
+                    self._tag_grids.extend(grids)
+                    for grid in grids:
+                        bbox = grid.bbox
+                        corners = np.concatenate([t.corners for t in grid.tags], axis=0)
+                        self._boards.append(DetectedBoard(
+                            board_type="apriltag",
+                            bbox=bbox,
+                            corners=corners,
+                            board_id=grid.grid_id,
+                            tags=grid.tags,
+                            center=grid.center,
+                            area=float(bbox[2] * bbox[3]),
+                        ))
 
-            elif board_type == "charuco":
-                cols = self._board_size_cols.value() or 7
-                rows = self._board_size_rows.value() or 5
-                dictionary = self._aruco_dict_combo.currentText()
-                detected = self._detector.detect_charuco_boards(
-                    img, (cols, rows), dictionary,
-                )
-                self._boards = detected
+                elif board_type == "charuco":
+                    cols = self._board_size_cols.value() or 7
+                    rows = self._board_size_rows.value() or 5
+                    dictionary = self._aruco_dict_combo.currentText()
+                    detected = self._detector.detect_charuco_boards(
+                        img, (cols, rows), dictionary,
+                    )
+                    self._boards.extend(detected)
 
-            elif board_type == "circle_grid":
-                cols = self._board_size_cols.value() or 0
-                rows = self._board_size_rows.value() or 0
-                sizes = [(cols, rows)] if cols > 0 and rows > 0 else None
-                self._boards = self._detector.detect_circle_grids(img, sizes)
-                for idx, board in enumerate(self._boards):
-                    board.board_id = f"CG{idx + 1}"
+                elif board_type == "circle_grid":
+                    cols = self._board_size_cols.value() or 0
+                    rows = self._board_size_rows.value() or 0
+                    sizes = [(cols, rows)] if cols > 0 and rows > 0 else None
+                    boards = self._detector.detect_circle_grids(img, sizes)
+                    for idx, board in enumerate(boards):
+                        board.board_id = f"CG{idx + 1}"
+                    self._boards.extend(boards)
 
-            elif board_type == "aruco_grid":
-                cols = self._board_size_cols.value() or 0
-                rows = self._board_size_rows.value() or 0
-                dictionary = self._aruco_dict_combo.currentText()
-                sizes = [(cols, rows)] if cols > 0 and rows > 0 else None
-                self._boards = self._detector.detect_aruco_grids(img, dictionary, sizes)
-                for idx, board in enumerate(self._boards):
-                    board.board_id = f"AG{idx + 1}"
+                elif board_type == "aruco_grid":
+                    cols = self._board_size_cols.value() or 0
+                    rows = self._board_size_rows.value() or 0
+                    dictionary = self._aruco_dict_combo.currentText()
+                    sizes = [(cols, rows)] if cols > 0 and rows > 0 else None
+                    boards = self._detector.detect_aruco_grids(img, dictionary, sizes)
+                    for idx, board in enumerate(boards):
+                        board.board_id = f"AG{idx + 1}"
+                    self._boards.extend(boards)
 
             count = len(self._boards)
             tag_count = len(self._tags)
             if count == 0:
                 self._status_label.setText(
-                    f"No {board_type} boards detected. Try different parameters."
+                    f"No boards detected for types: {', '.join(checked_types)}. Try different parameters."
                 )
                 return
 

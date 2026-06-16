@@ -667,8 +667,8 @@ def main() -> None:
                     if _cam_retry:
                         raise  # Second attempt also failed
                     _err_str = str(_cam_err)
-                    if "rendering frozen" not in _err_str and "View(FBO)" not in _err_str:
-                        raise  # Non-freeze error, abort immediately
+                    if "rendering frozen" not in _err_str and "View(FBO)" not in _err_str and "Initial evaluation aborted" not in _err_str:
+                        raise  # Non-recoverable error, abort immediately
                     print(f"[recovery] {camera_name}: render freeze detected. "
                           f"Killing all processes and retrying once...")
                     cmctrl.kill_all_processes()

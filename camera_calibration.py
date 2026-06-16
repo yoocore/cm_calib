@@ -7963,19 +7963,29 @@ class CameraCalibrator:
                     return _found[0] if _found else 0
                 _hwnd = _find_debugger()
                 if _hwnd:
-                    # Close the debugger window (Alt+F4)
                     _u.PostMessageW(_hwnd, 0x0010, 0, 0)  # WM_CLOSE
-                    _t.sleep(0.5)
-                from rendering_health import try_restart_rendering
-                r = try_restart_rendering()
-                if r.get("restart_success"):
-                    print(f"[carmaker] Rendering restarted after NaN, UC growth={r.get('uc_growth')}")
-                    err2 = self._capture_carmaker_error_dialog()
-                    if err2 and ("ERROR" in err2 or "invalid" in err2):
-                        print(f"[carmaker] NaN persists after restart: {err2[:200]}. Aborting.")
-                        raise RuntimeError(f"CarMaker NaN persists after rendering restart: {err2[:200]}")
-                else:
-                    raise RuntimeError(f"CarMaker NaN before capture and rendering restart failed: {err_text[:200]}")
+                    _t.sleep(1.0)
+                # Give CSM time to initialize before attempting render
+                # Don't call try_restart_rendering() (forces immediate UpdateView_TimerProc
+                # which triggers CSM NaN again). Instead schedule delayed render.
+                import cmapi_testrun_control as _mctrl
+                _mctrl.movie_send('''
+                    catch {after cancel UpdateView_TimerProc}
+                    set ::View(StopUpdateView) 0
+                    set ::View(UpdateViewActive) 0
+                    after 2000 {set ::View(UpdateViewActive) 1; UpdateView_TimerProc}
+                ''')
+                _t.sleep(3.0)
+                from rendering_health import check_render_state
+                _ns = check_render_state()
+                print(f"[carmaker] Post-CSM-delay: UVA={_ns.get('uva')} SUV={_ns.get('suv')} UC={_ns.get('uc')}")
+                # Keep timer alive
+                _mctrl.movie_send("catch {after 0 UpdateView_TimerProc}")
+                _err2 = self._capture_carmaker_error_dialog()
+                if _err2 and ("ERROR" in _err2 or "invalid" in _err2):
+                    print(f"[carmaker] NaN persists after CSM delay: {_err2[:200]}. Aborting.")
+                    raise RuntimeError(f"CarMaker NaN persists after CSM delay: {_err2[:200]}")
+                print(f"[carmaker] Rendering recovered after CSM delay.")
             if err_text and "FBO" in err_text:
                 print(f"[carmaker] WARNING: CarMaker FBO error before capture: {err_text[:200]}")
         except RuntimeError:

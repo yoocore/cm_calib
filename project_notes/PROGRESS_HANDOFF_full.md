@@ -2263,3 +2263,53 @@ freeze 导致 camera_calibration 子进程以非零码退出后，orchestrator �
 | Run 7 (Phase 43) | 1090.6 | 153.2 | 43.5 | --multi-start-count 1 |
 
 > rear_tv 1090 分偏高 = C++ ConfigFBO 在相机切换时破坏 GL 上下文，Win32 capture 捕获到失真帧。非标定脚本问题。
+
+---
+
+## Phase 44: 精简 Capture 链路 + 消除 CheckViewPort 补丁 (2026-06-16)
+
+### 背景
+
+Phase 14-18 积累了大量补丁层（after cancel/height bump/wm lower/Win32 PrintWindow/NaN 检测等），每个补丁都是为了修复上一个补丁引入的问题。回退到 May 11 版本的纯 FBO capture。
+
+### 改动
+
+1. **Capture 回到纯 FBO**（从 `View()` dict 读取尺寸，`FBO new` + `UpdateView` + `gl readpixels`），移除了：
+   - `wm state` dual-mode (noFBO / FBO 双模)
+   - height bump (`View::SetSize h+1 -> h`)
+   - `after cancel UpdateView_TimerProc`
+   - `after 100` 延时
+   - Win32 `PrintWindow` capture 备选
+   - Win32 `wm lower` / `wm attributes -topmost`
+   - NaN 检测 (`floating point value is Not a Number`)
+
+2. **`ensure_movie_view_size`** 回到 May 12 版本：`View::SetSize` + `update` + `update idletasks`，加 skip-if-dimensions-match 跳过。
+
+3. **`calibration_orchestrator.py` prepare 流程**：
+   - `disable_movie_updateview_timer`（rename proc 杀全部 timer）-> `View::SetSize` -> ABRAXAS -> `ensure_movie_camera_selected` -> `enable_movie_updateview_timer`
+   - 顺序匹配 v1.0: disable timer -> View::SetSize -> ABRAXAS -> CameraSelect
+
+### 关键修复
+
+**`disable_movie_updateview_timer` vs `cancel`：** Phase 28-33 已发现 `after cancel` 只取消一个 timer 实例，Tcl `rename` 不覆盖。`disable` 用 `rename UpdateView_TimerProc {}` 彻底禁用（删 proc，让所有 `after` 找不到命令而忽略），`enable` 恢复。
+
+**移除 `start_simulation_via_tcl`：** 标定在 idle 状态运行，不需要 simulation。bootstrap (StartSim -> running -> StopSim) 已初始化 TestRun。
+
+**移除 freeze check：** 5s DDE timeout 在 capture 时误报（IPG-MOVIE 正常但 capture 时 DDE 变慢），DDE health check 已有连通性验证。
+
+### 三相机冒烟测试 (2026-06-16)
+
+| 轮次 | 耗时 | left_tv | rear_tv | right_rear |
+|------|------|---------|---------|------------|
+| R1 | 312s | 810.79 | 1054.75 | 51.64 |
+| R2 | 290s | 810.79 | 1054.75 | 51.64 |
+| R3 | 297s | 810.79 | 1054.75 | 51.64 |
+
+- 管线稳定性：**3/3 全部跑通**，无崩无卡
+- 分数一致性：3 轮完全一致
+
+### 遗留问题
+
+1. **right_rear 分数 51.64**：比 v1.0 的 ~43.5 差，可能与 auto-reduce 分辨率（960x640 vs 1920x1280）有关
+2. **freeze 检测待补充**：需设计不依赖 DDE timeout 的方案（如 UpdateCounter 前后对比）
+3. **磁盘空间**：三相机每次 ~3GB，长期稳定性测试需要充足空间

@@ -413,7 +413,6 @@ class BootstrapWizardDialog(QDialog):
             "tag_family": (self._tag_family_label, self._tag_family_combo),
             "board_size": (self._board_size_label, self._board_size_widget),
         }
-        self._type_group.buttonClicked.connect(self._on_type_changed)
         self._on_type_changed()
         layout.addWidget(params_group)
 

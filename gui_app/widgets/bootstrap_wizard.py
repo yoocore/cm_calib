@@ -408,12 +408,24 @@ class BootstrapWizardDialog(QDialog):
         cg_label, cg_widget, self._cg_size_cols, self._cg_size_rows = _make_size_widget("Circle Grid")
         params_layout.addRow(cg_label, cg_widget)
 
-        self._aruco_dict_combo = QComboBox()
-        self._aruco_dict_combo.addItems([
+        _DICT_ITEMS = [
             "DICT_4X4_50", "DICT_5X5_100", "DICT_6X6_100", "DICT_7X7_100",
-        ])
-        self._aruco_dict_label = QLabel("[ArUco / CharUco / ArUco Grid] Dictionary:")
-        params_layout.addRow(self._aruco_dict_label, self._aruco_dict_combo)
+        ]
+
+        def _make_dict_combo(type_label: str) -> tuple:
+            combo = QComboBox()
+            combo.addItems(_DICT_ITEMS)
+            label = QLabel(f"[{type_label}] Dictionary:")
+            return label, combo
+
+        aruco_d_label, self._aruco_dict_combo = _make_dict_combo("ArUco")
+        params_layout.addRow(aruco_d_label, self._aruco_dict_combo)
+
+        charuco_d_label, self._charuco_dict_combo = _make_dict_combo("CharUco")
+        params_layout.addRow(charuco_d_label, self._charuco_dict_combo)
+
+        aruco_grid_d_label, self._aruco_grid_dict_combo = _make_dict_combo("ArUco Grid")
+        params_layout.addRow(aruco_grid_d_label, self._aruco_grid_dict_combo)
 
         self._tag_family_combo = QComboBox()
         self._tag_family_combo.addItems([
@@ -424,13 +436,14 @@ class BootstrapWizardDialog(QDialog):
 
         self._param_widgets = {
             "checkerboard":    (cb_label, cb_widget),
-            "aruco_grid":      (aruco_label, aruco_widget),
+            "aruco":           (aruco_d_label, self._aruco_dict_combo),
             "charuco":         (charuco_label, charuco_widget),
+            "charuco_dict":    (charuco_d_label, self._charuco_dict_combo),
+            "aruco_grid":      (aruco_label, aruco_widget),
+            "aruco_grid_dict": (aruco_grid_d_label, self._aruco_grid_dict_combo),
             "circle_grid":     (cg_label, cg_widget),
-            "aruco":           (self._aruco_dict_label, self._aruco_dict_combo),
             "apriltag":        (self._tag_family_label, self._tag_family_combo),
         }
-        self._aruco_shared_types = {"aruco", "charuco", "aruco_grid"}
         self._on_type_changed()
         layout.addWidget(params_group)
 
@@ -585,10 +598,8 @@ class BootstrapWizardDialog(QDialog):
 
         checked_types = set(self._get_checked_types())
         for key, (label, widget) in self._param_widgets.items():
-            if key in self._aruco_shared_types:
-                show = bool(checked_types & self._aruco_shared_types)
-            else:
-                show = key in checked_types
+            base_type = key.split("_dict")[0]
+            show = base_type in checked_types
             label.setVisible(show)
             widget.setVisible(show)
 
@@ -686,7 +697,7 @@ class BootstrapWizardDialog(QDialog):
                 elif board_type == "charuco":
                     cols = self._charuco_size_cols.value() or 7
                     rows = self._charuco_size_rows.value() or 5
-                    dictionary = self._aruco_dict_combo.currentText()
+                    dictionary = self._charuco_dict_combo.currentText()
                     detected = self._detector.detect_charuco_boards(
                         img, (cols, rows), dictionary,
                     )
@@ -704,7 +715,7 @@ class BootstrapWizardDialog(QDialog):
                 elif board_type == "aruco_grid":
                     cols = self._aruco_size_cols.value() or 0
                     rows = self._aruco_size_rows.value() or 0
-                    dictionary = self._aruco_dict_combo.currentText()
+                    dictionary = self._aruco_grid_dict_combo.currentText()
                     sizes = [(cols, rows)] if cols > 0 and rows > 0 else None
                     boards = self._detector.detect_aruco_grids(img, dictionary, sizes)
                     for idx, board in enumerate(boards):

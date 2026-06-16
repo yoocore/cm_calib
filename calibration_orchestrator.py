@@ -256,9 +256,6 @@ def _prepare_runtime_for_camera(
         )
         cmctrl.wait_for_carmaker_tcleval_ready(timeout_sec=60.0)
         print("CarMaker started and TclEval ready.")
-        if _fresh_start:
-            # Give GPU driver time to initialize GL context before IPG-MOVIE operations
-            import time as _time; _time.sleep(20.0)
     # --- Step 1: Activate sensor & sync TestRun in CarMaker GUI ---
     vehicle_path, vehicle_key = cmctrl.resolve_vehicle_path(project_root, testrun_rel_path)
     activation = cmctrl.activate_single_vehicle_sensor(vehicle_path, camera_name)
@@ -307,6 +304,14 @@ def _prepare_runtime_for_camera(
         timeout_sec=_movie_settle,
         poll_interval_sec=float(args.movie_ready_poll_sec),
     )
+    # Warm up GPU: exercise rendering pipeline before any FBO operations
+    if _fresh_start:
+        import time as _time; _time.sleep(5.0)
+        try: cmctrl.movie_send("UpdateView")  # noqa
+        except Exception: pass
+        _time.sleep(1.0)
+        try: cmctrl.movie_send("UpdateView")  # noqa
+        except Exception: pass
     if movie_view_size is not None:
         view_width, view_height = movie_view_size
         applied_view = cmctrl.ensure_movie_view_size(view_width, view_height)

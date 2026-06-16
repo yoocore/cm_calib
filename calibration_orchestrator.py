@@ -243,6 +243,7 @@ def _prepare_runtime_for_camera(
     camera_name: str,
     config_path: Path,
     movie_view_size: tuple[int, int] | None = None,
+    skip_bootstrap: bool = False,
 ) -> dict[str, Any]:
     # --- Step 0: Ensure CarMaker is running (sync_gui/bootstrap both need it) ---
     existing = cmctrl.list_carmaker_processes()
@@ -304,11 +305,8 @@ def _prepare_runtime_for_camera(
         timeout_sec=_movie_settle,
         poll_interval_sec=float(args.movie_ready_poll_sec),
     )
-    # Cancel render timer before View::SetSize to prevent C++ ConfigFBO race
-    try:
-        cmctrl.cancel_movie_updateview_timer(timeout_sec=5.0)
-    except Exception:
-        pass
+    # Disable render timer before View::SetSize (cancel only one instance, rename kills all)
+    cmctrl.disable_movie_updateview_timer(timeout_sec=5.0)
     if movie_view_size is not None:
         view_width, view_height = movie_view_size
         applied_view = cmctrl.ensure_movie_view_size(view_width, view_height)
@@ -323,6 +321,8 @@ def _prepare_runtime_for_camera(
     )
     movie_scene["camera_name"] = str(camera_selection.get("current") or movie_scene.get("camera_name") or "")
     camera_widgets = cmctrl.ensure_movie_camera_widgets(timeout_sec=float(args.health_check_timeout_sec))
+    # Restore render timer after View::SetSize + ABRAXAS are done
+    cmctrl.enable_movie_updateview_timer(timeout_sec=5.0)
     # --- Step 8: Capture initial parameter values ---
     config_initial_capture = cmctrl.capture_initial_values_to_config(config_path)
     # --- Step 9: Health check ---

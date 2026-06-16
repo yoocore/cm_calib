@@ -125,7 +125,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--bootstrap-idle-timeout-sec",
         type=float,
-        default=30.0,
+        default=15.0,
         help="Maximum seconds to wait for bootstrap idle state per camera switch.",
     )
     parser.add_argument(
@@ -146,7 +146,7 @@ def _parse_args() -> argparse.Namespace:
         default=True,
         help="Run a read-only Movie remote-control health check after each camera switch.",
     )
-    parser.add_argument("--health-check-attempts", type=int, default=2)
+    parser.add_argument("--health-check-attempts", type=int, default=1)
     parser.add_argument("--health-check-timeout-sec", type=float, default=2.5)
     parser.add_argument("--health-check-settle-sec", type=float, default=0.3)
     parser.add_argument("--campaign-rounds", type=int, default=1)

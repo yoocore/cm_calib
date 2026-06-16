@@ -7803,6 +7803,13 @@ class CameraCalibrator:
         raise final_error
 
     def capture_movie(self, tag: str) -> Path:
+        import cmapi_testrun_control as _cmctrl
+        # Warm-up: ensure GL context is initialized before FBO capture.
+        # Single UpdateView via DDE gives the render pipeline time to settle.
+        try:
+            _cmctrl.movie_send("UpdateView")
+        except Exception:
+            pass
         return self._capture_movie_via_dde(tag)
 
     def _diagnose_carmaker_after_failure(self, error: RuntimeError) -> None:

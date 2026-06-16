@@ -88,12 +88,9 @@ def emit_summary_json(payload: dict[str, Any]) -> None:
 def _movie_background_tcl_commands(*, include_root: bool = True) -> list[str]:
     commands: list[str] = []
     if include_root:
-        commands.extend(
-            [
-                'catch {wm attributes . -topmost 0}',
-                'catch {wm lower .}',
-            ]
-        )
+        commands.extend([
+            'catch {wm attributes . -topmost 0}',
+        ])
     commands.extend(
         [
             'if {[winfo exists .camera]} {',
@@ -2344,6 +2341,8 @@ def ensure_movie_camera_selected(
     select_body_lines = [
         'set _before_camera_state [expr {[winfo exists .camera] ? [wm state .camera] : "missing"}]',
         'set _before_lens_state [expr {[winfo exists .camera.cammoddlg] ? [wm state .camera.cammoddlg] : "missing"}]',
+        '# Cancel pending render timer to prevent NaN (CSM uninitialized) during camera switch',
+        'catch {after cancel UpdateView_TimerProc}',
         'if {![info exists View(ev.view)]} {error "missing View(ev.view)"}',
         'set vno $View(ev.view)',
         'if {![winfo exists .camera] || ![winfo exists .camera.btn.set]} {',

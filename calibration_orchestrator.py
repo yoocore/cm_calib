@@ -312,6 +312,11 @@ def _prepare_runtime_for_camera(
         _time.sleep(1.0)
         try: cmctrl.movie_send("UpdateView")  # noqa
         except Exception: pass
+    # Pause render timer before View::SetSize to prevent C++ ConfigFBO race
+    try:
+        cmctrl.cancel_movie_updateview_timer(timeout_sec=5.0)
+    except Exception:
+        pass
     if movie_view_size is not None:
         view_width, view_height = movie_view_size
         applied_view = cmctrl.ensure_movie_view_size(view_width, view_height)

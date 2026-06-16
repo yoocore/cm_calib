@@ -7935,11 +7935,19 @@ class CameraCalibrator:
         except Exception as exc:
             print(f"[health] Rendering check error: {exc}")
 
-        # Render warm-up: ensure CSM/textures are initialized before capture
-        # Fresh Movie/timer restart may need a few frames to stabilize
+        # Verify rendering is alive: send UpdateView, check UC grows
         try:
-            import cmapi_testrun_control as _cmctrl
-            _cmctrl.movie_send("UpdateView"); _cmctrl.movie_send("UpdateView")
+            import cmapi_testrun_control as _cmctrl, time as _time
+            _uc_b4 = int(getattr(self, "_last_capture_uc", 0) or 0)
+            _cmctrl.movie_send("UpdateView")
+            _time.sleep(0.05)
+            _cmctrl.movie_send("UpdateView")
+            _uc_raw = _cmctrl.movie_send("set ::View(UpdateCounter)") or "0"
+            _uc_af = int(_uc_raw.strip())
+            if _uc_af <= _uc_b4:
+                print(f"[health] UC not growing before capture ({_uc_b4} -> {_uc_af}), restarting...")
+                from rendering_health import try_restart_rendering
+                try_restart_rendering()
         except Exception:
             pass
 

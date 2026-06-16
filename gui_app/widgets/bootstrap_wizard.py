@@ -795,7 +795,7 @@ class BootstrapWizardDialog(QDialog):
                 return
 
         cam_name = self._camera_name_label.text()
-        camera_output_dir = Path(output_dir) / cam_name
+        camera_output_dir = Path(output_dir) / f"calibtool_{cam_name}"
         camera_output_dir.mkdir(parents=True, exist_ok=True)
         output_path = camera_output_dir / f"camera.{cam_name}.json"
 

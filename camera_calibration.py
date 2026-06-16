@@ -7803,6 +7803,12 @@ class CameraCalibrator:
         raise final_error
 
     def capture_movie(self, tag: str) -> Path:
+        # Quick freeze check: verify Movie DDE is responsive before attempting capture
+        try:
+            from cmapi_testrun_control import movie_send as _ms
+            _ms("set ::FreezeCheck_uc $::View(UpdateCounter)", timeout_sec=5.0)
+        except Exception:
+            raise RuntimeError("IPG-MOVIE unresponsive (freeze detected) before capture") from None
         return self._capture_movie_via_dde(tag)
 
     def _diagnose_carmaker_after_failure(self, error: RuntimeError) -> None:

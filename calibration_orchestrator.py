@@ -307,13 +307,15 @@ def _prepare_runtime_for_camera(
         timeout_sec=_movie_settle,
         poll_interval_sec=float(args.movie_ready_poll_sec),
     )
+    # View size is handled by camera select (.camera.btn.set invoke).
+    # Calling ensure_movie_view_size here triggers View::SetSize → C++ ConfigFBO
+    # on the GL context, corrupting FBO state. v1.0 didn't do this and worked.
     if movie_view_size is not None:
         view_width, view_height = movie_view_size
-        applied_view = cmctrl.ensure_movie_view_size(view_width, view_height)
         movie_scene["width"] = str(view_width)
         movie_scene["height"] = str(view_height)
-        movie_scene["view_widget"] = str(applied_view.get("widget") or "")
-        movie_scene["mode"] = str(applied_view.get("mode") or movie_scene.get("mode") or "")
+        movie_scene["view_widget"] = ""
+        movie_scene["mode"] = "camera_select"
     abraxas = cmctrl.ensure_movie_abraxas_enabled(timeout_sec=float(args.health_check_timeout_sec))
     camera_selection = cmctrl.ensure_movie_camera_selected(
         activation["ipgmovie_sensor_label"],

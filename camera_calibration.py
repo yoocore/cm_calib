@@ -7972,34 +7972,9 @@ class CameraCalibrator:
             touched_params.append(param)
             touched = True
         if touched_params:
-            # Only apply params that differ from IPG-MOVIE's current values.
-            # Re-applying unchanged params via widget entries + .camera.btn.set invoke
-            # can trigger an internal camera model re-initialization, causing a
-            # rendering shift even when nominal values are identical.
-            try:
-                current = self._read_script_control_values(touched_params)
-                changed_params = []
-                for param in touched_params:
-                    expected = self._quantize_param_value(param, param.value)
-                    actual = current.get(param.name)
-                    if actual is None:
-                        changed_params.append(param)
-                        print(f"  param {param.name}: not readable from IPG-MOVIE, will apply")
-                        continue
-                    read_decimals = self.SCRIPT_CONTROL_READ_DECIMALS.get(param.name, param.decimals)
-                    if not self._script_control_readback_matches(expected, actual, param.decimals, read_decimals):
-                        changed_params.append(param)
-                        print(f"  param {param.name}: differs (expected={expected}, actual={actual}), will apply")
-                    else:
-                        print(f"  param {param.name}: matches ({actual}), skip")
-                if changed_params:
-                    print(f"Applying {len(changed_params)} changed params: {[p.name for p in changed_params]}")
-                    self._apply_script_control_params(changed_params)
-                else:
-                    print("All parameters already match IPG-MOVIE state, skipping apply")
-            except Exception as exc:
-                print(f"Warning: diff-only apply failed ({exc}), falling back to full apply")
-                self._apply_script_control_params(touched_params)
+            changed_names = [p.name for p in touched_params]
+            print(f"Applying {len(touched_params)} params: {changed_names}")
+            self._apply_script_control_params(touched_params)
         if touched:
             time.sleep(self.settle_sec)
 

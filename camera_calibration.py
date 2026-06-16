@@ -7703,9 +7703,6 @@ class CameraCalibrator:
                     "set vno $View(ev.view)",
                     "set wi [dict get $View($vno) Width]",
                     "set he [dict get $View($vno) Height]",
-                    "UpdateView $vno",
-                    "catch {gl bindframebuffer_read 0}",
-                    "catch {FBO end}",
                     "set captureFBO [FBO new $wi $he -tex rgb -noclear]",
                     "set update_rc [catch {",
                     "    FBO begin $captureFBO",
@@ -7793,10 +7790,7 @@ class CameraCalibrator:
                 if self._runtime_error_needs_dde_recovery_probe(attempt_runtime_error):
                     if self._wait_for_dde_service_recovery():
                         continue
-                _delay = retry_sleep_sec
-                if attempt_runtime_error and "FBO Creation" in str(attempt_runtime_error):
-                    _delay = max(_delay * 12, 3.0)
-                time.sleep(_delay)
+                time.sleep(retry_sleep_sec)
 
         if last_runtime_error is not None:
             self._record_dde_operation_failure(last_runtime_error, "movie_capture")

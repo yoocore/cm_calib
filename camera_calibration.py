@@ -7681,7 +7681,6 @@ class CameraCalibrator:
         out_path = self.output_dir / f"{tag}.png"
 
         try:
-            import win32ui  # noqa: F401
             import dde  # type: ignore
         except Exception as exc:
             raise RuntimeError("movie dde capture requires pywin32 DDE support") from exc
@@ -7701,79 +7700,28 @@ class CameraCalibrator:
                 result_path,
                 "IPG-MOVIE",
                 [
-                    "# --- diagnostic: log View() before any set that might fail with multi-word return ---",
-                    "puts $__copilot_remote_out \"DIAG_PRE: View(ev.view)='$View(ev.view)'\"",
-                    "scan $View(ev.view) %d vno",
-                    "scan $vno %d vno_int",
-                    "set wpath \".view$vno_int\"",
-                    "set vp_w [$wpath.gl0 cget -width]",
-                    "set vp_h [$wpath.gl0 cget -height]",
-                    "# --- diagnostic: log raw Tcl values for debugging ---",
-                    "puts $__copilot_remote_out \"DIAG: vno='$vno' wpath='$wpath' vp_w='$vp_w' vp_h='$vp_h'\"",
-                    "set _top [winfo toplevel $wpath]",
-                    "puts $__copilot_remote_out \"DIAG_WM_STATE: [wm state $_top]\"",
-                    "puts $__copilot_remote_out \"DIAG_VP_SIZE: $vp_w x$vp_h\"",
-                    "# --- If minimized, restore window so Win32 capture works ---",
-                    "set __cap_ws [wm state .]",
-                    "if {$__cap_ws eq {iconic}} {",
-                    "    wm state . normal",
-                    "    after 500",
-                    "    update",
-                    "    after 300",
+                    "set vno $View(ev.view)",
+                    "set wi [dict get $View($vno) Width]",
+                    "set he [dict get $View($vno) Height]",
+                    "set captureFBO [FBO new $wi $he -tex rgb -noclear]",
+                    "set update_rc [catch {",
+                    "    FBO begin $captureFBO",
+                    "    UpdateView $vno",
+                    "    FBO end",
+                    "} update_msg]",
+                    "catch {FBO end}",
+                    "if {$update_rc != 0} {",
+                    "    catch {FBO delete $captureFBO}",
+                    "    error $update_msg",
                     "}",
-
-                    "if {[wm state $_top] eq {iconic}} {",
-                    "    # --- window minimized: use persistent FBO (offscreen) ---",
-                    "    if {![info exists __captureFBO]} {",
-                    "        set __captureFBO [FBO new $vp_w $vp_h -tex rgb -noclear]",
-                    "        set __captureFBO_w $vp_w",
-                    "        set __captureFBO_h $vp_h",
-                    "    } elseif {$__captureFBO_w != $vp_w || $__captureFBO_h != $vp_h} {",
-                    "        catch {FBO delete $__captureFBO}",
-                    "        set __captureFBO [FBO new $vp_w $vp_h -tex rgb -noclear]",
-                    "        set __captureFBO_w $vp_w",
-                    "        set __captureFBO_h $vp_h",
-                    "    }",
-                    "    set update_rc [catch {",
-                    "        FBO begin $__captureFBO",
-                    "        UpdateView $vno_int",
-                    "        FBO end",
-                    "    } update_msg]",
-                    "    catch {FBO end}",
-                    "    puts $__copilot_remote_out \"DIAG_BRANCH: iconic\"",
-                    "    if {$update_rc != 0} {",
-                    "        puts $__copilot_remote_out \"DIAG_ERROR: $update_msg\"",
-                    "        catch {gl bindframebuffer_read 0}",
-                    "        catch {FBO delete $__captureFBO}",
-                    "        catch {unset __captureFBO}",
-                    "        error $update_msg",
-                    "    }",
-                    "    after 100",
-                    "    catch {image delete probeImg}",
-                    "    image create photo probeImg -width $vp_w -height $vp_h",
-                    "    set read_rc [catch {",
-                    "        gl bindframebuffer_read $__captureFBO",
-                    "        gl readpixels 0 0 probeImg",
-                    "    } read_msg]",
-                    "    if {$read_rc != 0} {",
-                    "        puts $__copilot_remote_out \"DIAG_ERROR: $read_msg\"",
-                    "        catch {FBO delete $__captureFBO}",
-                    "        catch {unset __captureFBO}",
-                    "        error $read_msg",
-                    "    }",
+                    "catch {image delete probeImg}",
+                    "image create photo probeImg -width $wi -height $he",
+                    "gl bindframebuffer_read $captureFBO",
+                    "gl readpixels 0 0 probeImg",
                     f'probeImg write "{out_path.as_posix()}" -format png',
-                    "} else {",
-                    "    puts $__copilot_remote_out \"DIAG_BRANCH: normal\"",
-                    "    # --- window visible: UpdateView only; capture via win32 PrintWindow ---",
-                    "    UpdateView $vno_int",
-                    "    after 200",
-                    "}",
-                    "# --- Re-schedule the rendering loop timer AFTER capture (not before — would trigger ConfigFBO in unstable GL context) ---",
-                    "# --- diagnostic: capture CarMaker/IPG-MOVIE Tcl error state ---",
-                    "catch {puts $__copilot_remote_out \"DIAG_CARMAKER_ERR: [set ::errorInfo]\"}",
-                    "catch {after 0 UpdateView_TimerProc}",
                     "catch {gl bindframebuffer_read 0}",
-            ],
+                    "catch {FBO delete $captureFBO}"
+                ],
             )
             script_path.write_text(script_text, encoding="utf-8")
             _unlink_if_exists(result_path)
@@ -7816,15 +7764,6 @@ class CameraCalibrator:
                             self._record_dde_operation_success()
                             _unlink_if_exists(script_path)
                             _unlink_if_exists(result_path)
-                            if not out_path.exists():
-                                try:
-                                    from capture_viewport_win32 import capture_ipgmovie_viewport
-                                    capture_ipgmovie_viewport(out_path)
-                                except Exception as exc:
-                                    attempt_runtime_error = RuntimeError(
-                                        f"movie dde capture failed: Win32 viewport capture error: {exc}",
-                                    )
-                                    break
                             return out_path
                     time.sleep(0.05)
 
@@ -7861,139 +7800,6 @@ class CameraCalibrator:
         raise final_error
 
     def capture_movie(self, tag: str) -> Path:
-        if not getattr(self, "_movie_view_size_initialized", False):
-            try:
-                import cmapi_testrun_control as cmctrl
-                from runtime_config_bootstrap import load_movie_view_size_from_real_image
-                if self.config_path is not None and self.config_path.exists():
-                    width, height = load_movie_view_size_from_real_image(self.config_path)
-                    cmctrl.ensure_movie_view_size(width, height)
-                    print(f"Set movie view size to {width}x{height} before first capture")
-                else:
-                    print(f"Skipped movie view size init: config_path={'None' if self.config_path is None else 'not found'}")
-            except Exception as exc:
-                print(f"Warning: could not set movie view size: {exc}")
-            self._movie_view_size_initialized = True
-        # Rendering health check: detect freeze before attempting capture.
-        # Layer 1a: Flag-based detection — UVA=1 (stuck), SUV=1 (stopped), EXP=1 (exporting).
-        # Layer 1b: UC growth detection — if UpdateCounter hasn't grown since last
-        # capture, the rendering loop timer is dead (after cancel killed it).
-        try:
-            from rendering_health import check_render_state, try_restart_rendering
-            state = check_render_state()
-            if state.get("ok"):
-                uva = state.get("uva", "0")
-                suv = state.get("suv", "0")
-                exp = state.get("exp", "0")
-                uc = state.get("uc", "0")
-                needs_restart = False
-                reason = ""
-                # SUV=1 means StopUpdateView (pause rendering); EXP=1 means exporting.
-                # UVA=0 alone is NORMAL after camera switch — the rendering loop timer
-                # hasn't started yet, but UpdateView in the capture body works fine.
-                # Restarting unnecessarily (try_restart_rendering) corrupts GL context.
-                if suv == "1" or exp == "1":
-                    needs_restart = True
-                    reason = f"UVA={uva} SUV={suv} EXP={exp}"
-                else:
-                    prev_uc = getattr(self, "_last_capture_uc", None)
-                    if prev_uc is not None:
-                        try:
-                            uc_growth = int(uc) - int(prev_uc)
-                            if uc_growth <= 0:
-                                needs_restart = True
-                                reason = f"UC stalled (prev={prev_uc}, now={uc}, growth={uc_growth})"
-                        except (TypeError, ValueError):
-                            pass
-                    elif int(uc) < 10:
-                        # First capture with very few frames = timer likely not running
-                        needs_restart = True
-                        reason = f"UC too low on first check (UC={uc})"
-                if needs_restart:
-                    print(f"[health] Rendering issue before '{tag}': {reason}, attempting restart...")
-                    r = try_restart_rendering()
-                    if r.get("restart_success"):
-                        print(f"[health] Rendering restarted, UC growth={r.get('uc_growth')}")
-                    else:
-                        err_detail = r.get('error', 'unknown') or 'None'
-                        print(f"[health] Rendering restart failed: {err_detail}")
-                        # Capture CarMaker error dialog for diagnostic
-                        cm_err = self._capture_carmaker_error_dialog()
-                        if cm_err:
-                            print(f"[health] CarMaker error at freeze time: {cm_err[:300]}")
-                        # Abort: frozen rendering = waste of retries
-                        raise RuntimeError(
-                            f"IPG-MOVIE rendering frozen (UVA={uva} SUV={suv} EXP={exp} UC={uc}). "
-                            f"Restart failed: {err_detail}. "
-                            f"CarMaker err: {cm_err[:100] if cm_err else 'N/A'}"
-                        )
-                self._last_capture_uc = uc
-        except ImportError:
-            pass  # rendering_health module not available
-        except RuntimeError:
-            raise  # Rendering frozen — abort, don't continue to capture
-        except Exception as exc:
-            print(f"[health] Rendering check error: {exc}")
-
-        # Verify rendering is alive: send UpdateView, check UC grows
-        try:
-            import cmapi_testrun_control as _cmctrl, time as _time
-            _uc_b4 = int(getattr(self, "_last_capture_uc", 0) or 0)
-            _cmctrl.movie_send("UpdateView")
-            _time.sleep(0.05)
-            _cmctrl.movie_send("UpdateView")
-        except Exception:
-            pass
-        try:
-            err_text = self._capture_carmaker_error_dialog()
-            if err_text and ("ERROR" in err_text or "invalid" in err_text):
-                print(f"[carmaker] CarMaker NaN/ERROR before capture, dismissing dialog and restarting rendering...")
-                # Dismiss the Internal Debugger error dialog so DDE commands reach Movie
-                import ctypes; _u = ctypes.windll.user32; import time as _t
-                def _find_debugger() -> int:
-                    _found = []
-                    def _enum(h, _):
-                        _b = ctypes.create_unicode_buffer(256)
-                        _u.GetWindowTextW(h, _b, 256)
-                        if "Internal Debugger" in _b.value or ("IPGMovie" in _b.value and "Debugger" in _b.value):
-                            _found.append(h)
-                        return True
-                    _c = ctypes.WINFUNCTYPE(ctypes.wintypes.BOOL, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)(_enum)
-                    _u.EnumWindows(_c, 0)
-                    return _found[0] if _found else 0
-                _hwnd = _find_debugger()
-                if _hwnd:
-                    _u.PostMessageW(_hwnd, 0x0010, 0, 0)  # WM_CLOSE
-                    _t.sleep(1.0)
-                # Give CSM time to initialize before attempting render
-                # Don't call try_restart_rendering() (forces immediate UpdateView_TimerProc
-                # which triggers CSM NaN again). Instead schedule delayed render.
-                import cmapi_testrun_control as _mctrl
-                _mctrl.movie_send('''
-                    catch {after cancel UpdateView_TimerProc}
-                    set ::View(StopUpdateView) 0
-                    set ::View(UpdateViewActive) 0
-                    after 2000 {set ::View(UpdateViewActive) 1; UpdateView_TimerProc}
-                ''')
-                _t.sleep(3.0)
-                from rendering_health import check_render_state
-                _ns = check_render_state()
-                print(f"[carmaker] Post-CSM-delay: UVA={_ns.get('uva')} SUV={_ns.get('suv')} UC={_ns.get('uc')}")
-                # Keep timer alive
-                _mctrl.movie_send("catch {after 0 UpdateView_TimerProc}")
-                _err2 = self._capture_carmaker_error_dialog()
-                if _err2 and ("ERROR" in _err2 or "invalid" in _err2):
-                    print(f"[carmaker] NaN persists after CSM delay: {_err2[:200]}. Aborting.")
-                    raise RuntimeError(f"CarMaker NaN persists after CSM delay: {_err2[:200]}")
-                print(f"[carmaker] Rendering recovered after CSM delay.")
-            if err_text and "FBO" in err_text:
-                print(f"[carmaker] WARNING: CarMaker FBO error before capture: {err_text[:200]}")
-        except RuntimeError:
-            raise
-        except Exception:
-            pass
-
-
         return self._capture_movie_via_dde(tag)
 
     def _diagnose_carmaker_after_failure(self, error: RuntimeError) -> None:

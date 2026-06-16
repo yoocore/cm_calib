@@ -2074,8 +2074,9 @@ def _evaluate_params_on_current_config(
     try:
         temp_cfg = _cfg_with_initial_values(copy.deepcopy(cfg), params)
         calib = CameraCalibrator(temp_cfg, config_path=config_path)
-        score = calib._apply_initial_value_map_with_retry()
-        return float(score)
+        calib._apply_initial_value_map_with_retry(params, f"eval_{camera_name}")
+        total_detail, _ = calib.evaluate("eval", baseline_metrics=None)
+        return float(total_detail.total_score)
     except Exception as exc:
         print(f"[eval_on_current] Failed to evaluate {camera_name}: {exc}")
         return None

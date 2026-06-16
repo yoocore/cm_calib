@@ -375,44 +375,62 @@ class BootstrapWizardDialog(QDialog):
 
         params_group = QGroupBox("Parameters (optional)")
         params_layout = QFormLayout(params_group)
+        params_layout.setLabelAlignment(Qt.AlignRight)
+
+        def _make_size_widget(type_label: str) -> tuple:
+            cols_spin = QSpinBox()
+            cols_spin.setRange(0, 50)
+            cols_spin.setValue(0)
+            cols_spin.setSpecialValueText("auto")
+            rows_spin = QSpinBox()
+            rows_spin.setRange(0, 50)
+            rows_spin.setValue(0)
+            rows_spin.setSpecialValueText("auto")
+            w = QWidget()
+            h = QHBoxLayout(w)
+            h.setContentsMargins(0, 0, 0, 0)
+            h.addWidget(QLabel("Cols:"))
+            h.addWidget(cols_spin)
+            h.addWidget(QLabel("Rows:"))
+            h.addWidget(rows_spin)
+            label = QLabel(f"[{type_label}] Board Size:")
+            return label, w, cols_spin, rows_spin
+
+        cb_label, cb_widget, self._cb_size_cols, self._cb_size_rows = _make_size_widget("Checkerboard")
+        params_layout.addRow(cb_label, cb_widget)
+
+        aruco_label, aruco_widget, self._aruco_size_cols, self._aruco_size_rows = _make_size_widget("ArUco Grid")
+        params_layout.addRow(aruco_label, aruco_widget)
+
+        charuco_label, charuco_widget, self._charuco_size_cols, self._charuco_size_rows = _make_size_widget("CharUco")
+        params_layout.addRow(charuco_label, charuco_widget)
+
+        cg_label, cg_widget, self._cg_size_cols, self._cg_size_rows = _make_size_widget("Circle Grid")
+        params_layout.addRow(cg_label, cg_widget)
 
         self._aruco_dict_combo = QComboBox()
         self._aruco_dict_combo.addItems([
             "DICT_4X4_50", "DICT_5X5_100", "DICT_6X6_100", "DICT_7X7_100",
         ])
-        self._aruco_dict_label = QLabel("ArUco Dictionary:")
+        self._aruco_dict_label = QLabel("[ArUco / CharUco / ArUco Grid] Dictionary:")
         params_layout.addRow(self._aruco_dict_label, self._aruco_dict_combo)
 
         self._tag_family_combo = QComboBox()
         self._tag_family_combo.addItems([
             "auto", "tagStandard41h12", "tag36h11", "tag25h9", "tag16h5",
         ])
-        self._tag_family_label = QLabel("AprilTag Family:")
+        self._tag_family_label = QLabel("[AprilTag] Family:")
         params_layout.addRow(self._tag_family_label, self._tag_family_combo)
 
-        self._board_size_cols = QSpinBox()
-        self._board_size_cols.setRange(0, 50)
-        self._board_size_cols.setValue(0)
-        self._board_size_cols.setSpecialValueText("auto")
-        self._board_size_rows = QSpinBox()
-        self._board_size_rows.setRange(0, 50)
-        self._board_size_rows.setValue(0)
-        self._board_size_rows.setSpecialValueText("auto")
-        self._board_size_label = QLabel("Board Size:")
-        size_layout = QHBoxLayout()
-        size_layout.addWidget(QLabel("Cols:"))
-        size_layout.addWidget(self._board_size_cols)
-        size_layout.addWidget(QLabel("Rows:"))
-        size_layout.addWidget(self._board_size_rows)
-        self._board_size_widget = QWidget()
-        self._board_size_widget.setLayout(size_layout)
-        params_layout.addRow(self._board_size_label, self._board_size_widget)
-
         self._param_widgets = {
-            "aruco_dict": (self._aruco_dict_label, self._aruco_dict_combo),
-            "tag_family": (self._tag_family_label, self._tag_family_combo),
-            "board_size": (self._board_size_label, self._board_size_widget),
+            "checkerboard":    (cb_label, cb_widget),
+            "aruco_grid":      (aruco_label, aruco_widget),
+            "charuco":         (charuco_label, charuco_widget),
+            "circle_grid":     (cg_label, cg_widget),
+            "aruco":           (self._aruco_dict_label, self._aruco_dict_combo),
+            "apriltag":        (self._tag_family_label, self._tag_family_combo),
         }
+        self._aruco_shared_types = {"aruco", "charuco", "aruco_grid"}
         self._on_type_changed()
         layout.addWidget(params_group)
 
@@ -558,15 +576,6 @@ class BootstrapWizardDialog(QDialog):
             types.append("aruco_grid")
         return types
 
-    _PARAM_VISIBILITY = {
-        "checkerboard":  {"board_size"},
-        "aruco":         {"aruco_dict"},
-        "apriltag":      {"tag_family"},
-        "charuco":       {"board_size", "aruco_dict"},
-        "circle_grid":   {"board_size"},
-        "aruco_grid":    {"board_size", "aruco_dict"},
-    }
-
     def _on_type_changed(self) -> None:
         if self._cb_custom.isChecked():
             for key, (label, widget) in self._param_widgets.items():
@@ -574,12 +583,12 @@ class BootstrapWizardDialog(QDialog):
                 widget.setVisible(False)
             return
 
-        checked_types = self._get_checked_types()
-        visible_params: set = set()
-        for bt in checked_types:
-            visible_params.update(self._PARAM_VISIBILITY.get(bt, set()))
+        checked_types = set(self._get_checked_types())
         for key, (label, widget) in self._param_widgets.items():
-            show = key in visible_params
+            if key in self._aruco_shared_types:
+                show = bool(checked_types & self._aruco_shared_types)
+            else:
+                show = key in checked_types
             label.setVisible(show)
             widget.setVisible(show)
 
@@ -627,8 +636,8 @@ class BootstrapWizardDialog(QDialog):
 
             for board_type in checked_types:
                 if board_type == "checkerboard":
-                    cols = self._board_size_cols.value()
-                    rows = self._board_size_rows.value()
+                    cols = self._cb_size_cols.value()
+                    rows = self._cb_size_rows.value()
                     sizes = [(cols, rows)] if cols > 0 and rows > 0 else None
                     boards = self._detector.detect_checkerboard_instances(img, sizes)
                     large, small = classify_checkerboards_by_size(boards)
@@ -675,8 +684,8 @@ class BootstrapWizardDialog(QDialog):
                         ))
 
                 elif board_type == "charuco":
-                    cols = self._board_size_cols.value() or 7
-                    rows = self._board_size_rows.value() or 5
+                    cols = self._charuco_size_cols.value() or 7
+                    rows = self._charuco_size_rows.value() or 5
                     dictionary = self._aruco_dict_combo.currentText()
                     detected = self._detector.detect_charuco_boards(
                         img, (cols, rows), dictionary,
@@ -684,8 +693,8 @@ class BootstrapWizardDialog(QDialog):
                     self._boards.extend(detected)
 
                 elif board_type == "circle_grid":
-                    cols = self._board_size_cols.value() or 0
-                    rows = self._board_size_rows.value() or 0
+                    cols = self._cg_size_cols.value() or 0
+                    rows = self._cg_size_rows.value() or 0
                     sizes = [(cols, rows)] if cols > 0 and rows > 0 else None
                     boards = self._detector.detect_circle_grids(img, sizes)
                     for idx, board in enumerate(boards):
@@ -693,8 +702,8 @@ class BootstrapWizardDialog(QDialog):
                     self._boards.extend(boards)
 
                 elif board_type == "aruco_grid":
-                    cols = self._board_size_cols.value() or 0
-                    rows = self._board_size_rows.value() or 0
+                    cols = self._aruco_size_cols.value() or 0
+                    rows = self._aruco_size_rows.value() or 0
                     dictionary = self._aruco_dict_combo.currentText()
                     sizes = [(cols, rows)] if cols > 0 and rows > 0 else None
                     boards = self._detector.detect_aruco_grids(img, dictionary, sizes)

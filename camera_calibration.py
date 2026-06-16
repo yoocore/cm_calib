@@ -7905,6 +7905,10 @@ class CameraCalibrator:
                                 reason = f"UC stalled (prev={prev_uc}, now={uc}, growth={uc_growth})"
                         except (TypeError, ValueError):
                             pass
+                    elif int(uc) < 10:
+                        # First capture with very few frames = timer likely not running
+                        needs_restart = True
+                        reason = f"UC too low on first check (UC={uc})"
                 if needs_restart:
                     print(f"[health] Rendering issue before '{tag}': {reason}, attempting restart...")
                     r = try_restart_rendering()

@@ -304,6 +304,11 @@ def _prepare_runtime_for_camera(
         timeout_sec=_movie_settle,
         poll_interval_sec=float(args.movie_ready_poll_sec),
     )
+    # Camera select first, then view size — camera config sets lens FOV etc.
+    camera_selection = cmctrl.ensure_movie_camera_selected(
+        activation["ipgmovie_sensor_label"],
+        timeout_sec=float(args.health_check_timeout_sec),
+    )
     # Cancel render timer before View::SetSize to prevent C++ ConfigFBO race
     # when the view size actually changes (e.g., right_rear: 960x768→960x640)
     try:
@@ -318,10 +323,6 @@ def _prepare_runtime_for_camera(
         movie_scene["view_widget"] = str(applied_view.get("widget") or "")
         movie_scene["mode"] = str(applied_view.get("mode") or movie_scene.get("mode") or "")
     abraxas = cmctrl.ensure_movie_abraxas_enabled(timeout_sec=float(args.health_check_timeout_sec))
-    camera_selection = cmctrl.ensure_movie_camera_selected(
-        activation["ipgmovie_sensor_label"],
-        timeout_sec=float(args.health_check_timeout_sec),
-    )
     movie_scene["camera_name"] = str(camera_selection.get("current") or movie_scene.get("camera_name") or "")
     camera_widgets = cmctrl.ensure_movie_camera_widgets(timeout_sec=float(args.health_check_timeout_sec))
     # --- Step 8: Capture initial parameter values ---

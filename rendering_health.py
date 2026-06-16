@@ -131,15 +131,27 @@ def try_restart_rendering() -> Dict[str, Any]:
     # scheduled, rendering loop dead). We always try to kickstart it.
     result["rendering_was_frozen"] = state.get("uva") != "0" or state.get("suv") != "0"
 
-    # Step 2: Restart — set SUV=0, UVA=0, call TimerProc directly to re-schedule loop.
+    # Step 2: Restart — set SUV=0, UVA=0, try to re-schedule rendering loop.
+    # First try: direct call to UpdateView_TimerProc (fast path, works when Movie is healthy).
+    # If that fails (RC!=0, likely NaN from uninitialized CSM), retry via `after` scheduling
+    # which gives the event loop a chance to process pending initialization events
+    # before the next render.
     r = _movie("""
         set ::View(StopUpdateView) 0
         set ::View(UpdateViewActive) 0
         set uc_before $::View(UpdateCounter)
         set rc [catch {UpdateView_TimerProc} msg]
-        set uc_after $::View(UpdateCounter)
-        # Re-schedule the rendering loop timer
+        # Always re-schedule the rendering loop timer
         catch {after 0 UpdateView_TimerProc}
+        # If direct call failed (RC!=0), also try scheduling via after with delay
+        # This gives Tk event loop a chance to process CSM/GL initialization events
+        if {$rc != 0} {
+            set rc2 [catch {
+                after 100 {set ::View(UpdateViewActive) 1; UpdateView_TimerProc}
+            }]
+            set msg2 $::errorInfo
+        }
+        set uc_after $::View(UpdateCounter)
         list RC $rc MSG $msg UC_BEFORE $uc_before UC_AFTER $uc_after
     """)
 

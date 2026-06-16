@@ -2287,7 +2287,7 @@ Phase 14-18 积累了大量补丁层（after cancel/height bump/wm lower/Win32 P
 
 3. **`calibration_orchestrator.py` prepare 流程**：
    - `disable_movie_updateview_timer`（rename proc 杀全部 timer）-> `View::SetSize` -> ABRAXAS -> `ensure_movie_camera_selected` -> `enable_movie_updateview_timer`
-   - 顺序匹配 v1.0: disable timer -> View::SetSize -> ABRAXAS -> CameraSelect
+   - 顺序匹配 May 16 稳定基线 (commit 644bd02): disable timer -> View::SetSize -> ABRAXAS -> CameraSelect
 
 ### 关键修复
 
@@ -2310,7 +2310,7 @@ Phase 14-18 积累了大量补丁层（after cancel/height bump/wm lower/Win32 P
 
 ### 遗留问题
 
-1. **right_rear 分数 51.64**：比 v1.0 的 ~43.5 差，可能与 auto-reduce 分辨率（960x640 vs 1920x1280）有关
+1. **right_rear 分数 51.64**：比 May 16 稳定基线的 ~43.5 差，可能与 auto-reduce 分辨率（960x640 vs 1920x1280）有关
 2. **freeze 检测待补充**：需设计不依赖 DDE timeout 的方案（如 UpdateCounter 前后对比）
 3. **磁盘空间**：三相机每次 ~3GB，长期稳定性测试需要充足空间
 
@@ -2542,9 +2542,9 @@ FBO delete
 
 ---
 
-## Phase 51: 从 v1.0 到当前版本的完整变迁总结 (2026-06-16)
+## Phase 51: 从 May 16 稳定基线到当前版本的完整变迁总结 (2026-06-16)
 
-### v1.0 基线 (May 16, 644bd02)
+### May 16 稳定基线 (commit 644bd02)
 
 ```python
 # prepare 流程
@@ -2588,7 +2588,7 @@ _capture_movie_via_dde()         # 纯 FBO，与 May 11 完全一致
 
 ### 三相机冒烟测试结果
 
-v1.0 baseline（大屏幕，View::SetSize 是 no-op）:
+May 16 稳定基线（大屏幕，View::SetSize 是 no-op）:
 | 轮次 | rear_tv | left_tv | right_rear |
 |------|---------|---------|------------|
 | R1-R5 | 1053.5 | 810.4 | 43.5 |

@@ -6,7 +6,7 @@ from typing import List, Optional
 
 import cv2
 import numpy as np
-from PySide6.QtCore import Qt, QPointF, QRectF, Signal
+from PySide6.QtCore import Qt, QPointF, QRectF, Signal, QCoreApplication
 from PySide6.QtGui import (
     QImage,
     QPainter,
@@ -364,17 +364,20 @@ class BootstrapWizardDialog(QDialog):
 
         params_group = QGroupBox("Parameters (optional)")
         params_layout = QFormLayout(params_group)
+
         self._aruco_dict_combo = QComboBox()
         self._aruco_dict_combo.addItems([
             "DICT_4X4_50", "DICT_5X5_100", "DICT_6X6_100", "DICT_7X7_100",
         ])
-        params_layout.addRow("ArUco Dictionary:", self._aruco_dict_combo)
+        self._aruco_dict_label = QLabel("ArUco Dictionary:")
+        params_layout.addRow(self._aruco_dict_label, self._aruco_dict_combo)
 
         self._tag_family_combo = QComboBox()
         self._tag_family_combo.addItems([
             "auto", "tagStandard41h12", "tag36h11", "tag25h9", "tag16h5",
         ])
-        params_layout.addRow("AprilTag Family:", self._tag_family_combo)
+        self._tag_family_label = QLabel("AprilTag Family:")
+        params_layout.addRow(self._tag_family_label, self._tag_family_combo)
 
         self._board_size_cols = QSpinBox()
         self._board_size_cols.setRange(0, 50)
@@ -384,12 +387,23 @@ class BootstrapWizardDialog(QDialog):
         self._board_size_rows.setRange(0, 50)
         self._board_size_rows.setValue(0)
         self._board_size_rows.setSpecialValueText("auto")
+        self._board_size_label = QLabel("Board Size:")
         size_layout = QHBoxLayout()
         size_layout.addWidget(QLabel("Cols:"))
         size_layout.addWidget(self._board_size_cols)
         size_layout.addWidget(QLabel("Rows:"))
         size_layout.addWidget(self._board_size_rows)
-        params_layout.addRow("Board Size:", size_layout)
+        self._board_size_widget = QWidget()
+        self._board_size_widget.setLayout(size_layout)
+        params_layout.addRow(self._board_size_label, self._board_size_widget)
+
+        self._param_widgets = {
+            "aruco_dict": (self._aruco_dict_label, self._aruco_dict_combo),
+            "tag_family": (self._tag_family_label, self._tag_family_combo),
+            "board_size": (self._board_size_label, self._board_size_widget),
+        }
+        self._type_group.buttonClicked.connect(self._on_type_changed)
+        self._on_type_changed()
         layout.addWidget(params_group)
 
         self._detect_btn = QPushButton("Detect Boards")
@@ -531,6 +545,23 @@ class BootstrapWizardDialog(QDialog):
             return "aruco_grid"
         return "checkerboard"
 
+    _PARAM_VISIBILITY = {
+        "checkerboard":  {"board_size"},
+        "aruco":         {"aruco_dict"},
+        "apriltag":      {"tag_family"},
+        "charuco":       {"board_size", "aruco_dict"},
+        "circle_grid":   {"board_size"},
+        "aruco_grid":    {"board_size", "aruco_dict"},
+    }
+
+    def _on_type_changed(self) -> None:
+        board_type = self._get_selected_board_type()
+        visible_params = self._PARAM_VISIBILITY.get(board_type, set())
+        for key, (label, widget) in self._param_widgets.items():
+            show = key in visible_params
+            label.setVisible(show)
+            widget.setVisible(show)
+
     def _on_detect(self) -> None:
         image_path = self._image_path_edit.text().strip()
         if not image_path or not Path(image_path).exists():
@@ -538,7 +569,10 @@ class BootstrapWizardDialog(QDialog):
             return
 
         self._image_path = image_path
-        self._status_label.setText("Detecting...")
+        self._detect_btn.setEnabled(False)
+        self._detect_btn.setText("Detecting... please wait")
+        self._status_label.setText("Loading image and running detection...")
+        QCoreApplication.processEvents()
         board_type = self._get_selected_board_type()
 
         try:
@@ -638,6 +672,9 @@ class BootstrapWizardDialog(QDialog):
 
         except Exception as exc:
             self._status_label.setText(f"Detection error: {exc}")
+        finally:
+            self._detect_btn.setEnabled(True)
+            self._detect_btn.setText("Detect Boards")
 
     def _on_board_list_changed(self) -> None:
         active = self._board_list.get_active_boards()

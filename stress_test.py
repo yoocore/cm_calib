@@ -23,7 +23,7 @@ def kill_all():
 
 def run_round(extra_args=None) -> dict:
     cmd = [sys.executable, str(ORCHESTRATOR), "--testrun", "vctc_ngxpro",
-           "--camera", "left_tv", "rear_tv", "right_rear"]
+           "--camera", "left_tv", "--camera", "rear_tv", "--camera", "right_rear"]
     if extra_args:
         cmd.extend(extra_args)
     t0 = time.monotonic()

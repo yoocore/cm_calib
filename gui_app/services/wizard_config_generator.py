@@ -62,6 +62,12 @@ def _board_entry_from_detected(board: DetectedBoard) -> dict:
     if board.tags:
         tag_ids = sorted(t.tag_id for t in board.tags)
         entry["tag_ids"] = tag_ids
+    if board.board_type == "circle_grid":
+        entry["grid_type"] = "symmetric"
+    if board.board_type == "aruco_grid":
+        entry["aruco_dictionary"] = "DICT_4X4_50"
+        entry["square_size"] = 1.0
+        entry["marker_separation"] = 0.5
     return entry
 
 

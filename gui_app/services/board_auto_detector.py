@@ -318,6 +318,102 @@ class BoardAutoDetector:
         )
         return all_boards
 
+    def detect_circle_grids(
+        self,
+        image: np.ndarray,
+        board_sizes: Optional[Sequence[Tuple[int, int]]] = None,
+        grid_type: str = "symmetric",
+    ) -> List[DetectedBoard]:
+        if image.ndim == 3:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = image
+
+        is_asymmetric = grid_type.strip().lower() == "asymmetric"
+        flags = cv2.CALIB_CB_ASYMMETRIC_GRID if is_asymmetric else cv2.CALIB_CB_SYMMETRIC_GRID
+        sizes_to_try = list(board_sizes) if board_sizes else [
+            (5, 5), (7, 7), (9, 6), (6, 9), (11, 8), (8, 11), (4, 11), (11, 4),
+        ]
+
+        all_boards: List[DetectedBoard] = []
+        for size in sizes_to_try:
+            cols, rows = size
+            found, centers = cv2.findCirclesGrid(gray, (cols, rows), None, flags)
+            if not found or centers is None:
+                continue
+            pts = centers.reshape(-1, 2).astype(np.float32)
+            bbox = _bbox_from_points(pts)
+            is_dup = any(_bbox_iou(bbox, b.bbox) >= 0.3 for b in all_boards)
+            if is_dup:
+                continue
+            all_boards.append(
+                DetectedBoard(
+                    board_type="circle_grid",
+                    bbox=bbox,
+                    corners=pts,
+                    board_size=(cols, rows),
+                    center=_center_from_bbox(bbox),
+                    area=_area_from_bbox(bbox),
+                )
+            )
+        return _deduplicate_boards(all_boards)
+
+    def detect_aruco_grids(
+        self,
+        image: np.ndarray,
+        dictionary: str = "DICT_4X4_50",
+        board_sizes: Optional[Sequence[Tuple[int, int]]] = None,
+    ) -> List[DetectedBoard]:
+        if not hasattr(cv2, "aruco"):
+            raise RuntimeError("OpenCV aruco module is unavailable")
+
+        if image.ndim == 3:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = image
+
+        dict_id = getattr(cv2.aruco, dictionary, None)
+        if dict_id is None:
+            raise ValueError(f"Unsupported ArUco dictionary: {dictionary}")
+        aruco_dict = cv2.aruco.getPredefinedDictionary(dict_id)
+        detector = cv2.aruco.ArucoDetector(aruco_dict, cv2.aruco.DetectorParameters())
+
+        marker_corners, marker_ids, _ = detector.detectMarkers(gray)
+        if marker_ids is None or not marker_corners:
+            return []
+
+        sizes_to_try = list(board_sizes) if board_sizes else [
+            (3, 3), (4, 3), (3, 4), (5, 3), (3, 5), (4, 4), (5, 5),
+        ]
+
+        all_boards: List[DetectedBoard] = []
+        for size in sizes_to_try:
+            cols, rows = size
+            marker_length = 1.0
+            marker_separation = 0.5
+            grid_board = cv2.aruco.GridBoard(
+                (cols, rows), marker_length, marker_separation, aruco_dict,
+            )
+            obj_pts, img_pts = grid_board.matchImagePoints(marker_corners, marker_ids)
+            if obj_pts is None or len(obj_pts) == 0:
+                continue
+            pts = np.asarray(img_pts, dtype=np.float32).reshape(-1, 2)
+            bbox = _bbox_from_points(pts)
+            is_dup = any(_bbox_iou(bbox, b.bbox) >= 0.3 for b in all_boards)
+            if is_dup:
+                continue
+            all_boards.append(
+                DetectedBoard(
+                    board_type="aruco_grid",
+                    bbox=bbox,
+                    corners=pts,
+                    board_size=(cols, rows),
+                    center=_center_from_bbox(bbox),
+                    area=_area_from_bbox(bbox),
+                )
+            )
+        return _deduplicate_boards(all_boards)
+
 
 def group_tags_into_grids(
     tags: List[DetectedTag],

@@ -62,6 +62,8 @@ _BOARD_TYPE_COLORS = {
     "aruco": QColor(220, 110, 60),
     "apriltag": QColor(60, 170, 90),
     "charuco": QColor(180, 60, 200),
+    "circle_grid": QColor(60, 180, 200),
+    "aruco_grid": QColor(200, 160, 60),
 }
 
 _IMAGE_SUFFIXES = "*.jpg *.jpeg *.png *.bmp *.tif *.tiff *.webp"
@@ -284,8 +286,13 @@ class BootstrapWizardDialog(QDialog):
         self._rb_aruco = QRadioButton("ArUco")
         self._rb_apriltag = QRadioButton("AprilTag")
         self._rb_charuco = QRadioButton("CharUco")
+        self._rb_circle_grid = QRadioButton("Circle Grid")
+        self._rb_aruco_grid = QRadioButton("ArUco Grid Board")
         self._rb_checkerboard.setChecked(True)
-        for rb in (self._rb_checkerboard, self._rb_aruco, self._rb_apriltag, self._rb_charuco):
+        for rb in (
+            self._rb_checkerboard, self._rb_aruco, self._rb_apriltag,
+            self._rb_charuco, self._rb_circle_grid, self._rb_aruco_grid,
+        ):
             self._type_group.addButton(rb)
             type_layout.addWidget(rb)
         layout.addWidget(type_group)
@@ -444,6 +451,10 @@ class BootstrapWizardDialog(QDialog):
             return "apriltag"
         if self._rb_charuco.isChecked():
             return "charuco"
+        if self._rb_circle_grid.isChecked():
+            return "circle_grid"
+        if self._rb_aruco_grid.isChecked():
+            return "aruco_grid"
         return "checkerboard"
 
     def _on_detect(self) -> None:
@@ -518,6 +529,23 @@ class BootstrapWizardDialog(QDialog):
                     img, (cols, rows), dictionary,
                 )
                 self._boards = detected
+
+            elif board_type == "circle_grid":
+                cols = self._board_size_cols.value() or 0
+                rows = self._board_size_rows.value() or 0
+                sizes = [(cols, rows)] if cols > 0 and rows > 0 else None
+                self._boards = self._detector.detect_circle_grids(img, sizes)
+                for idx, board in enumerate(self._boards):
+                    board.board_id = f"CG{idx + 1}"
+
+            elif board_type == "aruco_grid":
+                cols = self._board_size_cols.value() or 0
+                rows = self._board_size_rows.value() or 0
+                dictionary = self._aruco_dict_combo.currentText()
+                sizes = [(cols, rows)] if cols > 0 and rows > 0 else None
+                self._boards = self._detector.detect_aruco_grids(img, dictionary, sizes)
+                for idx, board in enumerate(self._boards):
+                    board.board_id = f"AG{idx + 1}"
 
             count = len(self._boards)
             tag_count = len(self._tags)

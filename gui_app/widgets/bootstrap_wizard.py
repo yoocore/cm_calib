@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QVBoxLayout,
     QHBoxLayout,
+    QGridLayout,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -374,8 +375,16 @@ class BootstrapWizardDialog(QDialog):
         layout.addWidget(type_group)
 
         params_group = QGroupBox("Parameters (optional)")
-        params_layout = QFormLayout(params_group)
-        params_layout.setLabelAlignment(Qt.AlignRight)
+        _grid = QGridLayout(params_group)
+        _grid.setColumnStretch(0, 0)
+        _grid.setColumnStretch(1, 1)
+        _row = [0]
+
+        def _add_param_row(label: QLabel, widget: QWidget) -> None:
+            label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            _grid.addWidget(label, _row[0], 0)
+            _grid.addWidget(widget, _row[0], 1)
+            _row[0] += 1
 
         def _make_size_widget(type_label: str) -> tuple:
             cols_spin = QSpinBox()
@@ -400,51 +409,40 @@ class BootstrapWizardDialog(QDialog):
         def _make_combo_widget(type_label: str, items: list) -> tuple:
             combo = QComboBox()
             combo.addItems(items)
-            w = QWidget()
-            h = QHBoxLayout(w)
-            h.setContentsMargins(0, 0, 0, 0)
-            h.addWidget(combo)
-            h.addStretch()
             label = QLabel(f"[{type_label}] Dictionary:")
-            return label, w, combo
+            return label, combo, combo
 
         cb_label, cb_widget, self._cb_size_cols, self._cb_size_rows = _make_size_widget("Checkerboard")
-        params_layout.addRow(cb_label, cb_widget)
+        _add_param_row(cb_label, cb_widget)
 
         aruco_label, aruco_widget, self._aruco_size_cols, self._aruco_size_rows = _make_size_widget("ArUco Grid")
-        params_layout.addRow(aruco_label, aruco_widget)
+        _add_param_row(aruco_label, aruco_widget)
 
         charuco_label, charuco_widget, self._charuco_size_cols, self._charuco_size_rows = _make_size_widget("CharUco")
-        params_layout.addRow(charuco_label, charuco_widget)
+        _add_param_row(charuco_label, charuco_widget)
 
         cg_label, cg_widget, self._cg_size_cols, self._cg_size_rows = _make_size_widget("Circle Grid")
-        params_layout.addRow(cg_label, cg_widget)
+        _add_param_row(cg_label, cg_widget)
 
         _DICT_ITEMS = [
             "DICT_4X4_50", "DICT_5X5_100", "DICT_6X6_100", "DICT_7X7_100",
         ]
 
         aruco_d_label, aruco_d_widget, self._aruco_dict_combo = _make_combo_widget("ArUco", _DICT_ITEMS)
-        params_layout.addRow(aruco_d_label, aruco_d_widget)
+        _add_param_row(aruco_d_label, aruco_d_widget)
 
         charuco_d_label, charuco_d_widget, self._charuco_dict_combo = _make_combo_widget("CharUco", _DICT_ITEMS)
-        params_layout.addRow(charuco_d_label, charuco_d_widget)
+        _add_param_row(charuco_d_label, charuco_d_widget)
 
         aruco_grid_d_label, aruco_grid_d_widget, self._aruco_grid_dict_combo = _make_combo_widget("ArUco Grid", _DICT_ITEMS)
-        params_layout.addRow(aruco_grid_d_label, aruco_grid_d_widget)
+        _add_param_row(aruco_grid_d_label, aruco_grid_d_widget)
 
-        tf_combo = QComboBox()
-        tf_combo.addItems([
+        self._tag_family_combo = QComboBox()
+        self._tag_family_combo.addItems([
             "auto", "tagStandard41h12", "tag36h11", "tag25h9", "tag16h5",
         ])
-        tf_widget = QWidget()
-        tf_h = QHBoxLayout(tf_widget)
-        tf_h.setContentsMargins(0, 0, 0, 0)
-        tf_h.addWidget(tf_combo)
-        tf_h.addStretch()
-        self._tag_family_combo = tf_combo
         self._tag_family_label = QLabel("[AprilTag] Family:")
-        params_layout.addRow(self._tag_family_label, tf_widget)
+        _add_param_row(self._tag_family_label, self._tag_family_combo)
 
         self._param_widgets = {
             "checkerboard":    (cb_label, cb_widget),
@@ -454,7 +452,7 @@ class BootstrapWizardDialog(QDialog):
             "aruco_grid":      (aruco_label, aruco_widget),
             "aruco_grid_dict": (aruco_grid_d_label, aruco_grid_d_widget),
             "circle_grid":     (cg_label, cg_widget),
-            "apriltag":        (self._tag_family_label, tf_widget),
+            "apriltag":        (self._tag_family_label, self._tag_family_combo),
         }
         self._on_type_changed()
         layout.addWidget(params_group)

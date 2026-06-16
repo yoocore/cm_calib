@@ -259,27 +259,13 @@ def _prepare_runtime_for_camera(
         if _fresh_start:
             # Give GPU driver time to initialize GL context before IPG-MOVIE operations
             import time as _time; _time.sleep(10.0)
-    # --- Step 1: Force-sync Movie view size before any IPG-MOVIE state change ---
-    if movie_view_size is not None:
-        view_width, view_height = movie_view_size
-        try:
-            cmctrl.ensure_movie_view_size(view_width, view_height, timeout_sec=10.0)
-        except Exception as exc:
-            print(f"[INFO] could not sync movie view size (Step 1): {exc}")
-    # --- Step 2: Activate sensor & sync TestRun in CarMaker GUI ---
+    # --- Step 1: Activate sensor & sync TestRun in CarMaker GUI ---
     vehicle_path, vehicle_key = cmctrl.resolve_vehicle_path(project_root, testrun_rel_path)
     activation = cmctrl.activate_single_vehicle_sensor(vehicle_path, camera_name)
     selected_testrun = cmctrl.sync_gui_testrun_selection(project_root, testrun_rel_path)
     # --- sync_gui re-initializes IPG-MOVIE (re-registers CheckViewPort), so re-guard ---
     cmctrl.disable_checkviewport_recursion()
-    # --- Step 2.5: Sync Movie view size before bootstrap SIM_START ---
-    if movie_view_size is not None:
-        view_width, view_height = movie_view_size
-        try:
-            cmctrl.ensure_movie_view_size(view_width, view_height, timeout_sec=10.0)
-        except Exception as exc:
-            print(f"[INFO] could not sync movie view size before bootstrap: {exc}")
-    # --- Step 3: StartSim / StopSim (bootstrap the TestRun for Movie) ---
+    # --- Step 2: StartSim / StopSim (bootstrap the TestRun for Movie) ---
     carmaker_pid, bootstrap_testrun = cmctrl.bootstrap_testrun_for_movie_via_cmapi_sync(
         project_root=project_root,
         testrun_rel_path=testrun_rel_path,
@@ -567,6 +553,7 @@ def main() -> None:
         killed = cmctrl.kill_existing_cm_processes()
         if killed:
             print(f"Killed {len(killed)} stale process(es): {cmctrl.summarize_processes(killed)}")
+            import time as _time; _time.sleep(3.0)
 
     output_dir = _task_output_dir(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)

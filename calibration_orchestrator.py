@@ -642,18 +642,7 @@ def main() -> None:
                             reused_existing_runtime=bool(runtime_state.get("reused_existing_runtime")),
                         )
 
-                        # Push IPG-MOVIE windows behind before capture cycle
-                        try:
-                            _lower_commands = cmctrl._movie_background_tcl_commands()
-                            _lower_script = cmctrl.render_dde_execute_script(
-                                output_dir / f"lower_ipgmovie_{camera_name}.txt",
-                                "IPG-MOVIE", _lower_commands,
-                            )
-                            _lower_path = output_dir / f"lower_ipgmovie_{camera_name}.tcl"
-                            _lower_path.write_text(_lower_script, encoding="utf-8")
-                            run_runscript("TclEval", "CarMaker", _lower_path)
-                        except Exception as _lower_exc:
-                            print(f"[INFO] could not lower IPG-MOVIE windows (non-fatal): {_lower_exc}")
+                        '# Removed wm lower — ineffective and triggers ConfigureNotify → NaN'
 
                         start_simulation_via_tcl(
                             running_timeout_sec=float(args.bootstrap_running_timeout_sec),

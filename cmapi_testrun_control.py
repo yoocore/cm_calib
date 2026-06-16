@@ -2358,7 +2358,7 @@ def ensure_movie_camera_selected(
         '.camera.btn.set invoke',
         'update',
         'update idletasks',
-        *_movie_background_tcl_commands(include_root=True),
+        '# wm lower/iconify removed — ineffective and triggers ConfigureNotify → NaN',
         'if {$_before_camera_state eq "iconic" && [winfo exists .camera]} { wm iconify .camera }',
         'if {$_before_lens_state eq "iconic" && [winfo exists .camera.cammoddlg]} { wm iconify .camera.cammoddlg }',
         'unset _before_camera_state _before_lens_state',

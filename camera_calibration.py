@@ -10492,9 +10492,7 @@ class CameraCalibrator:
         if self.real_detections is None:
             self.real_detections = self._detect_reference_boards()
 
-        t0 = time.perf_counter()
         sim_path = self.capture_movie(tag)
-        t_cap = time.perf_counter()
         self._last_eval_image = str(sim_path)
         sim_img = cv2.imread(str(sim_path), cv2.IMREAD_GRAYSCALE)
         if sim_img is None:
@@ -10536,25 +10534,14 @@ class CameraCalibrator:
 
         sim_prepared = self._prepare_eval_image(sim_img)
         sim_score_img = self._build_sim_eval_image(sim_img)
-        t_prep = time.perf_counter()
         board_scores: List[BoardScoreDetail] = []
-        t_detect = 0.0
         for board in self.boards:
             real_detection = self.real_detections[board.board_id]
             detection_img = sim_prepared if _is_custom_marker_board_type(board.board_type) else sim_score_img
-            td = time.perf_counter()
             sim_detection = self._detect_board(detection_img, board)
-            t_detect += time.perf_counter() - td
             board_scores.append(self._score_board(board, real_detection, sim_detection, sim_prepared))
-        t_score = time.perf_counter()
 
         total_detail = self._aggregate_scores(board_scores, baseline_metrics)
-        t_end = time.perf_counter()
-        t_capture = t_cap - t0
-        t_preprocess = t_prep - t_cap
-        t_scoring = t_score - t_detect - t_prep
-        t_aggregate = t_end - t_score
-        print(f"[perf_eval] capture={t_capture:.2f}s preprocess={t_preprocess:.2f}s detect={t_detect:.2f}s score={t_scoring:.2f}s aggregate={t_aggregate:.2f}s total={t_end-t0:.2f}s")
         return total_detail, sim_path
     def _build_result_payload(
         self,

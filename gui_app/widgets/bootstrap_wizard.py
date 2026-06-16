@@ -313,6 +313,11 @@ class BootstrapWizardDialog(QDialog):
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
+        self.setWindowFlags(
+            self.windowFlags()
+            | Qt.WindowMinimizeButtonHint
+            | Qt.WindowMaximizeButtonHint
+        )
         self.setWindowTitle("Board Calibration Wizard")
         self.resize(1200, 800)
 

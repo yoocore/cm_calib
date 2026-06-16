@@ -7935,6 +7935,14 @@ class CameraCalibrator:
         except Exception as exc:
             print(f"[health] Rendering check error: {exc}")
 
+        # Render warm-up: ensure CSM/textures are initialized before capture
+        # Fresh Movie/timer restart may need a few frames to stabilize
+        try:
+            import cmapi_testrun_control as _cmctrl
+            _cmctrl.movie_send("UpdateView"); _cmctrl.movie_send("UpdateView")
+        except Exception:
+            pass
+
         # Proactive CarMaker error check: probe for errors before capture
         try:
             err_text = self._capture_carmaker_error_dialog()

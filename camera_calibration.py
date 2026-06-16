@@ -7942,7 +7942,8 @@ class CameraCalibrator:
             _cmctrl.movie_send("UpdateView")
             _time.sleep(0.05)
             _cmctrl.movie_send("UpdateView")
-        # Proactive CarMaker error check + recovery
+        except Exception:
+            pass
         try:
             err_text = self._capture_carmaker_error_dialog()
             if err_text and ("ERROR" in err_text or "invalid" in err_text):

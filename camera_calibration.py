@@ -7947,7 +7947,25 @@ class CameraCalibrator:
         try:
             err_text = self._capture_carmaker_error_dialog()
             if err_text and ("ERROR" in err_text or "invalid" in err_text):
-                print(f"[carmaker] CarMaker NaN/ERROR before capture, attempting rendering restart...")
+                print(f"[carmaker] CarMaker NaN/ERROR before capture, dismissing dialog and restarting rendering...")
+                # Dismiss the Internal Debugger error dialog so DDE commands reach Movie
+                import ctypes; _u = ctypes.windll.user32; import time as _t
+                def _find_debugger() -> int:
+                    _found = []
+                    def _enum(h, _):
+                        _b = ctypes.create_unicode_buffer(256)
+                        _u.GetWindowTextW(h, _b, 256)
+                        if "Internal Debugger" in _b.value or ("IPGMovie" in _b.value and "Debugger" in _b.value):
+                            _found.append(h)
+                        return True
+                    _c = ctypes.WINFUNCTYPE(ctypes.wintypes.BOOL, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)(_enum)
+                    _u.EnumWindows(_c, 0)
+                    return _found[0] if _found else 0
+                _hwnd = _find_debugger()
+                if _hwnd:
+                    # Close the debugger window (Alt+F4)
+                    _u.PostMessageW(_hwnd, 0x0010, 0, 0)  # WM_CLOSE
+                    _t.sleep(0.5)
                 from rendering_health import try_restart_rendering
                 r = try_restart_rendering()
                 if r.get("restart_success"):

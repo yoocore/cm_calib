@@ -131,6 +131,28 @@ def try_restart_rendering() -> Dict[str, Any]:
     # scheduled, rendering loop dead). We always try to kickstart it.
     result["rendering_was_frozen"] = state.get("uva") != "0" or state.get("suv") != "0"
 
+    # Step 1b: Dismiss any Internal Debugger error dialog that blocks Movie's Tcl
+    try:
+        import ctypes
+        _u = ctypes.windll.user32
+        def _find_dbg() -> int:
+            _f = []
+            def _enum(h, _):
+                _b = ctypes.create_unicode_buffer(256)
+                _u.GetWindowTextW(h, _b, 256)
+                if "Internal Debugger" in _b.value or ("IPGMovie" in _b.value and "Debugger" in _b.value):
+                    _f.append(h)
+                return True
+            _c = ctypes.WINFUNCTYPE(ctypes.wintypes.BOOL, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)(_enum)
+            _u.EnumWindows(_c, 0)
+            return _f[0] if _f else 0
+        _hwnd = _find_dbg()
+        if _hwnd:
+            _u.PostMessageW(_hwnd, 0x0010, 0, 0)  # WM_CLOSE
+            time.sleep(1.0)
+    except Exception:
+        pass
+
     # Step 2: Restart — set SUV=0, UVA=0, try to re-schedule rendering loop.
     # First try: direct call to UpdateView_TimerProc (fast path, works when Movie is healthy).
     # If that fails (RC!=0, likely NaN from uninitialized CSM), retry via `after` scheduling

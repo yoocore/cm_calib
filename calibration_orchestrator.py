@@ -564,6 +564,8 @@ def main() -> None:
         killed = cmctrl.kill_existing_cm_processes()
         if killed:
             print(f"Killed {len(killed)} stale process(es): {cmctrl.summarize_processes(killed)}")
+        # Give GPU driver time to release OpenGL context before restart
+        import time as _time; _time.sleep(3.0)
 
     output_dir = _task_output_dir(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)

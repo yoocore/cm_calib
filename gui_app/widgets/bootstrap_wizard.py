@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QMessageBox,
     QAbstractItemView,
+    QHeaderView,
 )
 
 from gui_app.services.board_auto_detector import (
@@ -263,9 +264,11 @@ class BoardListPanel(QWidget):
 
         self._table = QTableWidget()
         self._table.setColumnCount(7)
-        self._table.setHorizontalHeaderLabels(["Use", "ID", "Type", "Size", "Points", "BBox", ""])
-        self._table.horizontalHeader().setStretchLastSection(False)
-        self._table.setColumnWidth(6, 40)
+        self._table.setHorizontalHeaderLabels(["", "Use", "ID", "Type", "Size", "Points", "BBox"])
+        header = self._table.horizontalHeader()
+        header.setDefaultAlignment(Qt.AlignCenter)
+        header.setSectionResizeMode(QHeaderView.ResizeToContents)
+        header.setStretchLastSection(True)
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._table.cellChanged.connect(self._on_cell_changed)
@@ -278,42 +281,53 @@ class BoardListPanel(QWidget):
         self._table.blockSignals(True)
         self._table.setRowCount(len(boards))
         for row, board in enumerate(boards):
+            is_custom = board.board_type == "custom_maker"
+            del_btn = QPushButton("−")
+            del_btn.setFixedSize(24, 22)
+            if is_custom:
+                del_btn.setToolTip("Delete this custom board")
+                del_btn.clicked.connect(lambda checked, r=row: self._delete_row(r))
+            else:
+                del_btn.setToolTip("Auto-detected: use checkbox to exclude")
+                del_btn.clicked.connect(self._on_delete_auto_detected)
+            self._table.setCellWidget(row, 0, del_btn)
+
             cb = QCheckBox()
             cb.setChecked(True)
             cb.stateChanged.connect(self._on_checkbox_changed)
-            self._table.setCellWidget(row, 0, cb)
-            self._table.setItem(row, 1, QTableWidgetItem(board.board_id))
-            self._table.setItem(row, 2, QTableWidgetItem(board.board_type))
-            size_text = f"{board.board_size[0]}x{board.board_size[1]}" if board.board_size else "-"
-            self._table.setItem(row, 3, QTableWidgetItem(size_text))
-            pts = board.corners.shape[0] if board.corners.size > 0 else 0
-            self._table.setItem(row, 4, QTableWidgetItem(str(pts)))
-            self._table.setItem(row, 5, QTableWidgetItem(str(board.bbox)))
+            cb_widget = QWidget()
+            cb_layout = QHBoxLayout(cb_widget)
+            cb_layout.setContentsMargins(0, 0, 0, 0)
+            cb_layout.addStretch()
+            cb_layout.addWidget(cb)
+            cb_layout.addStretch()
+            self._table.setCellWidget(row, 1, cb_widget)
 
-            is_custom = board.board_type == "custom_maker"
-            del_btn = QPushButton("−")
-            del_btn.setFixedSize(28, 24)
-            del_btn.setEnabled(is_custom)
-            del_btn.setToolTip(
-                "Delete this custom board" if is_custom else "Auto-detected: use checkbox to exclude"
-            )
-            if is_custom:
-                del_btn.clicked.connect(lambda checked, r=row: self._delete_row(r))
-            self._table.setCellWidget(row, 6, del_btn)
+            for col, text in [
+                (2, board.board_id),
+                (3, board.board_type),
+                (4, f"{board.board_size[0]}x{board.board_size[1]}" if board.board_size else "-"),
+                (5, str(board.corners.shape[0] if board.corners.size > 0 else 0)),
+                (6, str(board.bbox)),
+            ]:
+                item = QTableWidgetItem(text)
+                item.setTextAlignment(Qt.AlignCenter)
+                self._table.setItem(row, col, item)
         self._table.blockSignals(False)
 
     def get_active_boards(self) -> List[DetectedBoard]:
         active: List[DetectedBoard] = []
         for row, board in enumerate(self._boards):
-            cb = self._table.cellWidget(row, 0)
-            if isinstance(cb, QCheckBox) and cb.isChecked():
-                item = self._table.item(row, 1)
+            cb_container = self._table.cellWidget(row, 1)
+            cb = cb_container.findChild(QCheckBox) if cb_container else None
+            if cb and cb.isChecked():
+                item = self._table.item(row, 2)
                 board.board_id = item.text() if item else board.board_id
                 active.append(board)
         return active
 
     def _on_cell_changed(self, row: int, col: int) -> None:
-        if col == 1 and row < len(self._boards):
+        if col == 2 and row < len(self._boards):
             item = self._table.item(row, col)
             if item:
                 self._boards[row].board_id = item.text()
@@ -324,6 +338,13 @@ class BoardListPanel(QWidget):
             self._boards.pop(row)
             self.set_boards(self._boards)
             self.board_changed.emit()
+
+    def _on_delete_auto_detected(self) -> None:
+        QMessageBox.warning(
+            self, "Cannot Delete",
+            "Auto-detected boards cannot be deleted.\n"
+            "Use the checkbox to exclude them from the config.",
+        )
 
     def _on_checkbox_changed(self) -> None:
         self.board_changed.emit()

@@ -444,7 +444,7 @@ class BootstrapWizardDialog(QDialog):
         self._refresh_btn.clicked.connect(self._refresh_camera_list)
         camera_form.addWidget(QLabel("Camera:"), 2, 0)
         camera_form.addWidget(self._camera_combo, 2, 1)
-        camera_form.addWidget(refresh_btn, 2, 2)
+        camera_form.addWidget(self._refresh_btn, 2, 2)
 
         if self._gui_project_dir:
             self._project_dir_edit.setText(self._gui_project_dir)
@@ -718,8 +718,12 @@ class BootstrapWizardDialog(QDialog):
         self._camera_combo.addItem("(select camera)")
         try:
             # Prefer mapping file when available (presence of mapping hides Refresh too)
-            from gui_app.widgets.camera_mapping_dialog import load_camera_config
-            mapping = load_camera_config(project_dir)
+            from gui_app.widgets.camera_mapping_dialog import mapping_path_for_project
+            mapping_path = mapping_path_for_project(project_dir)
+            if mapping_path.exists():
+                mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
+            else:
+                mapping = {}
             if mapping:
                 sensors = list(mapping.keys())
                 self._refresh_btn.setVisible(False)
@@ -746,19 +750,22 @@ class BootstrapWizardDialog(QDialog):
     def _write_camera_mapping(
         self, cam_name: str, config_folder: str, output_dir: Path,
     ) -> None:
-        from gui_app.widgets.camera_mapping_dialog import (
-            load_camera_config, save_camera_config,
-        )
+        from gui_app.widgets.camera_mapping_dialog import mapping_path_for_project
         project_dir = self._project_dir_edit.text().strip()
         if not project_dir:
             return
-        mapping = load_camera_config(project_dir)
+        mapping_path = mapping_path_for_project(project_dir)
+        if mapping_path.exists():
+            mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
+        else:
+            mapping = {}
         entry = mapping.get(cam_name, {})
         entry["config_folder"] = config_folder
         if not entry.get("real_image") and self._image_path:
             entry["real_image"] = str(Path(self._image_path).resolve())
         mapping[cam_name] = entry
-        save_camera_config(project_dir, mapping)
+        mapping_path.parent.mkdir(parents=True, exist_ok=True)
+        mapping_path.write_text(json.dumps(mapping, ensure_ascii=False, indent=4), encoding="utf-8")
 
     def _browse_output_dir(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "Select Output Directory")

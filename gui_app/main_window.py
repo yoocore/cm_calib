@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import json
 import time
 from collections import deque
 from pathlib import Path
@@ -99,10 +100,7 @@ class MainWindow(QMainWindow):
     def _wire_signals(self) -> None:
         self.calibration_panel.start_button.clicked.connect(self._start_calibration)
         self.calibration_panel.stop_button.clicked.connect(self._stop_calibration)
-        self.cm_settings_panel.precheck_clicked.connect(self._run_precheck)
-        self.cm_settings_panel.generate_config_clicked.connect(self._generate_configs)
-        self.cm_settings_panel.wizard_clicked.connect(self._open_board_wizard)
-        self.cm_settings_panel.camera_mapping_clicked.connect(self._open_camera_mapping)
+        self.cm_settings_panel.wizard_for_camera_clicked.connect(self._open_board_wizard_for_camera)
         self.cm_settings_panel.project_root_changed.connect(self._on_project_root_changed)
         self.cm_settings_panel.testrun_changed.connect(self._on_testrun_changed)
         self.cm_settings_panel.camera_selection_changed.connect(self._rebuild_sensor_progress_plan)
@@ -127,8 +125,12 @@ class MainWindow(QMainWindow):
             self.cm_settings_panel.set_cameras([])
             return
 
-        from gui_app.widgets.camera_mapping_dialog import load_camera_config
-        mapping = load_camera_config(str(project_root))
+        from gui_app.widgets.camera_mapping_dialog import mapping_path_for_project
+        mapping_path = mapping_path_for_project(str(project_root))
+        if mapping_path.exists():
+            mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
+        else:
+            mapping = {}
         if mapping:
             sensors = list(mapping.keys())
             self.output_panel.append_log(
@@ -137,7 +139,7 @@ class MainWindow(QMainWindow):
         else:
             sensors = []
             self.output_panel.append_log(
-                "Camera sensors: no mapping file found — edit Camera Mapping first", source="system",
+                "Camera sensors: no mapping file found — please run Wizard for each camera", source="system",
             )
         self.cm_settings_panel.set_cameras(sensors)
 
@@ -447,67 +449,10 @@ class MainWindow(QMainWindow):
         if self.state.status == AppStatus.RUNNING:
             self.calibration_service.stop()
 
-
-    @Slot()
-    def _run_precheck(self) -> None:
-        try:
-            selected_cameras = self.cm_settings_panel.selected_cameras()
-            if not selected_cameras:
-                raise ValueError("Please select at least one camera")
-            self.output_panel.append_log(f"Check inputs: {', '.join(selected_cameras)}", source="system")
-            project_root = Path(self.cm_settings_panel.project_root_edit.text().strip() or self.project_root)
-            if project_root.resolve() != self.precheck_service.project_root:
-                self.precheck_service = PrecheckService(project_root)
-            results = self.precheck_service.run_for_cameras(selected_cameras)
-            self.cm_settings_panel.update_precheck_results(results)
-            ok_count = sum(1 for result in results if bool(result.get("ok")))
-            self.output_panel.append_log(f"Check inputs: {ok_count}/{len(results)} passed", source="system")
-            self._set_status_summary(f"Input check finished: {ok_count}/{len(results)} cameras passed.")
-        except Exception as exc:
-            self.output_panel.append_log(f"Check inputs failed: {exc}", source="system")
-            self._set_status_summary(str(exc))
-            QMessageBox.critical(self, "Precheck Failed", str(exc))
-
-    @Slot()
-    def _generate_configs(self) -> None:
-        self.cm_settings_panel.generate_config_button.setEnabled(False)
-        self.cm_settings_panel.generate_config_button.setText("Generating...")
-        QCoreApplication.processEvents()
-        try:
-            selected_cameras = self.cm_settings_panel.selected_cameras()
-            if not selected_cameras:
-                raise ValueError("Please select at least one camera")
-            self.output_panel.append_log(f"Generate configs: {', '.join(selected_cameras)}", source="system")
-            project_root = Path(self.cm_settings_panel.project_root_edit.text().strip() or self.project_root)
-            if project_root.resolve() != self.precheck_service.project_root:
-                self.precheck_service = PrecheckService(project_root)
-            precheck_results = self.precheck_service.run_for_cameras(selected_cameras)
-            self.cm_settings_panel.update_precheck_results(precheck_results)
-            failed = [result for result in precheck_results if not result.get("ok")]
-            if failed:
-                raise ValueError("Input check failed; fix the reported camera inputs before generating configs")
-            generated_results = self.precheck_service.generate_configs_for_cameras(selected_cameras)
-            self.cm_settings_panel.update_precheck_results(generated_results)
-            self.output_panel.append_log(f"Generate configs: {len(generated_results)} configs updated", source="system")
-            self._set_status_summary(f"Config generation finished: {len(generated_results)} cameras updated.")
-        except ModuleNotFoundError as exc:
-            msg = f"Missing Python package: {exc.name}. Run: python -m pip install {exc.name}"
-            self._set_red_failure(msg)
-            QMessageBox.critical(self, "Missing Dependency", msg)
-        except Exception as exc:
-            self._set_red_failure(str(exc))
-            self.output_panel.append_log(f"Generate configs failed: {exc}", source="system")
-            QMessageBox.critical(self, "Config Generation Failed", str(exc))
-        finally:
-            self.cm_settings_panel.generate_config_button.setText("Generate Configs")
-            self.cm_settings_panel.generate_config_button.setEnabled(True)
-
-    def _open_board_wizard(self) -> None:
+    def _open_board_wizard_for_camera(self, camera_name: str) -> None:
         from gui_app.widgets.bootstrap_wizard import BootstrapWizardDialog
         project_dir = self.cm_settings_panel.project_root_edit.text().strip() or None
         testrun = self.cm_settings_panel.testrun_edit.text().strip() or None
-        cameras = self.cm_settings_panel.selected_cameras()
-        camera_name = cameras[0] if cameras else None
         dialog = BootstrapWizardDialog(
             self,
             project_dir=project_dir,
@@ -515,20 +460,6 @@ class MainWindow(QMainWindow):
             camera_name=camera_name,
         )
         dialog.exec()
-
-    def _open_camera_mapping(self) -> None:
-        project_dir = self.cm_settings_panel.project_root_edit.text().strip()
-        testrun = self.cm_settings_panel.testrun_edit.text().strip()
-        if not project_dir or not testrun:
-            QMessageBox.warning(
-                self, "Missing Info",
-                "Please fill in ProjectDir and TestRun first.",
-            )
-            return
-        from gui_app.widgets.camera_mapping_dialog import CameraMappingDialog
-        dialog = CameraMappingDialog(project_dir, testrun, self)
-        if dialog.exec():
-            self._refresh_camera_list()
 
     def _apply_status(self, status: AppStatus) -> None:
         self.state.status = status
@@ -545,7 +476,6 @@ class MainWindow(QMainWindow):
         self.calibration_panel.start_button.setEnabled(can_start and not running_or_locked)
         self.calibration_panel.stop_button.setEnabled(calibration_running)
         controls_enabled = not running_or_locked
-        self.cm_settings_panel.precheck_button.setEnabled(controls_enabled)
         self.cm_settings_panel.set_inputs_locked(not controls_enabled)
         self.calibration_panel.set_inputs_locked(not controls_enabled)
 
@@ -893,8 +823,6 @@ class MainWindow(QMainWindow):
         if not details:
             return title
         return "\n".join([title, *details])
-
-
 
     @staticmethod
     def _should_surface_status_line(text: str, *, source: str) -> bool:

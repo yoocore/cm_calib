@@ -69,10 +69,7 @@ class _SectionGroup(QGroupBox):
 class CmSettingsPanel(QGroupBox):
     project_root_changed = Signal(str)
     testrun_changed = Signal(str)
-    precheck_clicked = Signal()
-    generate_config_clicked = Signal()
-    wizard_clicked = Signal()
-    camera_mapping_clicked = Signal()
+    wizard_for_camera_clicked = Signal(str)
     camera_selection_changed = Signal()
 
     def __init__(self, parent: QWidget | None = None):
@@ -96,19 +93,10 @@ class CmSettingsPanel(QGroupBox):
         self.camera_list.setDropIndicatorShown(True)
         self.camera_list.setToolTip("拖拽调整相机顺序")
 
-        self.precheck_button = QPushButton("Check Inputs")
-        self.generate_config_button = QPushButton("Generate Configs")
-        self.wizard_button = QPushButton("Board Wizard")
-        self._generate_configs_ready = False
-        self.generate_config_button.setEnabled(False)
-
         self._camera_check_widgets: dict[str, tuple] = {}
 
         self.browse_button.clicked.connect(self._browse_project_root)
         self.testrun_browse_button.clicked.connect(self._browse_testrun)
-        self.precheck_button.clicked.connect(self.precheck_clicked.emit)
-        self.generate_config_button.clicked.connect(self.generate_config_clicked.emit)
-        self.wizard_button.clicked.connect(self.wizard_clicked.emit)
         self.project_root_edit.editingFinished.connect(
             lambda: self.project_root_changed.emit(self.project_root_edit.text())
         )
@@ -116,7 +104,7 @@ class CmSettingsPanel(QGroupBox):
             lambda: self.testrun_changed.emit(self.testrun_edit.text())
         )
         self.camera_list.itemChanged.connect(self._on_camera_selection_changed)
-        self.camera_list.itemClicked.connect(self._toggle_check_state)  # setItemWidget hides checkbox area
+        self.camera_list.itemClicked.connect(self._toggle_check_state)
         self.camera_list.model().rowsMoved.connect(self._on_camera_rows_moved)
 
         proj_row = QWidget(self)
@@ -136,33 +124,17 @@ class CmSettingsPanel(QGroupBox):
         form.addRow("TestRun", testrun_row)
         form.addRow("Vehicle", self.vehicle_label)
 
-        precheck_row = QWidget(self)
-        precheck_layout = QHBoxLayout(precheck_row)
-        precheck_layout.setContentsMargins(0, 0, 0, 0)
-        precheck_layout.addWidget(self.precheck_button)
-        precheck_layout.addWidget(self.generate_config_button)
-        precheck_layout.addWidget(self.wizard_button)
-
         self.project_group = _SectionGroup("Project Inputs", self)
         project_layout = QVBoxLayout(self.project_group)
         project_layout.setContentsMargins(10, 6, 10, 8)
         project_layout.addLayout(form)
 
-        self.camera_mapping_button = QPushButton("Camera Mapping")
-        self.camera_mapping_button.setToolTip(
-            "Map vehicle sensors to real camera images.\n"
-            "Creates/edits calibtool_camera_config.json in the Movie folder."
-        )
-        self.camera_mapping_button.clicked.connect(self.camera_mapping_clicked.emit)
-
         self.camera_group = _SectionGroup("Camera Selection", self)
         camera_layout = QVBoxLayout(self.camera_group)
         camera_layout.setContentsMargins(8, 4, 8, 6)
         camera_layout.setSpacing(6)
-        camera_layout.addWidget(self.camera_mapping_button)
         self.camera_list.setMinimumHeight(200)
         camera_layout.addWidget(self.camera_list, 1)
-        camera_layout.addWidget(precheck_row)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 4, 8, 6)
@@ -204,7 +176,6 @@ class CmSettingsPanel(QGroupBox):
         """setItemWidget hides native checkbox — toggle on row click instead."""
         current = item.checkState()
         item.setCheckState(Qt.Unchecked if current == Qt.Checked else Qt.Checked)
-        # itemChanged signal will fire → _on_camera_selection_changed → clear + emit
 
     def selected_cameras(self) -> list[str]:
         selected: list[str] = []
@@ -239,6 +210,18 @@ class CmSettingsPanel(QGroupBox):
             check_label.setFixedWidth(20)
             row_layout.addWidget(check_label)
 
+            # Visual separator
+            sep = QWidget()
+            sep.setFixedWidth(4)
+            row_layout.addWidget(sep)
+
+            wizard_btn = QPushButton("Wizard")
+            wizard_btn.setFixedWidth(60)
+            wizard_btn.clicked.connect(
+                lambda checked, cn=camera_name: self.wizard_for_camera_clicked.emit(cn)
+            )
+            row_layout.addWidget(wizard_btn)
+
             config_path = mapping.get(camera_name, "")
             open_btn = QPushButton("Config")
             open_btn.setFixedWidth(60)
@@ -260,8 +243,12 @@ class CmSettingsPanel(QGroupBox):
         project_dir = self.project_root_edit.text().strip()
         if not project_dir:
             return {}
-        from gui_app.widgets.camera_mapping_dialog import load_camera_config
-        config = load_camera_config(project_dir)
+        from gui_app.widgets.camera_mapping_dialog import mapping_path_for_project
+        mapping_path = mapping_path_for_project(project_dir)
+        if mapping_path.exists():
+            config = json.loads(mapping_path.read_text(encoding="utf-8"))
+        else:
+            config = {}
         result: dict = {}
         for name, entry in config.items():
             folder = entry.get("config_folder", "")
@@ -273,15 +260,6 @@ class CmSettingsPanel(QGroupBox):
         import os
         if os.path.isdir(path):
             os.startfile(path)
-
-    def selected_cameras(self) -> list[str]:
-        selected: list[str] = []
-        for index in range(self.camera_list.count()):
-            item = self.camera_list.item(index)
-            if item.checkState() == Qt.Checked:
-                data = item.data(Qt.UserRole)
-                selected.append(str(data) if data is not None else item.text())
-        return selected
 
     def update_precheck_results(self, results: list[dict]) -> None:
         for result in results:
@@ -298,17 +276,11 @@ class CmSettingsPanel(QGroupBox):
                 )
                 if msg:
                     check_label.setToolTip(msg)
-        self._generate_configs_ready = bool(results) and all(
-            bool(r.get("ok")) for r in results
-        )
-        self.generate_config_button.setEnabled(self._generate_configs_ready)
 
     def clear_precheck_results(self) -> None:
         for camera_name, (check_label, _) in self._camera_check_widgets.items():
             check_label.setText("")
             check_label.setToolTip("")
-        self._generate_configs_ready = False
-        self.generate_config_button.setEnabled(False)
 
     def update_sensor_list(self, sensors: list[dict]) -> None:
         _ = sensors
@@ -327,7 +299,3 @@ class CmSettingsPanel(QGroupBox):
         self.testrun_browse_button.setEnabled(not locked)
         self.testrun_browse_button.setToolTip(tip)
         self.camera_list.setEnabled(not locked)
-        self.precheck_button.setEnabled(not locked)
-        self.generate_config_button.setEnabled(
-            (not locked) and self._generate_configs_ready
-        )

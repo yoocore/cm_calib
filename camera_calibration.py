@@ -5635,6 +5635,9 @@ class CameraCalibrator:
             0.0,
             float(cfg.get("dde_circuit_cooldown_sec", 1.5)),
         )
+        # Optional FBO size override for minimized window support (set by caller)
+        self._capture_width: Optional[int] = None
+        self._capture_height: Optional[int] = None
         self.dde_dispatch_failure_streak = 0
         self.dde_circuit_opened_at: Optional[float] = None
         self.dde_circuit_last_error_text = ""
@@ -7696,17 +7699,21 @@ class CameraCalibrator:
             invocation_id = uuid.uuid4().hex
             script_path = self.output_dir / f"{tag}_movie_capture_dde.{invocation_id}.tcl"
             result_path = self.output_dir / f"{tag}_movie_capture_dde.{invocation_id}.txt"
+            # Use Python-computed FBO dimensions if available (reliable even when window minimized)
+            if self._capture_width and self._capture_height:
+                _wi = self._capture_width
+                _he = self._capture_height
+            else:
+                # Fallback: read from View() dict
+                _wi = '[dict get $View($vno) Width]'
+                _he = '[dict get $View($vno) Height]'
             script_text = render_dde_execute_script(
                 result_path,
                 "IPG-MOVIE",
                 [
                     'set vno $View(ev.view)',
-                    '# Force-set View dict dimensions from namespace vars (resistant to minimized window)',
-                    'if {![catch {set _tw $View::v(Width)}] && ![catch {set _th $View::v(Height)}]} {',
-                    '    set ::View($vno) [dict replace $::View($vno) Width $_tw Height $_th]',
-                    '}',
-                    'set wi [dict get $View($vno) Width]',
-                    'set he [dict get $View($vno) Height]',
+                    f'set wi {_wi}',
+                    f'set he {_he}',
                     'UpdateView $vno',
                     'catch {gl bindframebuffer_read 0}',
                     'catch {FBO end}',

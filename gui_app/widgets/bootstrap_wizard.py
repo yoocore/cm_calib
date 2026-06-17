@@ -885,21 +885,34 @@ class BootstrapWizardDialog(QDialog):
                     self._boards.extend(boards)
 
             if "checkerboard" in checked_types and any(t in checked_types for t in ("aruco", "apriltag")):
-                cb_bboxes = [b.bbox for b in self._boards if b.board_type == "checkerboard"]
+                cb_regions = []
+                for b in self._boards:
+                    if b.board_type == "checkerboard":
+                        x, y, w, h = b.bbox
+                        pad = max(w, h) * 0.15
+                        cb_regions.append((x - pad, y - pad, x + w + pad, y + h + pad))
+
+                def _is_on_checkerboard(cx: float, cy: float) -> bool:
+                    return any(
+                        x1 <= cx <= x2 and y1 <= cy <= y2
+                        for x1, y1, x2, y2 in cb_regions
+                    )
+
+                def _grid_on_checkerboard(g: TagGrid) -> bool:
+                    return any(_is_on_checkerboard(t.center[0], t.center[1]) for t in g.tags)
+
                 self._boards = [
                     b for b in self._boards
                     if b.board_type not in ("aruco", "apriltag")
-                    or not any(_bbox_iou(b.bbox, cb) > 0.3 for cb in cb_bboxes)
+                    or not _is_on_checkerboard(b.center[0], b.center[1])
                 ]
                 self._tag_grids = [
                     g for g in self._tag_grids
-                    if not any(_bbox_iou(g.bbox, cb) > 0.3 for cb in cb_bboxes)
+                    if not _grid_on_checkerboard(g)
                 ]
                 self._tags = [
                     t for t in self._tags
-                    if not any(_bbox_iou(
-                        _bbox_from_points(t.corners), cb
-                    ) > 0.3 for cb in cb_bboxes)
+                    if not _is_on_checkerboard(t.center[0], t.center[1])
                 ]
 
             count = len(self._boards)

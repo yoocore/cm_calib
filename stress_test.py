@@ -21,14 +21,14 @@ def kill_all():
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(5)
 
-def run_round(extra_args=None) -> dict:
+def run_round(extra_args=None, timeout_sec=None) -> dict:
     cmd = [sys.executable, str(ORCHESTRATOR), "--testrun", "vctc_ngxpro",
            "--camera", "left_tv", "--camera", "rear_tv", "--camera", "right_rear"]
     if extra_args:
         cmd.extend(extra_args)
     t0 = time.monotonic()
     with open(LOG, "w") as f:
-        result = subprocess.run(cmd, cwd=WORKDIR, stdout=f, stderr=subprocess.STDOUT, timeout=600)
+        result = subprocess.run(cmd, cwd=WORKDIR, stdout=f, stderr=subprocess.STDOUT, timeout=timeout_sec)
     elapsed = round(time.monotonic() - t0)
 
     dirs = sorted(SIMOUT.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True) if SIMOUT.is_dir() else []

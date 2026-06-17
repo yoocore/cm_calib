@@ -8,3 +8,5 @@ data/
 .omo/
 SimOutput/
 tmp/
+.qoder/
+stress_test_summary.json

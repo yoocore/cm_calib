@@ -53,6 +53,8 @@ from gui_app.services.board_auto_detector import (
     TagGrid,
     group_tags_into_grids,
     classify_checkerboards_by_size,
+    _bbox_iou,
+    _bbox_from_points,
 )
 from gui_app.services.wizard_config_generator import (
     generate_config,
@@ -881,6 +883,24 @@ class BootstrapWizardDialog(QDialog):
                     for idx, board in enumerate(boards):
                         board.board_id = f"AG{idx + 1}"
                     self._boards.extend(boards)
+
+            if "checkerboard" in checked_types and any(t in checked_types for t in ("aruco", "apriltag")):
+                cb_bboxes = [b.bbox for b in self._boards if b.board_type == "checkerboard"]
+                self._boards = [
+                    b for b in self._boards
+                    if b.board_type not in ("aruco", "apriltag")
+                    or not any(_bbox_iou(b.bbox, cb) > 0.3 for cb in cb_bboxes)
+                ]
+                self._tag_grids = [
+                    g for g in self._tag_grids
+                    if not any(_bbox_iou(g.bbox, cb) > 0.3 for cb in cb_bboxes)
+                ]
+                self._tags = [
+                    t for t in self._tags
+                    if not any(_bbox_iou(
+                        _bbox_from_points(t.corners), cb
+                    ) > 0.3 for cb in cb_bboxes)
+                ]
 
             count = len(self._boards)
             tag_count = len(self._tags)

@@ -472,6 +472,7 @@ class MainWindow(QMainWindow):
             camera_name=camera_name,
         )
         dialog.exec()
+        self._refresh_camera_list()  # Refresh to pick up mapping changes from wizard
 
     def _apply_status(self, status: AppStatus) -> None:
         self.state.status = status

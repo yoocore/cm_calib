@@ -1014,13 +1014,7 @@ class BootstrapWizardDialog(QDialog):
         if w < 20 or h < 20:
             return
 
-        crop = img[y:y + h, x:x + w]
-        template_dir = Path(self._image_path).parent / "wizard_templates"
-        template_dir.mkdir(parents=True, exist_ok=True)
         custom_idx = sum(1 for b in self._boards if b.board_type == "custom_maker") + 1
-        template_name = f"custom_{custom_idx}.png"
-        template_path = template_dir / template_name
-        cv2.imwrite(str(template_path), crop)
 
         corners = np.array([
             [x, y], [x + w, y], [x + w, y + h], [x, y + h],
@@ -1035,7 +1029,6 @@ class BootstrapWizardDialog(QDialog):
             area=float(w * h),
             weight=0.8,
         )
-        board.template_image = str(template_path)
         self._boards.append(board)
         self._board_list.set_boards(self._boards)
         self._canvas.set_detections(self._boards, self._tag_grids)
@@ -1126,14 +1119,14 @@ class BootstrapWizardDialog(QDialog):
 
         templates_dir = camera_output_dir / "templates"
         templates_dir.mkdir(exist_ok=True)
-        for board in active:
-            if board.board_type == "custom_maker" and board.template_image:
-                old_path = Path(board.template_image)
-                if old_path.exists():
-                    new_path = templates_dir / old_path.name
-                    if old_path != new_path:
-                        shutil.move(str(old_path), str(new_path))
-                        board.template_image = str(new_path)
+        for idx, board in enumerate(active, 1):
+            if board.board_type == "custom_maker" and board.bbox:
+                img = cv2.imread(self._image_path)
+                x, y, w, h = board.bbox
+                crop = img[y:y+h, x:x+w]
+                template_path = templates_dir / f"custom_{idx}.png"
+                cv2.imwrite(str(template_path), crop)
+                board.template_image = str(template_path)
 
         try:
             cfg = generate_config(

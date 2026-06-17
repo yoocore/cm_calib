@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
@@ -100,14 +101,7 @@ class CmSettingsPanel(QGroupBox):
         self._generate_configs_ready = False
         self.generate_config_button.setEnabled(False)
 
-        self.precheck_tree = QTreeWidget()
-        self.precheck_tree.setColumnCount(4)
-        self.precheck_tree.setHeaderLabels(["Camera", "Check", "Config", "Message"])
-        self.precheck_tree.setRootIsDecorated(False)
-        self.precheck_tree.header().setStretchLastSection(True)
-        self.precheck_tree.header().setDefaultAlignment(Qt.AlignLeft)
-        self.precheck_tree.setIndentation(0)
-        self.precheck_tree.setColumnWidth(1, 50)
+        self._camera_check_widgets: dict[str, tuple] = {}
 
         self.browse_button.clicked.connect(self._browse_project_root)
         self.testrun_browse_button.clicked.connect(self._browse_testrun)
@@ -160,19 +154,11 @@ class CmSettingsPanel(QGroupBox):
         camera_layout.addWidget(self.camera_list, 1)
         camera_layout.addWidget(precheck_row)
 
-        self.results_group = _SectionGroup("Check Results", self)
-        results_layout = QVBoxLayout(self.results_group)
-        results_layout.setContentsMargins(6, 2, 6, 4)
-        results_layout.setSpacing(4)
-        self.precheck_tree.setMinimumHeight(140)
-        results_layout.addWidget(self.precheck_tree, 1)
-
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 4, 8, 6)
         layout.setSpacing(6)
         layout.addWidget(self.project_group)
         layout.addWidget(self.camera_group, 1)
-        layout.addWidget(self.results_group, 1)
 
     def _browse_project_root(self) -> None:
         start = self.project_root_edit.text().strip() or _DEFAULT_BROWSE_ROOT
@@ -206,13 +192,59 @@ class CmSettingsPanel(QGroupBox):
 
     def set_cameras(self, cameras: list[str]) -> None:
         self.camera_list.clear()
+        self._camera_check_widgets.clear()
+        mapping = self._load_camera_mapping()
         for camera_name in cameras:
             item = QListWidgetItem(f"⋮⋮ {camera_name}")
             item.setData(Qt.UserRole, camera_name)
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(Qt.Unchecked)
             self.camera_list.addItem(item)
-        self.clear_precheck_results()
+
+            row_widget = QWidget()
+            row_layout = QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(4, 2, 4, 2)
+            row_layout.setSpacing(6)
+
+            check_label = QLabel("")
+            check_label.setFixedWidth(20)
+            row_layout.addWidget(check_label)
+
+            config_path = mapping.get(camera_name, "")
+            open_btn = QPushButton("Open Config")
+            open_btn.setFixedWidth(90)
+            open_btn.setEnabled(bool(config_path))
+            if not config_path:
+                open_btn.setToolTip("No config generated yet")
+            else:
+                open_btn.setToolTip(config_path)
+                open_btn.clicked.connect(
+                    lambda checked, p=config_path: self._open_config_folder(p)
+                )
+            row_layout.addWidget(open_btn)
+            row_layout.addStretch()
+
+            item.setSizeHint(row_widget.sizeHint())
+            self.camera_list.setItemWidget(item, row_widget)
+            self._camera_check_widgets[camera_name] = (check_label, open_btn)
+
+    def _load_camera_mapping(self) -> dict:
+        project_dir = self.project_root_edit.text().strip()
+        if not project_dir:
+            return {}
+        mapping_path = Path(project_dir) / "Movie" / "calibtool_camera_mapping.json"
+        if not mapping_path.exists():
+            return {}
+        try:
+            with open(mapping_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    def _open_config_folder(self, path: str) -> None:
+        import os
+        if os.path.isdir(path):
+            os.startfile(path)
 
     def selected_cameras(self) -> list[str]:
         selected: list[str] = []
@@ -224,50 +256,29 @@ class CmSettingsPanel(QGroupBox):
         return selected
 
     def update_precheck_results(self, results: list[dict]) -> None:
-        self.precheck_tree.clear()
         for result in results:
             camera_name = str(result.get("camera") or "")
             ok = bool(result.get("ok"))
-            item = QTreeWidgetItem(self.precheck_tree)
-            item.setText(0, camera_name)
-            item.setData(0, Qt.TextAlignmentRole, Qt.AlignLeft | Qt.AlignVCenter)
-            status_text = "✓" if ok else "✗"
-            item.setText(1, status_text)
-            item.setForeground(1, _GREEN if ok else _RED)
             msg = str(result.get("message") or "")
-            item.setToolTip(0, camera_name)
-            check_text = f"{status_text} {msg}" if not ok and msg else status_text
-            item.setText(1, check_text)
-            item.setToolTip(1, msg)
-            config_parts: list[str] = []
-            for key in ("config_path", "backup_path", "preview_path"):
-                v = str(result.get(key) or "")
-                if v:
-                    config_parts.append(v)
-            config_text = "; ".join(config_parts) if config_parts else ""
-            item.setText(2, config_text)
-            if config_text:
-                item.setToolTip(2, config_text)
-            detail_lines: list[str] = []
-            for p in result.get("raw_matches", []):
-                s = str(p).strip()
-                if s:
-                    detail_lines.append(s)
-            for p in result.get("annotated_matches", []):
-                s = str(p).strip()
-                if s:
-                    detail_lines.append(s)
-            detail_text = "\n".join(detail_lines)
-            item.setText(3, detail_text)
-            if detail_text:
-                item.setToolTip(3, detail_text)
+            widgets = self._camera_check_widgets.get(camera_name)
+            if widgets:
+                check_label, _ = widgets
+                status_text = "✓" if ok else "✗"
+                check_label.setText(status_text)
+                check_label.setStyleSheet(
+                    "color: #4caf50; font-weight: bold;" if ok else "color: #e53935; font-weight: bold;"
+                )
+                if msg:
+                    check_label.setToolTip(msg)
         self._generate_configs_ready = bool(results) and all(
             bool(r.get("ok")) for r in results
         )
         self.generate_config_button.setEnabled(self._generate_configs_ready)
 
     def clear_precheck_results(self) -> None:
-        self.precheck_tree.clear()
+        for camera_name, (check_label, _) in self._camera_check_widgets.items():
+            check_label.setText("")
+            check_label.setToolTip("")
         self._generate_configs_ready = False
         self.generate_config_button.setEnabled(False)
 

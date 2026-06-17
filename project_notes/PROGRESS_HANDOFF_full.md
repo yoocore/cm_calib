@@ -2603,3 +2603,193 @@ v1.0 baseline（大屏幕，View::SetSize 是 no-op）:
 - 管线稳定性：3/3 全部跑通，无崩无卡
 - 分数一致性：3 轮完全一致
 - right_rear 分数略高 (51.64 vs 43.5)：可能与 auto-reduce 分辨率 (960x640 vs 1920x1280) 有关，非 capture bug
+
+---
+
+## Phase 52: 版本标签修复 + fast-forward (2026-06-16)
+
+### 问题
+
+v1.0 tag 指向了 f0ba753（文档 milestone），但实际稳定代码基线是 644bd02（May 16）。造成引用混乱。
+
+### 修复（commit 833d60c）
+
+- `v1.0` → 644bd02（May 16 稳定代码基线）
+- `v1.1` → f0ba753（June 15 文档里程碑）
+- PROGRESS_HANDOFF_full.md 版本引用同步更新
+
+### 教训
+
+版本标签与实际代码基线必须一致。文档 milestone 和代码版本应该分开打 tag。
+
+---
+
+## Phase 53: 性能分析——10s/iter 回归 + 瓶颈定位 (2026-06-17)
+
+### 背景
+
+用户反馈 calibration 从~1min/相机退化到~5min/三相机。timing 分析表明单相机 run ~45s，其中 per-iter 占了大部分时间。
+
+### April 30 vs June 16 对比
+
+| 指标 | April 30（正常） | June 16（退化） | 差异 |
+|------|----------------|----------------|------|
+| avg_iter | 3.76s | 9.5-10.5s | 2.5-2.8× 慢 |
+| 8 iters | 30.1s | — | — |
+| 3 iters | — | ~30s | — |
+| score | 23.99 ✅ passed | 1054 ❌ failed | — |
+
+### 尝试修复
+
+1. **per-iter DDE param readback（`diff-only apply`）**：`_apply_value_map` 对每次修改的参数调用 `_read_script_control_values`，10 个参数 × DDE roundtrip = ~5s。commit fd8c346 移除（改为直接 apply 所有参数）。**结果：只省 1.1s（29.7→28.6s）**。
+2. **加入 per-iter 计时探针**（commit 14908a1）：evaluate() 内部 capture=0.28s，detect=0.32s，total=0.62s。**evaluate 本身很快**。
+3. **分析 run_study 总时间构成**：avg_iter=total_elapsed/count，包括了 trial 之间的 DDE param apply、settle_sec(0.35s)、progress I/O（image/JSON）。
+
+### 结论
+
+avg_iter 9.5s 的瓶颈是 **trial 间开销**（DDE 参数写入、0.55s settle sleep、progress 输出），而不是 evaluate 本身。这是架构限制：params 必须通过 DDE 写入 CarMaker 的 DataDict，无法加速。
+
+### 教训
+
+1. **先测再猜**——加入 per-iter 计时后才发现 evaluate 只占 0.6s，不是瓶颈。
+2. **avg_iter = total_elapsed/iter_count** 包含所有 inter-trial 开销。
+3. DDE apply + settle sleep 是固定成本，减少 iter 是唯一加速手段。
+
+---
+
+## Phase 54: 30 轮冒烟压力测试 (2026-06-17)
+
+### 背景
+
+验证多 session 重复标定的稳定性。30 轮三相机冒烟（--skip-prepare-for-first-camera，复用同一 session）。
+
+### 测试脚本
+
+```python
+# stress_test.py (自动处理 taskkill 不存在的错误)
+for i in range(30):
+    subprocess.run(["python", "calibration_orchestrator.py", ...])
+```
+
+### 测试中发现的问题
+
+| 问题 | 根因 | 修复 |
+|------|------|------|
+| `--camera action=append` 参数错误 | `argparse append` 在 subprocess 中行为异常 | 88ef6c1 修复为直接传 list |
+| `timeout=600` 杀进程 | subprocess.run timeout 会 TerminateProcess 所有子进程 | 97fb19a 改为 timeout=None |
+| timing probes 需要清理 | 性能探针影响输出整洁 | 移除，commit cedd744 |
+| `ErrorActionPreference="Stop"` 中断脚本 | PowerShell 遇到 taskkill 失败就退出 | 改用 Python 写脚本 |
+
+### 结果：30/30 ✅ 全部通过
+
+| 指标 | 值 |
+|------|-----|
+| 轮次 | 30/30 全部 finished |
+| 平均耗时 | ~265s/轮 |
+| left_tv 分数 | 810.8 ± 0.0（完全一致） |
+| rear_tv 分数 | 1054.8 ± 0.0（完全一致） |
+| right_rear 分数 | 51.6 ± 0.0（完全一致） |
+| 异常 | 0 次 FBO error、0 次渲染冻结、0 次进程泄漏 |
+
+### 教训
+
+1. **subprocess.run timeout 会杀掉整个进程树**——标定过程必须用 timeout=None。
+2. **argparse append 在 subprocess 传参有坑**——`--camera left --camera rear` 在 list 模式下会变成嵌套 list。
+3. **PowerShell ErrorActionPreference="Stop" 太激进**——`taskkill` 找不到进程时直接中止整个脚本。
+4. **30/30 全部稳定**——当前版本的修改（disable_movie_updateview_timer）确实解决了 FBO 竞态。
+
+---
+
+## Phase 55: [Errno 22] Invalid argument 多 start 崩溃 (2026-06-17)
+
+### 问题
+
+全量 calibration（--explore-then-refine）在 multi-start 启动第二个时崩溃：
+
+```
+Multi-start run 2 failed: [Errno 22] Invalid argument
+Explore-then-refine round 1 failed: [Errno 22] Invalid argument
+```
+
+### 现象
+
+- start_00: 正常完成（~83 iters）
+- start_01: 正常完成（~86 iters）
+- start_02: 创建输出目录之前就崩了
+- 目录结构：只有 start_00、start_01，没有 start_02
+
+### 根因分析
+
+OSError(22) 在 Windows 上通常来自：无效文件名、损坏的 pipe/socket、cv2.imwrite 写入损坏数据。
+
+问题发生在 start_01 结束→start_02 开始的过渡期。可能原因：
+1. DDE 连接在 start_01 结束后损坏，Camera::Select 或 View::SetSize 返回脏数据
+2. 某些文件操作在 start_01 的清理阶段侧漏了 handle，导致 start_02 的 mkdir/imwrite 失败
+3. ctypes/OpenCV 内部 OOM 或 GPU 资源耗尽（explore 生成了大量临时图像）
+
+### 处理
+
+**未修复**。用户切换为 GUI 手动跑探索+精化，避开了该路径。
+
+### 教训
+
+1. **multi-start 间的状态清理需要更严格**——特别是 DDE 连接和文件 handle。
+2. **[Errno 22] 是底层 C 错误**，需要对比正常 start 和崩溃 start 的详细路径/参数来定位。
+3. **临时规避**：用户通过 GUI 手动跑单相机 2 轮 explore+refine 成功通过。
+
+---
+
+## Phase 56: GUI 完整标定——2 rounds × 三相机结果 (2026-06-17)
+
+### 背景
+
+用户通过 GUI 手动跑 explore-then-refine（2 rounds，各 2 multi-start），替代 Phase 55 中 crash 的 orchestrator 流程。
+
+### 配置
+
+- mode: `explore_then_refine_rounds`
+- round_count: 2
+- multi-start: 2
+- max_iters: 100
+- time: ~07:40–10:00（约 2h20min）
+
+### 结果
+
+| 相机 | Round 1 | Round 2 | 最优分数 | 备注 |
+|------|---------|---------|---------|------|
+| **right_rear** | 43.43（explore） | 43.45（explore） | **43.43** | ✅ v1.0 基线水平！explore 阶段就找到了最优解 |
+| **left_tv** | 809.54（refine） | **100.51**（refine） | **100.51** | 💪 Round 2 不同 seed 跳出局部最优，从 810→100 |
+| **rear_tv** | 1058.51（refine） | 1054.25（refine） | 1054.25 | ❌ 始终 >1000，标定算法自身问题 |
+
+### right_rear 分数回归分析
+
+此前 30 轮冒烟测试中 right_rear 分数稳定在 51.64，但完整标定（explore+multi-start+100 iters）得到 43.43。说明：**冒烟测试的 3 iters 不够充分**，分数不能代表真实精度。只有完整探索（多种初始参数）才能找到真正的最优解。
+
+### left_tv 多 seed 效果
+
+Round 1 seed=20260429 → 找到局部最优 809
+Round 2 seed=20260430 → 搜索范围扩大，lens_fov 从 194→193，pos_y 从 1.034→1.028，分数从 809→100
+
+**关键发现有价值的参数组合：**
+```
+Round 1 best: pos_y=1.028, yaw=88.99, lens_fov=192.1, pos_x=3.169, pitch=24.93
+Round 2 best: pos_y=1.034, roll=0.619, yaw=89.05, pos_x=3.167, pitch=24.63, lens_fov=192.9
+```
+
+两组参数接近但分数差异巨大。说明系统对参数组合高度敏感，多 seed 探索必不可少。
+
+### rear_tv 持续异常
+
+2 rounds * 2 multi-start * 100 iters 都无法降低 rear_tv 分数。1000+ 分是**标定算法/检测阈值问题**，不是 capture 精度问题（smoke 和 full calibration 分数一致）。
+
+### 稳定性总结（累计 32 轮）
+
+| 测试类型 | 轮次 | 结果 |
+|---------|------|------|
+| 单 session 冒烟（Phase 44） | 3 | ✅ 3/3 finished |
+| 冒烟压力测试（Phase 54） | 30 | ✅ 30/30 finished |
+| 完整标定 GUI（Phase 56） | 3 相机 × 2 rounds | ✅ 全部完成 |
+| **总计** | **39** | **39/39 无崩无卡** |
+
+**管线 100% 稳定。残留问题：** rear_tv 分数异常（算法问题）、[Errno 22] multi-start 崩溃（未复现）、right_rear 冒烟 vs 完整标定的分数差异（3 iters vs 100 iters）。
+

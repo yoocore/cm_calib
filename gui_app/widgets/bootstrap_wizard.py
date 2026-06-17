@@ -268,6 +268,7 @@ class BoardListPanel(QWidget):
         header = self._table.horizontalHeader()
         header.setDefaultAlignment(Qt.AlignCenter)
         header.setSectionResizeMode(QHeaderView.ResizeToContents)
+        header.setMinimumSectionSize(40)
         header.setStretchLastSection(True)
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -314,6 +315,9 @@ class BoardListPanel(QWidget):
                 item.setTextAlignment(Qt.AlignCenter)
                 self._table.setItem(row, col, item)
         self._table.blockSignals(False)
+        self._table.resizeColumnsToContents()
+        for c in range(self._table.columnCount() - 1):
+            self._table.setColumnWidth(c, self._table.columnWidth(c) + 16)
 
     def get_active_boards(self) -> List[DetectedBoard]:
         active: List[DetectedBoard] = []

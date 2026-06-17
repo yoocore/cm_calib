@@ -5586,6 +5586,21 @@ class CameraCalibrator:
         self.real_img_color = cv2.imread(cfg["real_image"], cv2.IMREAD_COLOR)
         if self.real_img_color is None:
             raise FileNotFoundError(f"Cannot read real image in color: {cfg['real_image']}")
+        # Compute expected FBO dimensions (auto-reduced to fit display, matching ensure_movie_view_size)
+        try:
+            _dw = ctypes.windll.user32.GetSystemMetrics(0)  # SM_CXSCREEN
+            _dh = ctypes.windll.user32.GetSystemMetrics(1)  # SM_CYSCREEN
+        except Exception:
+            _dw, _dh = 1920, 1080
+        _fw = int(self.real_img.shape[1])
+        _fh = int(self.real_img.shape[0])
+        while _fw > _dw - 50 or _fh > _dh - 50:
+            _fw //= 2
+            _fh //= 2
+            if _fw < 64 or _fh < 64:
+                break
+        self._capture_width = max(1, _fw)
+        self._capture_height = max(1, _fh)
 
         self.orb = cv2.ORB_create(nfeatures=3000)
         self.params = self._load_params(cfg["parameters"])

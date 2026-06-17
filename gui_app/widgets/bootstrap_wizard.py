@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import List, Optional
 
 import cv2
 import numpy as np
-from PySide6.QtCore import Qt, QPointF, QRectF, Signal
+from PySide6.QtCore import Qt, QPointF, QRectF, Signal, QCoreApplication
 from PySide6.QtGui import (
     QImage,
     QPainter,
@@ -21,6 +22,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QVBoxLayout,
     QHBoxLayout,
+    QGridLayout,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -41,6 +43,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QMessageBox,
     QAbstractItemView,
+    QHeaderView,
 )
 
 from gui_app.services.board_auto_detector import (
@@ -50,6 +53,8 @@ from gui_app.services.board_auto_detector import (
     TagGrid,
     group_tags_into_grids,
     classify_checkerboards_by_size,
+    _bbox_iou,
+    _bbox_from_points,
 )
 from gui_app.services.wizard_config_generator import (
     generate_config,
@@ -62,12 +67,16 @@ _BOARD_TYPE_COLORS = {
     "aruco": QColor(220, 110, 60),
     "apriltag": QColor(60, 170, 90),
     "charuco": QColor(180, 60, 200),
+    "circle_grid": QColor(60, 180, 200),
+    "aruco_grid": QColor(200, 160, 60),
 }
 
 _IMAGE_SUFFIXES = "*.jpg *.jpeg *.png *.bmp *.tif *.tiff *.webp"
 
 
 class ImageCanvasWidget(QWidget):
+
+    rectangle_drawn = Signal(int, int, int, int)
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -76,7 +85,11 @@ class ImageCanvasWidget(QWidget):
         self._tag_grids: List[TagGrid] = []
         self._zoom = 1.0
         self._offset = QPointF(0, 0)
-        self._drag_start: Optional[QPointF] = None
+        self._pan_start: Optional[QPointF] = None
+        self._draw_mode = False
+        self._draw_start: Optional[QPointF] = None
+        self._draw_current: Optional[QPointF] = None
+        self._drawn_rects: List[Tuple[int, int, int, int]] = []
         self.setMinimumSize(400, 300)
         self.setMouseTracking(True)
 
@@ -87,6 +100,7 @@ class ImageCanvasWidget(QWidget):
         self._pixmap = pixmap
         self._zoom = 1.0
         self._offset = QPointF(0, 0)
+        self._drawn_rects.clear()
         self._fit_to_view()
         self.update()
 
@@ -98,6 +112,23 @@ class ImageCanvasWidget(QWidget):
         self._boards = boards
         self._tag_grids = tag_grids or []
         self.update()
+
+    def set_draw_mode(self, enabled: bool) -> None:
+        self._draw_mode = enabled
+        self._draw_start = None
+        self._draw_current = None
+        if enabled:
+            self.setCursor(Qt.CrossCursor)
+        else:
+            self.setCursor(Qt.ArrowCursor)
+        self.update()
+
+    def _screen_to_image(self, screen_pos: QPointF) -> QPointF:
+        if self._zoom == 0:
+            return QPointF(0, 0)
+        img_x = (screen_pos.x() - self._offset.x()) / self._zoom
+        img_y = (screen_pos.y() - self._offset.y()) / self._zoom
+        return QPointF(img_x, img_y)
 
     def _fit_to_view(self) -> None:
         if not self._pixmap:
@@ -124,17 +155,39 @@ class ImageCanvasWidget(QWidget):
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.LeftButton:
-            self._drag_start = event.position()
+            if self._draw_mode:
+                self._draw_start = event.position()
+                self._draw_current = event.position()
+            else:
+                self._pan_start = event.position()
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
-        if self._drag_start is not None:
-            delta = event.position() - self._drag_start
+        if self._draw_mode and self._draw_start is not None:
+            self._draw_current = event.position()
+            self.update()
+        elif not self._draw_mode and self._pan_start is not None:
+            delta = event.position() - self._pan_start
             self._offset += delta
-            self._drag_start = event.position()
+            self._pan_start = event.position()
             self.update()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
-        self._drag_start = None
+        if self._draw_mode and self._draw_start is not None:
+            end_pos = event.position()
+            img_start = self._screen_to_image(self._draw_start)
+            img_end = self._screen_to_image(end_pos)
+            x1, y1 = min(img_start.x(), img_end.x()), min(img_start.y(), img_end.y())
+            x2, y2 = max(img_start.x(), img_end.x()), max(img_start.y(), img_end.y())
+            w, h = x2 - x1, y2 - y1
+            if w > 10 and h > 10:
+                ix, iy = int(max(0, x1)), int(max(0, y1))
+                iw, ih = int(w), int(h)
+                self._drawn_rects.append((ix, iy, iw, ih))
+                self.rectangle_drawn.emit(ix, iy, iw, ih)
+            self._draw_start = None
+            self._draw_current = None
+            self.update()
+        self._pan_start = None
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -181,6 +234,25 @@ class ImageCanvasWidget(QWidget):
             painter.setFont(font)
             painter.drawText(QPointF(x + 4, y - 6 / self._zoom), grid.grid_id)
 
+        custom_color = QColor(200, 50, 200)
+        pen.setColor(custom_color)
+        painter.setPen(pen)
+        for rx, ry, rw, rh in self._drawn_rects:
+            painter.drawRect(QRectF(rx, ry, rw, rh))
+
+        if self._draw_start is not None and self._draw_current is not None:
+            img_start = self._screen_to_image(self._draw_start)
+            img_end = self._screen_to_image(self._draw_current)
+            x1 = min(img_start.x(), img_end.x())
+            y1 = min(img_start.y(), img_end.y())
+            x2 = max(img_start.x(), img_end.x())
+            y2 = max(img_start.y(), img_end.y())
+            dash_pen = QPen(QColor(255, 255, 0))
+            dash_pen.setWidthF(max(1.0, 2.0 / self._zoom))
+            dash_pen.setStyle(Qt.DashLine)
+            painter.setPen(dash_pen)
+            painter.drawRect(QRectF(x1, y1, x2 - x1, y2 - y1))
+
         painter.end()
 
 
@@ -193,59 +265,132 @@ class BoardListPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         self._table = QTableWidget()
-        self._table.setColumnCount(6)
-        self._table.setHorizontalHeaderLabels(["Use", "ID", "Type", "Size", "Points", "BBox"])
-        self._table.horizontalHeader().setStretchLastSection(True)
+        self._table.setColumnCount(7)
+        self._table.setHorizontalHeaderLabels(["", "Use", "ID", "Type", "Size", "Points", "BBox"])
+        header = self._table.horizontalHeader()
+        header.setDefaultAlignment(Qt.AlignCenter)
+        header.setSectionResizeMode(QHeaderView.ResizeToContents)
+        header.setMinimumSectionSize(40)
+        header.setStretchLastSection(True)
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._table.setStyleSheet(
+            "QTableWidget::item:focus { outline: none; }"
+            "QTableWidget::item:selected { background-color: #d0d0d0; color: black; }"
+        )
         self._table.cellChanged.connect(self._on_cell_changed)
         layout.addWidget(self._table)
 
         self._boards: List[DetectedBoard] = []
+        self._unchecked_ids: set = set()
 
     def set_boards(self, boards: List[DetectedBoard]) -> None:
-        self._boards = boards
+        self._boards = list(boards)
         self._table.blockSignals(True)
         self._table.setRowCount(len(boards))
         for row, board in enumerate(boards):
+            is_custom = board.board_type == "custom_maker"
+            del_btn = QPushButton("−")
+            del_btn.setFixedSize(24, 22)
+            del_btn.setToolTip("Delete this board")
+            del_btn.clicked.connect(lambda checked, r=row: self._delete_row_with_confirm(r))
+            self._table.setCellWidget(row, 0, del_btn)
+
             cb = QCheckBox()
-            cb.setChecked(True)
+            cb.setChecked(board.board_id not in self._unchecked_ids)
             cb.stateChanged.connect(self._on_checkbox_changed)
-            self._table.setCellWidget(row, 0, cb)
-            self._table.setItem(row, 1, QTableWidgetItem(board.board_id))
-            self._table.setItem(row, 2, QTableWidgetItem(board.board_type))
-            size_text = f"{board.board_size[0]}x{board.board_size[1]}" if board.board_size else "-"
-            self._table.setItem(row, 3, QTableWidgetItem(size_text))
-            pts = board.corners.shape[0] if board.corners.size > 0 else 0
-            self._table.setItem(row, 4, QTableWidgetItem(str(pts)))
-            self._table.setItem(row, 5, QTableWidgetItem(str(board.bbox)))
+            cb_widget = QWidget()
+            cb_layout = QHBoxLayout(cb_widget)
+            cb_layout.setContentsMargins(0, 0, 0, 0)
+            cb_layout.addStretch()
+            cb_layout.addWidget(cb)
+            cb_layout.addStretch()
+            self._table.setCellWidget(row, 1, cb_widget)
+
+            for col, text in [
+                (2, board.board_id),
+                (3, board.board_type),
+                (4, f"{board.board_size[0]}x{board.board_size[1]}" if board.board_size else "-"),
+                (5, str(board.corners.shape[0] if board.corners.size > 0 else 0)),
+                (6, str(board.bbox)),
+            ]:
+                item = QTableWidgetItem(text)
+                item.setTextAlignment(Qt.AlignCenter)
+                self._table.setItem(row, col, item)
         self._table.blockSignals(False)
+        self._table.resizeColumnsToContents()
+        for c in range(self._table.columnCount() - 1):
+            self._table.setColumnWidth(c, self._table.columnWidth(c) + 16)
 
     def get_active_boards(self) -> List[DetectedBoard]:
         active: List[DetectedBoard] = []
         for row, board in enumerate(self._boards):
-            cb = self._table.cellWidget(row, 0)
-            if isinstance(cb, QCheckBox) and cb.isChecked():
-                item = self._table.item(row, 1)
+            cb_container = self._table.cellWidget(row, 1)
+            cb = cb_container.findChild(QCheckBox) if cb_container else None
+            if cb and cb.isChecked():
+                item = self._table.item(row, 2)
                 board.board_id = item.text() if item else board.board_id
                 active.append(board)
         return active
 
     def _on_cell_changed(self, row: int, col: int) -> None:
-        if col == 1 and row < len(self._boards):
+        if col == 2 and row < len(self._boards):
             item = self._table.item(row, col)
             if item:
                 self._boards[row].board_id = item.text()
         self.board_changed.emit()
 
+    _suppress_delete_confirm = False
+
+    def _delete_row_with_confirm(self, row: int) -> None:
+        if row < 0 or row >= len(self._boards):
+            return
+        board = self._boards[row]
+        if board.board_type != "custom_maker" and not self._suppress_delete_confirm:
+            msg_box = QMessageBox(self)
+            msg_box.setIcon(QMessageBox.Question)
+            msg_box.setWindowTitle("Delete Board")
+            msg_box.setText(f"Delete auto-detected board {board.board_id}?")
+            confirm_btn = msg_box.addButton("Confirm", QMessageBox.AcceptRole)
+            cancel_btn = msg_box.addButton("Cancel", QMessageBox.RejectRole)
+            skip_btn = msg_box.addButton("Don't ask again", QMessageBox.ActionRole)
+            msg_box.setDefaultButton(cancel_btn)
+            msg_box.exec()
+            clicked = msg_box.clickedButton()
+            if clicked == cancel_btn:
+                return
+            if clicked == skip_btn:
+                BoardListPanel._suppress_delete_confirm = True
+
+        self._boards.pop(row)
+        self.set_boards(self._boards)
+        self.board_changed.emit()
+
     def _on_checkbox_changed(self) -> None:
+        self._unchecked_ids.clear()
+        for row, board in enumerate(self._boards):
+            cb_container = self._table.cellWidget(row, 1)
+            cb = cb_container.findChild(QCheckBox) if cb_container else None
+            if cb and not cb.isChecked():
+                self._unchecked_ids.add(board.board_id)
         self.board_changed.emit()
 
 
 class BootstrapWizardDialog(QDialog):
 
-    def __init__(self, parent: Optional[QWidget] = None):
+    def __init__(
+        self,
+        parent: Optional[QWidget] = None,
+        project_dir: Optional[str] = None,
+        testrun: Optional[str] = None,
+        camera_name: Optional[str] = None,
+    ):
         super().__init__(parent)
+        self.setWindowFlags(
+            self.windowFlags()
+            | Qt.WindowMinimizeButtonHint
+            | Qt.WindowMaximizeButtonHint
+        )
         self.setWindowTitle("Board Calibration Wizard")
         self.resize(1200, 800)
 
@@ -254,6 +399,9 @@ class BootstrapWizardDialog(QDialog):
         self._boards: List[DetectedBoard] = []
         self._tag_grids: List[TagGrid] = []
         self._tags: List[DetectedTag] = []
+        self._gui_project_dir = project_dir
+        self._gui_testrun = testrun
+        self._gui_camera_name = camera_name
 
         self._stack = QStackedWidget()
         self._stack.addWidget(self._build_input_page())
@@ -267,6 +415,56 @@ class BootstrapWizardDialog(QDialog):
         page = QWidget()
         layout = QVBoxLayout(page)
 
+        camera_group = QGroupBox("Camera Mapping (optional)")
+        camera_form = QGridLayout(camera_group)
+        camera_form.setColumnStretch(1, 1)
+
+        self._project_dir_edit = QLineEdit()
+        self._project_dir_edit.setPlaceholderText("Project root directory...")
+        proj_browse = QPushButton("Browse...")
+        proj_browse.clicked.connect(self._browse_project_dir)
+        self._proj_dir_label = QLabel("ProjectDir:")
+        camera_form.addWidget(self._proj_dir_label, 0, 0)
+        camera_form.addWidget(self._project_dir_edit, 0, 1)
+        camera_form.addWidget(proj_browse, 0, 2)
+
+        self._testrun_edit = QLineEdit()
+        self._testrun_edit.setPlaceholderText("TestRun path relative to Data/TestRun...")
+        tr_browse = QPushButton("Browse...")
+        tr_browse.clicked.connect(self._browse_testrun)
+        self._testrun_label = QLabel("TestRun:")
+        camera_form.addWidget(self._testrun_label, 1, 0)
+        camera_form.addWidget(self._testrun_edit, 1, 1)
+        camera_form.addWidget(tr_browse, 1, 2)
+
+        self._camera_combo = QComboBox()
+        self._camera_combo.setEnabled(False)
+        self._camera_combo.addItem("(select camera)")
+        refresh_btn = QPushButton("Refresh")
+        refresh_btn.clicked.connect(self._refresh_camera_list)
+        camera_form.addWidget(QLabel("Camera:"), 2, 0)
+        camera_form.addWidget(self._camera_combo, 2, 1)
+        camera_form.addWidget(refresh_btn, 2, 2)
+
+        if self._gui_project_dir:
+            self._project_dir_edit.setText(self._gui_project_dir)
+            self._proj_dir_label.setVisible(False)
+            self._project_dir_edit.setVisible(False)
+            proj_browse.setVisible(False)
+        if self._gui_testrun:
+            self._testrun_edit.setText(self._gui_testrun)
+            self._testrun_label.setVisible(False)
+            self._testrun_edit.setVisible(False)
+            tr_browse.setVisible(False)
+        if self._gui_project_dir and self._gui_testrun:
+            self._refresh_camera_list()
+            if self._gui_camera_name:
+                idx = self._camera_combo.findText(self._gui_camera_name)
+                if idx >= 0:
+                    self._camera_combo.setCurrentIndex(idx)
+
+        layout.addWidget(camera_group)
+
         file_group = QGroupBox("Reference Image")
         file_layout = QHBoxLayout(file_group)
         self._image_path_edit = QLineEdit()
@@ -277,47 +475,104 @@ class BootstrapWizardDialog(QDialog):
         file_layout.addWidget(browse_btn)
         layout.addWidget(file_group)
 
-        type_group = QGroupBox("Board Type")
+        type_group = QGroupBox("Board Type (multi-select supported)")
         type_layout = QVBoxLayout(type_group)
-        self._type_group = QButtonGroup(self)
-        self._rb_checkerboard = QRadioButton("Checkerboard")
-        self._rb_aruco = QRadioButton("ArUco")
-        self._rb_apriltag = QRadioButton("AprilTag")
-        self._rb_charuco = QRadioButton("CharUco")
-        self._rb_checkerboard.setChecked(True)
-        for rb in (self._rb_checkerboard, self._rb_aruco, self._rb_apriltag, self._rb_charuco):
-            self._type_group.addButton(rb)
-            type_layout.addWidget(rb)
+        self._cb_checkerboard = QCheckBox("Checkerboard")
+        self._cb_aruco = QCheckBox("ArUco")
+        self._cb_apriltag = QCheckBox("AprilTag")
+        self._cb_charuco = QCheckBox("CharUco")
+        self._cb_circle_grid = QCheckBox("Circle Grid")
+        self._cb_aruco_grid = QCheckBox("ArUco Grid Board")
+        self._cb_custom = QCheckBox("Custom (manual)")
+        self._cb_checkerboard.setChecked(True)
+        for cb in (
+            self._cb_checkerboard, self._cb_aruco, self._cb_apriltag,
+            self._cb_charuco, self._cb_circle_grid, self._cb_aruco_grid,
+        ):
+            cb.stateChanged.connect(self._on_type_changed)
+            type_layout.addWidget(cb)
+        sep_line = QWidget()
+        sep_line.setFixedHeight(8)
+        type_layout.addWidget(sep_line)
+        self._cb_custom.stateChanged.connect(self._on_type_changed)
+        type_layout.addWidget(self._cb_custom)
         layout.addWidget(type_group)
 
         params_group = QGroupBox("Parameters (optional)")
-        params_layout = QFormLayout(params_group)
-        self._aruco_dict_combo = QComboBox()
-        self._aruco_dict_combo.addItems([
+        _grid = QGridLayout(params_group)
+        _grid.setContentsMargins(8, 8, 8, 8)
+        _grid.setHorizontalSpacing(6)
+        _grid.setColumnStretch(2, 1)
+        _grid.setColumnStretch(4, 1)
+        _row = [0]
+
+        def _add_size_row(label_text: str) -> tuple:
+            label = QLabel(label_text)
+            cols_spin = QSpinBox()
+            cols_spin.setRange(0, 50)
+            cols_spin.setValue(0)
+            cols_spin.setSpecialValueText("auto")
+            rows_spin = QSpinBox()
+            rows_spin.setRange(0, 50)
+            rows_spin.setValue(0)
+            rows_spin.setSpecialValueText("auto")
+            r = _row[0]
+            _grid.addWidget(label, r, 0)
+            _grid.addWidget(QLabel("Cols:"), r, 1)
+            _grid.addWidget(cols_spin, r, 2)
+            _grid.addWidget(QLabel("Rows:"), r, 3)
+            _grid.addWidget(rows_spin, r, 4)
+            _row[0] += 1
+            return label, cols_spin, rows_spin
+
+        def _add_combo_row(label_text: str, items: list) -> tuple:
+            label = QLabel(label_text)
+            combo = QComboBox()
+            combo.addItems(items)
+            r = _row[0]
+            _grid.addWidget(label, r, 0)
+            _grid.addWidget(combo, r, 1, 1, 4)
+            _row[0] += 1
+            return label, combo
+
+        self._param_row_widgets: dict[str, list[QWidget]] = {}
+
+        def _track_row(key: str) -> None:
+            row_widgets: list[QWidget] = []
+            r = _row[0] - 1
+            for c in range(_grid.columnCount()):
+                item = _grid.itemAtPosition(r, c)
+                if item and item.widget():
+                    row_widgets.append(item.widget())
+            self._param_row_widgets[key] = row_widgets
+
+        cb_label, self._cb_size_cols, self._cb_size_rows = _add_size_row("[Checkerboard] Board Size:")
+        _track_row("checkerboard")
+        aruco_label, self._aruco_size_cols, self._aruco_size_rows = _add_size_row("[ArUco Grid] Board Size:")
+        _track_row("aruco_grid")
+        charuco_label, self._charuco_size_cols, self._charuco_size_rows = _add_size_row("[CharUco] Board Size:")
+        _track_row("charuco")
+        cg_label, self._cg_size_cols, self._cg_size_rows = _add_size_row("[Circle Grid] Board Size:")
+        _track_row("circle_grid")
+
+        _DICT_ITEMS = [
             "DICT_4X4_50", "DICT_5X5_100", "DICT_6X6_100", "DICT_7X7_100",
-        ])
-        params_layout.addRow("ArUco Dictionary:", self._aruco_dict_combo)
+        ]
 
-        self._tag_family_combo = QComboBox()
-        self._tag_family_combo.addItems([
-            "auto", "tagStandard41h12", "tag36h11", "tag25h9", "tag16h5",
-        ])
-        params_layout.addRow("AprilTag Family:", self._tag_family_combo)
+        aruco_d_label, self._aruco_dict_combo = _add_combo_row("[ArUco] Dictionary:", _DICT_ITEMS)
+        _track_row("aruco")
+        charuco_d_label, self._charuco_dict_combo = _add_combo_row("[CharUco] Dictionary:", _DICT_ITEMS)
+        _track_row("charuco_dict")
+        aruco_grid_d_label, self._aruco_grid_dict_combo = _add_combo_row("[ArUco Grid] Dictionary:", _DICT_ITEMS)
+        _track_row("aruco_grid_dict")
 
-        self._board_size_cols = QSpinBox()
-        self._board_size_cols.setRange(0, 50)
-        self._board_size_cols.setValue(0)
-        self._board_size_cols.setSpecialValueText("auto")
-        self._board_size_rows = QSpinBox()
-        self._board_size_rows.setRange(0, 50)
-        self._board_size_rows.setValue(0)
-        self._board_size_rows.setSpecialValueText("auto")
-        size_layout = QHBoxLayout()
-        size_layout.addWidget(QLabel("Cols:"))
-        size_layout.addWidget(self._board_size_cols)
-        size_layout.addWidget(QLabel("Rows:"))
-        size_layout.addWidget(self._board_size_rows)
-        params_layout.addRow("Board Size:", size_layout)
+        self._tag_family_label, self._tag_family_combo = _add_combo_row(
+            "[AprilTag] Family:",
+            ["auto", "tagStandard41h12", "tag36h11", "tag25h9", "tag16h5"],
+        )
+        _track_row("apriltag")
+
+        self._on_type_changed()
         layout.addWidget(params_group)
 
         self._detect_btn = QPushButton("Detect Boards")
@@ -337,6 +592,7 @@ class BootstrapWizardDialog(QDialog):
 
         splitter = QSplitter(Qt.Horizontal)
         self._canvas = ImageCanvasWidget()
+        self._canvas.rectangle_drawn.connect(self._on_rectangle_drawn)
         splitter.addWidget(self._canvas)
 
         right_panel = QWidget()
@@ -354,9 +610,21 @@ class BootstrapWizardDialog(QDialog):
         btn_layout = QHBoxLayout()
         back_btn = QPushButton("< Back")
         back_btn.clicked.connect(lambda: self._stack.setCurrentIndex(0))
+        self._redetect_btn = QPushButton("Re-Detect")
+        self._redetect_btn.setToolTip("Re-run detection with current settings")
+        self._redetect_btn.clicked.connect(self._on_redetect)
+        self._add_custom_btn = QPushButton("Add Custom Board")
+        self._add_custom_btn.setCheckable(True)
+        self._add_custom_btn.setToolTip(
+            "Toggle draw mode: drag a rectangle on the image to mark a partially-visible board.\n"
+            "It will be added as a custom_maker with template_match."
+        )
+        self._add_custom_btn.toggled.connect(self._on_toggle_draw_mode)
         next_btn = QPushButton("Next >")
         next_btn.clicked.connect(self._on_review_next)
         btn_layout.addWidget(back_btn)
+        btn_layout.addWidget(self._redetect_btn)
+        btn_layout.addWidget(self._add_custom_btn)
         btn_layout.addStretch()
         btn_layout.addWidget(next_btn)
         layout.addLayout(btn_layout)
@@ -424,6 +692,41 @@ class BootstrapWizardDialog(QDialog):
         if path:
             self._image_path_edit.setText(path)
 
+    def _browse_project_dir(self) -> None:
+        path = QFileDialog.getExistingDirectory(self, "Select Project Root")
+        if path:
+            self._project_dir_edit.setText(path)
+
+    def _browse_testrun(self) -> None:
+        project_dir = self._project_dir_edit.text().strip()
+        start_dir = str(Path(project_dir) / "Data" / "TestRun") if project_dir else ""
+        path, _ = QFileDialog.getOpenFileName(self, "Select TestRun", start_dir, "TestRun files (*)")
+        if path and project_dir:
+            testrun_root = Path(project_dir) / "Data" / "TestRun"
+            try:
+                rel = str(Path(path).relative_to(testrun_root))
+                self._testrun_edit.setText(rel)
+            except ValueError:
+                self._testrun_edit.setText(path)
+
+    def _refresh_camera_list(self) -> None:
+        project_dir = self._project_dir_edit.text().strip()
+        testrun = self._testrun_edit.text().strip()
+        if not project_dir or not testrun:
+            return
+        self._camera_combo.clear()
+        self._camera_combo.addItem("(select camera)")
+        try:
+            from gui_app.services.static_vehicle_reader import resolve_vehicle_info
+            info = resolve_vehicle_info(Path(project_dir), testrun)
+            sensors = [s["name"] for s in info.get("sensors", [])]
+            for name in sensors:
+                self._camera_combo.addItem(name)
+            self._camera_combo.setEnabled(len(sensors) > 0)
+        except Exception as exc:
+            self._camera_combo.addItem(f"Error: {exc}")
+            self._camera_combo.setEnabled(False)
+
     def _browse_template(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self, "Select Template Config", "",
@@ -432,19 +735,55 @@ class BootstrapWizardDialog(QDialog):
         if path:
             self._template_edit.setText(path)
 
+    def _write_camera_mapping(
+        self, cam_name: str, config_folder: str, output_dir: Path,
+    ) -> None:
+        mapping_path = output_dir / "calibtool_camera_mapping.json"
+        mapping: dict = {}
+        if mapping_path.exists():
+            try:
+                with open(mapping_path, "r", encoding="utf-8") as f:
+                    mapping = json.load(f)
+            except Exception:
+                mapping = {}
+        mapping[cam_name] = config_folder
+        with open(mapping_path, "w", encoding="utf-8") as f:
+            json.dump(mapping, f, ensure_ascii=False, indent=4)
+
     def _browse_output_dir(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "Select Output Directory")
         if path:
             self._output_dir_edit.setText(path)
 
-    def _get_selected_board_type(self) -> str:
-        if self._rb_aruco.isChecked():
-            return "aruco"
-        if self._rb_apriltag.isChecked():
-            return "apriltag"
-        if self._rb_charuco.isChecked():
-            return "charuco"
-        return "checkerboard"
+    def _get_checked_types(self) -> List[str]:
+        types: List[str] = []
+        if self._cb_checkerboard.isChecked():
+            types.append("checkerboard")
+        if self._cb_aruco.isChecked():
+            types.append("aruco")
+        if self._cb_apriltag.isChecked():
+            types.append("apriltag")
+        if self._cb_charuco.isChecked():
+            types.append("charuco")
+        if self._cb_circle_grid.isChecked():
+            types.append("circle_grid")
+        if self._cb_aruco_grid.isChecked():
+            types.append("aruco_grid")
+        return types
+
+    def _on_type_changed(self) -> None:
+        if self._cb_custom.isChecked():
+            for widgets in self._param_row_widgets.values():
+                for w in widgets:
+                    w.setVisible(False)
+            return
+
+        checked_types = set(self._get_checked_types())
+        for key, widgets in self._param_row_widgets.items():
+            base_type = key.split("_dict")[0]
+            show = base_type in checked_types
+            for w in widgets:
+                w.setVisible(show)
 
     def _on_detect(self) -> None:
         image_path = self._image_path_edit.text().strip()
@@ -453,8 +792,30 @@ class BootstrapWizardDialog(QDialog):
             return
 
         self._image_path = image_path
-        self._status_label.setText("Detecting...")
-        board_type = self._get_selected_board_type()
+
+        if self._cb_custom.isChecked():
+            self._boards = []
+            self._tag_grids = []
+            self._tags = []
+            self._canvas.set_image(image_path)
+            self._canvas.set_detections(self._boards, self._tag_grids)
+            self._board_list.set_boards(self._boards)
+            self._stack.setCurrentIndex(1)
+            self._add_custom_btn.setChecked(True)
+            self._status_label.setText("")
+            return
+
+        checked_types = self._get_checked_types()
+        if not checked_types:
+            self._status_label.setText("Please select at least one board type.")
+            return
+
+        self._detect_btn.setEnabled(False)
+        self._detect_btn.setText("Detecting... please wait")
+        self._status_label.setText(
+            f"Loading image and detecting ({', '.join(checked_types)})..."
+        )
+        QCoreApplication.processEvents()
 
         try:
             img = cv2.imread(image_path)
@@ -466,64 +827,119 @@ class BootstrapWizardDialog(QDialog):
             self._tag_grids = []
             self._tags = []
 
-            if board_type == "checkerboard":
-                cols = self._board_size_cols.value()
-                rows = self._board_size_rows.value()
-                sizes = [(cols, rows)] if cols > 0 and rows > 0 else None
-                self._boards = self._detector.detect_checkerboard_instances(img, sizes)
-                large, small = classify_checkerboards_by_size(self._boards)
-                self._boards = large + small
+            for board_type in checked_types:
+                if board_type == "checkerboard":
+                    cols = self._cb_size_cols.value()
+                    rows = self._cb_size_rows.value()
+                    sizes = [(cols, rows)] if cols > 0 and rows > 0 else None
+                    boards = self._detector.detect_checkerboard_instances(img, sizes)
+                    large, small = classify_checkerboards_by_size(boards)
+                    self._boards.extend(large + small)
 
-            elif board_type == "aruco":
-                dictionary = self._aruco_dict_combo.currentText()
-                self._tags = self._detector.detect_aruco_tags(img, dictionary)
-                self._tag_grids = group_tags_into_grids(self._tags)
-                for grid in self._tag_grids:
-                    bbox = grid.bbox
-                    corners = np.concatenate([t.corners for t in grid.tags], axis=0)
-                    self._boards.append(DetectedBoard(
-                        board_type="aruco",
-                        bbox=bbox,
-                        corners=corners,
-                        board_id=grid.grid_id,
-                        tags=grid.tags,
-                        center=grid.center,
-                        area=float(bbox[2] * bbox[3]),
-                    ))
+                elif board_type == "aruco":
+                    dictionary = self._aruco_dict_combo.currentText()
+                    tags = self._detector.detect_aruco_tags(img, dictionary)
+                    grids = group_tags_into_grids(tags)
+                    self._tags.extend(tags)
+                    self._tag_grids.extend(grids)
+                    for grid in grids:
+                        bbox = grid.bbox
+                        corners = np.concatenate([t.corners for t in grid.tags], axis=0)
+                        self._boards.append(DetectedBoard(
+                            board_type="aruco",
+                            bbox=bbox,
+                            corners=corners,
+                            board_id=grid.grid_id,
+                            tags=grid.tags,
+                            center=grid.center,
+                            area=float(bbox[2] * bbox[3]),
+                        ))
 
-            elif board_type == "apriltag":
-                family_text = self._tag_family_combo.currentText()
-                auto = family_text == "auto"
-                family = "tagStandard41h12" if auto else family_text
-                self._tags = self._detector.detect_apriltags(img, family, auto_family=auto)
-                self._tag_grids = group_tags_into_grids(self._tags)
-                for grid in self._tag_grids:
-                    bbox = grid.bbox
-                    corners = np.concatenate([t.corners for t in grid.tags], axis=0)
-                    self._boards.append(DetectedBoard(
-                        board_type="apriltag",
-                        bbox=bbox,
-                        corners=corners,
-                        board_id=grid.grid_id,
-                        tags=grid.tags,
-                        center=grid.center,
-                        area=float(bbox[2] * bbox[3]),
-                    ))
+                elif board_type == "apriltag":
+                    family_text = self._tag_family_combo.currentText()
+                    auto = family_text == "auto"
+                    family = "tagStandard41h12" if auto else family_text
+                    tags = self._detector.detect_apriltags(img, family, auto_family=auto)
+                    grids = group_tags_into_grids(tags)
+                    self._tags.extend(tags)
+                    self._tag_grids.extend(grids)
+                    for grid in grids:
+                        bbox = grid.bbox
+                        corners = np.concatenate([t.corners for t in grid.tags], axis=0)
+                        self._boards.append(DetectedBoard(
+                            board_type="apriltag",
+                            bbox=bbox,
+                            corners=corners,
+                            board_id=grid.grid_id,
+                            tags=grid.tags,
+                            center=grid.center,
+                            area=float(bbox[2] * bbox[3]),
+                        ))
 
-            elif board_type == "charuco":
-                cols = self._board_size_cols.value() or 7
-                rows = self._board_size_rows.value() or 5
-                dictionary = self._aruco_dict_combo.currentText()
-                detected = self._detector.detect_charuco_boards(
-                    img, (cols, rows), dictionary,
-                )
-                self._boards = detected
+                elif board_type == "charuco":
+                    cols = self._charuco_size_cols.value() or 7
+                    rows = self._charuco_size_rows.value() or 5
+                    dictionary = self._charuco_dict_combo.currentText()
+                    detected = self._detector.detect_charuco_boards(
+                        img, (cols, rows), dictionary,
+                    )
+                    self._boards.extend(detected)
+
+                elif board_type == "circle_grid":
+                    cols = self._cg_size_cols.value() or 0
+                    rows = self._cg_size_rows.value() or 0
+                    sizes = [(cols, rows)] if cols > 0 and rows > 0 else None
+                    boards = self._detector.detect_circle_grids(img, sizes)
+                    for idx, board in enumerate(boards):
+                        board.board_id = f"CG{idx + 1}"
+                    self._boards.extend(boards)
+
+                elif board_type == "aruco_grid":
+                    cols = self._aruco_size_cols.value() or 0
+                    rows = self._aruco_size_rows.value() or 0
+                    dictionary = self._aruco_grid_dict_combo.currentText()
+                    sizes = [(cols, rows)] if cols > 0 and rows > 0 else None
+                    boards = self._detector.detect_aruco_grids(img, dictionary, sizes)
+                    for idx, board in enumerate(boards):
+                        board.board_id = f"AG{idx + 1}"
+                    self._boards.extend(boards)
+
+            if "checkerboard" in checked_types and any(t in checked_types for t in ("aruco", "apriltag")):
+                cb_regions = []
+                for b in self._boards:
+                    if b.board_type == "checkerboard":
+                        x, y, w, h = b.bbox
+                        pad = max(w, h) * 0.15
+                        cb_regions.append((x - pad, y - pad, x + w + pad, y + h + pad))
+
+                def _is_on_checkerboard(cx: float, cy: float) -> bool:
+                    return any(
+                        x1 <= cx <= x2 and y1 <= cy <= y2
+                        for x1, y1, x2, y2 in cb_regions
+                    )
+
+                def _grid_on_checkerboard(g: TagGrid) -> bool:
+                    return any(_is_on_checkerboard(t.center[0], t.center[1]) for t in g.tags)
+
+                self._boards = [
+                    b for b in self._boards
+                    if b.board_type not in ("aruco", "apriltag")
+                    or not _is_on_checkerboard(b.center[0], b.center[1])
+                ]
+                self._tag_grids = [
+                    g for g in self._tag_grids
+                    if not _grid_on_checkerboard(g)
+                ]
+                self._tags = [
+                    t for t in self._tags
+                    if not _is_on_checkerboard(t.center[0], t.center[1])
+                ]
 
             count = len(self._boards)
             tag_count = len(self._tags)
             if count == 0:
                 self._status_label.setText(
-                    f"No {board_type} boards detected. Try different parameters."
+                    f"No boards detected for types: {', '.join(checked_types)}. Try different parameters."
                 )
                 return
 
@@ -536,15 +952,89 @@ class BootstrapWizardDialog(QDialog):
 
         except Exception as exc:
             self._status_label.setText(f"Detection error: {exc}")
+        finally:
+            self._detect_btn.setEnabled(True)
+            self._detect_btn.setText("Detect Boards")
+
+    def _on_redetect(self) -> None:
+        self._boards = []
+        self._tag_grids = []
+        self._tags = []
+        self._add_custom_btn.setChecked(False)
+        BoardListPanel._suppress_delete_confirm = False
+        self._on_detect()
+        if self._stack.currentIndex() != 1:
+            self._stack.setCurrentIndex(1)
 
     def _on_board_list_changed(self) -> None:
         active = self._board_list.get_active_boards()
         self._canvas.set_detections(active, self._tag_grids)
 
+    def _on_toggle_draw_mode(self, checked: bool) -> None:
+        self._canvas.set_draw_mode(checked)
+        if checked:
+            self._add_custom_btn.setText("Draw Mode ON (drag rect)")
+            self._add_custom_btn.setStyleSheet("background-color: #ffcc00; color: #333;")
+        else:
+            self._add_custom_btn.setText("Add Custom Board")
+            self._add_custom_btn.setStyleSheet("")
+
+    def _on_rectangle_drawn(self, x: int, y: int, w: int, h: int) -> None:
+        if not self._image_path:
+            return
+
+        img = cv2.imread(self._image_path)
+        if img is None:
+            return
+
+        img_h, img_w = img.shape[:2]
+        x = max(0, min(x, img_w - 1))
+        y = max(0, min(y, img_h - 1))
+        w = min(w, img_w - x)
+        h = min(h, img_h - y)
+        if w < 20 or h < 20:
+            return
+
+        crop = img[y:y + h, x:x + w]
+        template_dir = Path(self._image_path).parent / "wizard_templates"
+        template_dir.mkdir(parents=True, exist_ok=True)
+        custom_idx = sum(1 for b in self._boards if b.board_type == "custom_maker") + 1
+        template_name = f"custom_{custom_idx}.png"
+        template_path = template_dir / template_name
+        cv2.imwrite(str(template_path), crop)
+
+        corners = np.array([
+            [x, y], [x + w, y], [x + w, y + h], [x, y + h],
+        ], dtype=np.float32)
+
+        board = DetectedBoard(
+            board_type="custom_maker",
+            bbox=(x, y, w, h),
+            corners=corners,
+            board_id=f"C{custom_idx}",
+            center=((x + w / 2.0), (y + h / 2.0)),
+            area=float(w * h),
+            weight=0.8,
+        )
+        board.template_image = str(template_path)
+        self._boards.append(board)
+        self._board_list.set_boards(self._boards)
+        self._canvas.set_detections(self._boards, self._tag_grids)
+
     def _on_review_next(self) -> None:
-        from gui_app.services.wizard_config_generator import _derive_camera_name
-        cam_name = _derive_camera_name(self._image_path)
+        camera_selection = self._camera_combo.currentText()
+        if camera_selection and camera_selection != "(select camera)":
+            cam_name = camera_selection
+        else:
+            from gui_app.services.wizard_config_generator import _derive_camera_name
+            cam_name = _derive_camera_name(self._image_path)
         self._camera_name_label.setText(cam_name)
+
+        project_dir = self._project_dir_edit.text().strip()
+        if project_dir and not self._output_dir_edit.text().strip():
+            movie_dir = str(Path(project_dir) / "Movie")
+            self._output_dir_edit.setText(movie_dir)
+
         self._update_json_preview()
         self._stack.setCurrentIndex(2)
 
@@ -599,7 +1089,32 @@ class BootstrapWizardDialog(QDialog):
                 return
 
         cam_name = self._camera_name_label.text()
-        output_path = Path(output_dir) / f"camera.{cam_name}.json"
+        camera_output_dir = Path(output_dir) / f"calibtool_{cam_name}"
+
+        if camera_output_dir.exists():
+            reply = QMessageBox.question(
+                self, "Folder Exists",
+                f"Folder already exists:\n{camera_output_dir}\n\nReplace it?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                return
+            shutil.rmtree(str(camera_output_dir))
+
+        camera_output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = camera_output_dir / f"camera.{cam_name}.json"
+
+        templates_dir = camera_output_dir / "templates"
+        templates_dir.mkdir(exist_ok=True)
+        for board in active:
+            if board.board_type == "custom_maker" and board.template_image:
+                old_path = Path(board.template_image)
+                if old_path.exists():
+                    new_path = templates_dir / old_path.name
+                    if old_path != new_path:
+                        shutil.move(str(old_path), str(new_path))
+                        board.template_image = str(new_path)
 
         try:
             cfg = generate_config(
@@ -611,8 +1126,10 @@ class BootstrapWizardDialog(QDialog):
                 camera_name=cam_name,
             )
 
-            preview_path = output_path.parent / f"wizard_preview_{cam_name}.png"
+            preview_path = camera_output_dir / f"wizard_preview_{cam_name}.png"
             generate_preview_image(active, self._tag_grids, self._image_path, preview_path)
+
+            self._write_camera_mapping(cam_name, str(camera_output_dir), Path(output_dir))
 
             self._result_label.setText(
                 f"Config saved: {output_path}\n"

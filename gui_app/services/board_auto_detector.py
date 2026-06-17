@@ -36,6 +36,7 @@ class DetectedBoard:
     center: Tuple[float, float] = (0.0, 0.0)
     area: float = 0.0
     weight: float = 1.0
+    template_image: Optional[str] = None
 
 
 _COMMON_CHECKERBOARD_SIZES = [
@@ -318,6 +319,102 @@ class BoardAutoDetector:
         )
         return all_boards
 
+    def detect_circle_grids(
+        self,
+        image: np.ndarray,
+        board_sizes: Optional[Sequence[Tuple[int, int]]] = None,
+        grid_type: str = "symmetric",
+    ) -> List[DetectedBoard]:
+        if image.ndim == 3:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = image
+
+        is_asymmetric = grid_type.strip().lower() == "asymmetric"
+        flags = cv2.CALIB_CB_ASYMMETRIC_GRID if is_asymmetric else cv2.CALIB_CB_SYMMETRIC_GRID
+        sizes_to_try = list(board_sizes) if board_sizes else [
+            (5, 5), (7, 7), (9, 6), (6, 9), (11, 8), (8, 11), (4, 11), (11, 4),
+        ]
+
+        all_boards: List[DetectedBoard] = []
+        for size in sizes_to_try:
+            cols, rows = size
+            found, centers = cv2.findCirclesGrid(gray, (cols, rows), None, flags)
+            if not found or centers is None:
+                continue
+            pts = centers.reshape(-1, 2).astype(np.float32)
+            bbox = _bbox_from_points(pts)
+            is_dup = any(_bbox_iou(bbox, b.bbox) >= 0.3 for b in all_boards)
+            if is_dup:
+                continue
+            all_boards.append(
+                DetectedBoard(
+                    board_type="circle_grid",
+                    bbox=bbox,
+                    corners=pts,
+                    board_size=(cols, rows),
+                    center=_center_from_bbox(bbox),
+                    area=_area_from_bbox(bbox),
+                )
+            )
+        return _deduplicate_boards(all_boards)
+
+    def detect_aruco_grids(
+        self,
+        image: np.ndarray,
+        dictionary: str = "DICT_4X4_50",
+        board_sizes: Optional[Sequence[Tuple[int, int]]] = None,
+    ) -> List[DetectedBoard]:
+        if not hasattr(cv2, "aruco"):
+            raise RuntimeError("OpenCV aruco module is unavailable")
+
+        if image.ndim == 3:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = image
+
+        dict_id = getattr(cv2.aruco, dictionary, None)
+        if dict_id is None:
+            raise ValueError(f"Unsupported ArUco dictionary: {dictionary}")
+        aruco_dict = cv2.aruco.getPredefinedDictionary(dict_id)
+        detector = cv2.aruco.ArucoDetector(aruco_dict, cv2.aruco.DetectorParameters())
+
+        marker_corners, marker_ids, _ = detector.detectMarkers(gray)
+        if marker_ids is None or not marker_corners:
+            return []
+
+        sizes_to_try = list(board_sizes) if board_sizes else [
+            (3, 3), (4, 3), (3, 4), (5, 3), (3, 5), (4, 4), (5, 5),
+        ]
+
+        all_boards: List[DetectedBoard] = []
+        for size in sizes_to_try:
+            cols, rows = size
+            marker_length = 1.0
+            marker_separation = 0.5
+            grid_board = cv2.aruco.GridBoard(
+                (cols, rows), marker_length, marker_separation, aruco_dict,
+            )
+            obj_pts, img_pts = grid_board.matchImagePoints(marker_corners, marker_ids)
+            if obj_pts is None or len(obj_pts) == 0:
+                continue
+            pts = np.asarray(img_pts, dtype=np.float32).reshape(-1, 2)
+            bbox = _bbox_from_points(pts)
+            is_dup = any(_bbox_iou(bbox, b.bbox) >= 0.3 for b in all_boards)
+            if is_dup:
+                continue
+            all_boards.append(
+                DetectedBoard(
+                    board_type="aruco_grid",
+                    bbox=bbox,
+                    corners=pts,
+                    board_size=(cols, rows),
+                    center=_center_from_bbox(bbox),
+                    area=_area_from_bbox(bbox),
+                )
+            )
+        return _deduplicate_boards(all_boards)
+
 
 def group_tags_into_grids(
     tags: List[DetectedTag],
@@ -326,43 +423,91 @@ def group_tags_into_grids(
     if not tags:
         return []
 
-    centers = np.array([t.center for t in tags], dtype=np.float64)
-    if distance_threshold is None:
-        pairwise_dists = []
-        for i in range(len(centers)):
-            for j in range(i + 1, len(centers)):
-                pairwise_dists.append(np.linalg.norm(centers[i] - centers[j]))
-        if not pairwise_dists:
-            distance_threshold = float("inf")
-        else:
-            median_dist = float(np.median(pairwise_dists))
-            distance_threshold = median_dist * 3.0
-
     n = len(tags)
-    visited = [False] * n
+    centers = np.array([t.center for t in tags], dtype=np.float64)
+
+    if distance_threshold is None and n > 1:
+        edges: List[Tuple[float, int, int]] = []
+        for i in range(n):
+            for j in range(i + 1, n):
+                dist = float(np.linalg.norm(centers[i] - centers[j]))
+                edges.append((dist, i, j))
+        edges.sort()
+
+        parent = list(range(n))
+
+        def find(x: int) -> int:
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def union(a: int, b: int) -> None:
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[ra] = rb
+
+        mst_edges: List[Tuple[float, int, int]] = []
+        for dist, i, j in edges:
+            if find(i) != find(j):
+                union(i, j)
+                mst_edges.append((dist, i, j))
+
+        if mst_edges:
+            mst_dists = sorted([d for d, _, _ in mst_edges])
+            median_mst = float(np.median(mst_dists))
+            cut_threshold = median_mst * 1.5
+
+            parent2 = list(range(n))
+
+            def find2(x: int) -> int:
+                while parent2[x] != x:
+                    parent2[x] = parent2[parent2[x]]
+                    x = parent2[x]
+                return x
+
+            def union2(a: int, b: int) -> None:
+                ra, rb = find2(a), find2(b)
+                if ra != rb:
+                    parent2[ra] = rb
+
+            for dist, i, j in mst_edges:
+                if dist <= cut_threshold:
+                    union2(i, j)
+
+            clusters: dict = {}
+            for i in range(n):
+                root = find2(i)
+                clusters.setdefault(root, []).append(i)
+            cluster_groups = list(clusters.values())
+        else:
+            cluster_groups = [list(range(n))]
+    elif distance_threshold is not None and n > 1:
+        visited = [False] * n
+        cluster_groups = []
+        for i in range(n):
+            if visited[i]:
+                continue
+            cluster = [i]
+            visited[i] = True
+            queue = [i]
+            while queue:
+                current = queue.pop(0)
+                for j in range(n):
+                    if visited[j]:
+                        continue
+                    dist = float(np.linalg.norm(centers[current] - centers[j]))
+                    if dist <= distance_threshold:
+                        visited[j] = True
+                        cluster.append(j)
+                        queue.append(j)
+            cluster_groups.append(cluster)
+    else:
+        cluster_groups = [list(range(n))]
+
     grids: List[TagGrid] = []
-    grid_idx = 0
-
-    for i in range(n):
-        if visited[i]:
-            continue
-        cluster = [i]
-        visited[i] = True
-        queue = [i]
-        while queue:
-            current = queue.pop(0)
-            for j in range(n):
-                if visited[j]:
-                    continue
-                dist = np.linalg.norm(
-                    np.array(centers[current]) - np.array(centers[j])
-                )
-                if dist <= distance_threshold:
-                    visited[j] = True
-                    cluster.append(j)
-                    queue.append(j)
-
-        cluster_tags = [tags[idx] for idx in cluster]
+    for grid_idx, indices in enumerate(cluster_groups):
+        cluster_tags = [tags[idx] for idx in indices]
         all_corners = np.concatenate([t.corners for t in cluster_tags], axis=0)
         bbox = _bbox_from_points(all_corners, padding_ratio=0.1)
         center = _center_from_bbox(bbox)
@@ -381,7 +526,6 @@ def group_tags_into_grids(
             rows=rows,
             cols=cols,
         ))
-        grid_idx += 1
 
     return grids
 

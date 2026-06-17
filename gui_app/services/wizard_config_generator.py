@@ -62,6 +62,19 @@ def _board_entry_from_detected(board: DetectedBoard) -> dict:
     if board.tags:
         tag_ids = sorted(t.tag_id for t in board.tags)
         entry["tag_ids"] = tag_ids
+    if board.board_type == "circle_grid":
+        entry["grid_type"] = "symmetric"
+    if board.board_type == "aruco_grid":
+        entry["aruco_dictionary"] = "DICT_4X4_50"
+        entry["square_size"] = 1.0
+        entry["marker_separation"] = 0.5
+    if board.board_type == "custom_maker":
+        entry["custom_detector"] = "template_match"
+        entry["template_match_threshold"] = 0.45
+        entry["template_binary_threshold"] = 150
+        entry["min_detected_points"] = 9
+        if board.template_image:
+            entry["template_image"] = board.template_image
     return entry
 
 
@@ -88,7 +101,7 @@ def generate_config(
     camera_name: Optional[str] = None,
 ) -> dict:
     resolved_name = camera_name or _derive_camera_name(real_image_path)
-    output_dir = output_path.parent / resolved_name
+    output_dir = output_path.parent
     output_dir.mkdir(parents=True, exist_ok=True)
 
     cfg: Dict[str, Any] = {}

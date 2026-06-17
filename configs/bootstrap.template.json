@@ -67,6 +67,28 @@
                 "tag_family": "tagStandard41h12",
                 "min_detected_points": 8
             }
+        },
+        {
+            "detected_group": "CG",
+            "board": {
+                "board_type": "circle_grid",
+                "weight": 1.0,
+                "board_size": [5, 5],
+                "grid_type": "symmetric",
+                "min_detected_points": 8
+            }
+        },
+        {
+            "detected_group": "AG",
+            "board": {
+                "board_type": "aruco_grid",
+                "weight": 1.0,
+                "board_size": [3, 3],
+                "square_size": 1.0,
+                "marker_separation": 0.5,
+                "aruco_dictionary": "DICT_4X4_50",
+                "min_detected_points": 8
+            }
         }
     ]
 }

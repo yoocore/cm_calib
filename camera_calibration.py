@@ -509,6 +509,14 @@ def _is_apriltag_board_type(board_type: str) -> bool:
     return str(board_type).strip().lower() == "apriltag"
 
 
+def _is_circle_grid_board_type(board_type: str) -> bool:
+    return str(board_type).strip().lower() == "circle_grid"
+
+
+def _is_aruco_grid_board_type(board_type: str) -> bool:
+    return str(board_type).strip().lower() == "aruco_grid"
+
+
 def _preprocess_auto_template_match_image(
     gray_image: np.ndarray,
     binary_threshold: int,
@@ -5444,6 +5452,8 @@ class BoardProfile:
     aruco_dictionary: str = "DICT_4X4_50"
     marker_length_ratio: float = 0.7
     tag_family: str = "tagStandard41h12"
+    grid_type: str = "symmetric"
+    marker_separation: float = 0.0
 
 
 @dataclass
@@ -6184,6 +6194,8 @@ class CameraCalibrator:
                 "aruco",
                 "charuco",
                 "apriltag",
+                "circle_grid",
+                "aruco_grid",
             }:
                 raise ValueError(f"Unsupported board_type for {board_id}: {board_type}")
 
@@ -6191,7 +6203,7 @@ class CameraCalibrator:
             template_source_roi = self._parse_roi(board.get("template_source_roi"))
             template_source_crop = self._parse_roi(board.get("template_source_crop"))
             board_size = None
-            if board_type in {"checkerboard", "charuco"}:
+            if board_type in {"checkerboard", "charuco", "circle_grid", "aruco_grid"}:
                 raw_size = board.get("board_size")
                 if not isinstance(raw_size, list) or len(raw_size) != 2:
                     raise ValueError(
@@ -6208,6 +6220,10 @@ class CameraCalibrator:
                 min_points_default = max(4, min(charuco_corner_count, 12))
             elif board_type == "aruco":
                 min_points_default = 8
+            elif board_type == "circle_grid":
+                min_points_default = board_size[0] * board_size[1] if board_size else 6
+            elif board_type == "aruco_grid":
+                min_points_default = board_size[0] * board_size[1] * 4 if board_size else 8
             else:
                 min_points_default = 6
             default_detector = "template_match" if board_type == "custom_maker" else "feature"
@@ -6266,6 +6282,8 @@ class CameraCalibrator:
                     aruco_dictionary=aruco_dictionary,
                     marker_length_ratio=marker_length_ratio,
                     tag_family=str(board.get("tag_family", "tagStandard41h12")).strip(),
+                    grid_type=str(board.get("grid_type", "symmetric")).strip().lower(),
+                    marker_separation=self._read_float(board.get("marker_separation"), 0.0),
                 )
             )
         return boards
@@ -8129,7 +8147,7 @@ class CameraCalibrator:
             max_auto_padding = int(round(max(image_h, image_w) * 0.65))
             auto_paddings: List[int] = []
 
-            if board.board_type == "checkerboard" or _is_aruco_family_board_type(board.board_type) or _is_apriltag_board_type(board.board_type):
+            if board.board_type == "checkerboard" or _is_aruco_family_board_type(board.board_type) or _is_apriltag_board_type(board.board_type) or _is_circle_grid_board_type(board.board_type) or _is_aruco_grid_board_type(board.board_type):
                 auto_paddings.extend(
                     [
                         max(120, int(round(base_span * 1.5))),
@@ -9088,6 +9106,116 @@ class CameraCalibrator:
             error_message="apriltag markers not detected",
         )
 
+    def _detect_circle_grid(self, gray_image: np.ndarray, board: BoardProfile) -> DetectionResult:
+        if board.board_size is None:
+            return DetectionResult(
+                board_id=board.board_id,
+                success=False,
+                point_count=0,
+                ordered_points=np.empty((0, 2), dtype=np.float32),
+                board_type=board.board_type,
+                roi_used=board.roi,
+                detector="circle_grid",
+                error_message="circle_grid requires board_size",
+            )
+
+        eval_image = self._prepare_eval_image(gray_image)
+        roi_attempts = self._detect_roi_padding_attempts(board)
+        cols, rows = board.board_size
+        is_asymmetric = board.grid_type.strip().lower() == "asymmetric"
+        flags = cv2.CALIB_CB_ASYMMETRIC_GRID if is_asymmetric else cv2.CALIB_CB_SYMMETRIC_GRID
+
+        for padding in roi_attempts:
+            roi_img, offset = self._extract_roi(eval_image, board.roi, padding=padding)
+            found, centers = cv2.findCirclesGrid(
+                roi_img, (cols, rows), None, flags,
+            )
+            if not found or centers is None:
+                continue
+            pts = centers.reshape(-1, 2).astype(np.float32)
+            pts[:, 0] += float(offset[0])
+            pts[:, 1] += float(offset[1])
+            return DetectionResult(
+                board_id=board.board_id,
+                success=True,
+                point_count=int(len(pts)),
+                ordered_points=pts,
+                board_type=board.board_type,
+                roi_used=board.roi,
+                detector="circle_grid",
+            )
+
+        return DetectionResult(
+            board_id=board.board_id,
+            success=False,
+            point_count=0,
+            ordered_points=np.empty((0, 2), dtype=np.float32),
+            board_type=board.board_type,
+            roi_used=board.roi,
+            detector="circle_grid",
+            error_message="circle grid not detected",
+        )
+
+    def _detect_aruco_grid(self, gray_image: np.ndarray, board: BoardProfile) -> DetectionResult:
+        if not hasattr(cv2, "aruco"):
+            raise RuntimeError("OpenCV aruco module is unavailable")
+        if board.board_size is None:
+            return DetectionResult(
+                board_id=board.board_id,
+                success=False,
+                point_count=0,
+                ordered_points=np.empty((0, 2), dtype=np.float32),
+                board_type=board.board_type,
+                roi_used=board.roi,
+                detector="aruco_grid",
+                error_message="aruco_grid requires board_size (cols, rows of markers)",
+            )
+
+        eval_image = self._prepare_eval_image(gray_image)
+        roi_attempts = self._detect_roi_padding_attempts(board)
+        dictionary = self._resolve_aruco_dictionary(board.aruco_dictionary)
+        cols, rows = board.board_size
+        marker_length = max(float(board.square_size), 1e-6)
+        marker_separation = max(float(board.marker_separation), 1e-6)
+        grid_board = cv2.aruco.GridBoard(
+            (cols, rows), marker_length, marker_separation, dictionary,
+        )
+
+        for padding in roi_attempts:
+            roi_img, offset = self._extract_roi(eval_image, board.roi, padding=padding)
+            detector = cv2.aruco.ArucoDetector(dictionary, cv2.aruco.DetectorParameters())
+            marker_corners, marker_ids, _ = detector.detectMarkers(roi_img)
+            if marker_ids is None or not marker_corners:
+                continue
+
+            obj_pts, img_pts = grid_board.matchImagePoints(marker_corners, marker_ids)
+            if obj_pts is None or len(obj_pts) == 0:
+                continue
+
+            pts = np.asarray(img_pts, dtype=np.float32).reshape(-1, 2)
+            pts[:, 0] += float(offset[0])
+            pts[:, 1] += float(offset[1])
+            return DetectionResult(
+                board_id=board.board_id,
+                success=True,
+                point_count=int(len(pts)),
+                ordered_points=pts,
+                board_type=board.board_type,
+                roi_used=board.roi,
+                detector="aruco_grid",
+            )
+
+        return DetectionResult(
+            board_id=board.board_id,
+            success=False,
+            point_count=0,
+            ordered_points=np.empty((0, 2), dtype=np.float32),
+            board_type=board.board_type,
+            roi_used=board.roi,
+            detector="aruco_grid",
+            error_message="aruco grid not detected",
+        )
+
     def _detect_charuco(self, gray_image: np.ndarray, board: BoardProfile) -> DetectionResult:
         if board.board_size is None:
             return DetectionResult(
@@ -9432,6 +9560,10 @@ class CameraCalibrator:
             return self._detect_charuco(gray_image, board)
         if _is_apriltag_board_type(board.board_type):
             return self._detect_apriltag(gray_image, board)
+        if _is_circle_grid_board_type(board.board_type):
+            return self._detect_circle_grid(gray_image, board)
+        if _is_aruco_grid_board_type(board.board_type):
+            return self._detect_aruco_grid(gray_image, board)
         if _is_custom_marker_board_type(board.board_type):
             return self._detect_custom_groundmaker(gray_image, board)
         return DetectionResult(

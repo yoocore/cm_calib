@@ -282,6 +282,7 @@ class BoardListPanel(QWidget):
         layout.addWidget(self._table)
 
         self._boards: List[DetectedBoard] = []
+        self._unchecked_ids: set = set()
 
     def set_boards(self, boards: List[DetectedBoard]) -> None:
         self._boards = list(boards)
@@ -296,7 +297,7 @@ class BoardListPanel(QWidget):
             self._table.setCellWidget(row, 0, del_btn)
 
             cb = QCheckBox()
-            cb.setChecked(True)
+            cb.setChecked(board.board_id not in self._unchecked_ids)
             cb.stateChanged.connect(self._on_checkbox_changed)
             cb_widget = QWidget()
             cb_layout = QHBoxLayout(cb_widget)
@@ -366,6 +367,12 @@ class BoardListPanel(QWidget):
         self.board_changed.emit()
 
     def _on_checkbox_changed(self) -> None:
+        self._unchecked_ids.clear()
+        for row, board in enumerate(self._boards):
+            cb_container = self._table.cellWidget(row, 1)
+            cb = cb_container.findChild(QCheckBox) if cb_container else None
+            if cb and not cb.isChecked():
+                self._unchecked_ids.add(board.board_id)
         self.board_changed.emit()
 
 

@@ -423,57 +423,91 @@ def group_tags_into_grids(
     if not tags:
         return []
 
-    centers = np.array([t.center for t in tags], dtype=np.float64)
     n = len(tags)
+    centers = np.array([t.center for t in tags], dtype=np.float64)
 
     if distance_threshold is None and n > 1:
-        nn_dists = []
+        edges: List[Tuple[float, int, int]] = []
         for i in range(n):
-            dists_to_others = [
-                np.linalg.norm(centers[i] - centers[j])
-                for j in range(n) if j != i
-            ]
-            nn_dists.append(min(dists_to_others))
-        nn_dists_sorted = sorted(nn_dists)
+            for j in range(i + 1, n):
+                dist = float(np.linalg.norm(centers[i] - centers[j]))
+                edges.append((dist, i, j))
+        edges.sort()
 
-        if len(nn_dists_sorted) >= 2:
-            max_gap = 0.0
-            gap_threshold = nn_dists_sorted[-1] * 1.5
-            for k in range(len(nn_dists_sorted) - 1):
-                gap = nn_dists_sorted[k + 1] - nn_dists_sorted[k]
-                if gap > max_gap and nn_dists_sorted[k + 1] > nn_dists_sorted[k] * 1.5:
-                    max_gap = gap
-                    gap_threshold = (nn_dists_sorted[k] + nn_dists_sorted[k + 1]) / 2.0
-            distance_threshold = gap_threshold
+        parent = list(range(n))
+
+        def find(x: int) -> int:
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def union(a: int, b: int) -> None:
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[ra] = rb
+
+        mst_edges: List[Tuple[float, int, int]] = []
+        for dist, i, j in edges:
+            if find(i) != find(j):
+                union(i, j)
+                mst_edges.append((dist, i, j))
+
+        if mst_edges:
+            mst_dists = sorted([d for d, _, _ in mst_edges])
+            median_mst = float(np.median(mst_dists))
+            cut_threshold = median_mst * 1.5
+
+            parent2 = list(range(n))
+
+            def find2(x: int) -> int:
+                while parent2[x] != x:
+                    parent2[x] = parent2[parent2[x]]
+                    x = parent2[x]
+                return x
+
+            def union2(a: int, b: int) -> None:
+                ra, rb = find2(a), find2(b)
+                if ra != rb:
+                    parent2[ra] = rb
+
+            for dist, i, j in mst_edges:
+                if dist <= cut_threshold:
+                    union2(i, j)
+
+            clusters: dict = {}
+            for i in range(n):
+                root = find2(i)
+                clusters.setdefault(root, []).append(i)
+            cluster_groups = list(clusters.values())
         else:
-            distance_threshold = nn_dists_sorted[0] * 2.0
-    elif distance_threshold is None:
-        distance_threshold = float("inf")
+            cluster_groups = [list(range(n))]
+    elif distance_threshold is not None and n > 1:
+        visited = [False] * n
+        cluster_groups = []
+        for i in range(n):
+            if visited[i]:
+                continue
+            cluster = [i]
+            visited[i] = True
+            queue = [i]
+            while queue:
+                current = queue.pop(0)
+                for j in range(n):
+                    if visited[j]:
+                        continue
+                    dist = float(np.linalg.norm(centers[current] - centers[j]))
+                    if dist <= distance_threshold:
+                        visited[j] = True
+                        cluster.append(j)
+                        queue.append(j)
+            cluster_groups.append(cluster)
+    else:
+        cluster_groups = [list(range(n))]
 
-    visited = [False] * n
     grids: List[TagGrid] = []
-    grid_idx = 0
-
-    for i in range(n):
-        if visited[i]:
-            continue
-        cluster = [i]
-        visited[i] = True
-        queue = [i]
-        while queue:
-            current = queue.pop(0)
-            for j in range(n):
-                if visited[j]:
-                    continue
-                dist = np.linalg.norm(
-                    np.array(centers[current]) - np.array(centers[j])
-                )
-                if dist <= distance_threshold:
-                    visited[j] = True
-                    cluster.append(j)
-                    queue.append(j)
-
-        cluster_tags = [tags[idx] for idx in cluster]
+    for grid_idx, indices in enumerate(cluster_groups):
+        cluster_tags = [tags[idx] for idx in indices]
         all_corners = np.concatenate([t.corners for t in cluster_tags], axis=0)
         bbox = _bbox_from_points(all_corners, padding_ratio=0.1)
         center = _center_from_bbox(bbox)
@@ -492,7 +526,6 @@ def group_tags_into_grids(
             rows=rows,
             cols=cols,
         ))
-        grid_idx += 1
 
     return grids
 

@@ -291,12 +291,8 @@ class BoardListPanel(QWidget):
             is_custom = board.board_type == "custom_maker"
             del_btn = QPushButton("−")
             del_btn.setFixedSize(24, 22)
-            if is_custom:
-                del_btn.setToolTip("Delete this custom board")
-                del_btn.clicked.connect(lambda checked, r=row: self._delete_row(r))
-            else:
-                del_btn.setToolTip("Auto-detected: use checkbox to exclude")
-                del_btn.clicked.connect(self._on_delete_auto_detected)
+            del_btn.setToolTip("Delete this board")
+            del_btn.clicked.connect(lambda checked, r=row: self._delete_row_with_confirm(r))
             self._table.setCellWidget(row, 0, del_btn)
 
             cb = QCheckBox()
@@ -343,18 +339,31 @@ class BoardListPanel(QWidget):
                 self._boards[row].board_id = item.text()
         self.board_changed.emit()
 
-    def _delete_row(self, row: int) -> None:
-        if 0 <= row < len(self._boards):
-            self._boards.pop(row)
-            self.set_boards(self._boards)
-            self.board_changed.emit()
+    _suppress_delete_confirm = False
 
-    def _on_delete_auto_detected(self) -> None:
-        QMessageBox.warning(
-            self, "Cannot Delete",
-            "Auto-detected boards cannot be deleted.\n"
-            "Use the checkbox to exclude them from the config.",
-        )
+    def _delete_row_with_confirm(self, row: int) -> None:
+        if row < 0 or row >= len(self._boards):
+            return
+        board = self._boards[row]
+        if board.board_type != "custom_maker" and not self._suppress_delete_confirm:
+            msg_box = QMessageBox(self)
+            msg_box.setIcon(QMessageBox.Question)
+            msg_box.setWindowTitle("Delete Board")
+            msg_box.setText(f"Delete auto-detected board {board.board_id}?")
+            confirm_btn = msg_box.addButton("Confirm", QMessageBox.AcceptRole)
+            cancel_btn = msg_box.addButton("Cancel", QMessageBox.RejectRole)
+            skip_btn = msg_box.addButton("Don't ask again", QMessageBox.ActionRole)
+            msg_box.setDefaultButton(cancel_btn)
+            msg_box.exec()
+            clicked = msg_box.clickedButton()
+            if clicked == cancel_btn:
+                return
+            if clicked == skip_btn:
+                BoardListPanel._suppress_delete_confirm = True
+
+        self._boards.pop(row)
+        self.set_boards(self._boards)
+        self.board_changed.emit()
 
     def _on_checkbox_changed(self) -> None:
         self.board_changed.emit()
@@ -594,6 +603,9 @@ class BootstrapWizardDialog(QDialog):
         btn_layout = QHBoxLayout()
         back_btn = QPushButton("< Back")
         back_btn.clicked.connect(lambda: self._stack.setCurrentIndex(0))
+        self._redetect_btn = QPushButton("Re-Detect")
+        self._redetect_btn.setToolTip("Re-run detection with current settings")
+        self._redetect_btn.clicked.connect(self._on_redetect)
         self._add_custom_btn = QPushButton("Add Custom Board")
         self._add_custom_btn.setCheckable(True)
         self._add_custom_btn.setToolTip(
@@ -604,6 +616,7 @@ class BootstrapWizardDialog(QDialog):
         next_btn = QPushButton("Next >")
         next_btn.clicked.connect(self._on_review_next)
         btn_layout.addWidget(back_btn)
+        btn_layout.addWidget(self._redetect_btn)
         btn_layout.addWidget(self._add_custom_btn)
         btn_layout.addStretch()
         btn_layout.addWidget(next_btn)
@@ -935,6 +948,16 @@ class BootstrapWizardDialog(QDialog):
         finally:
             self._detect_btn.setEnabled(True)
             self._detect_btn.setText("Detect Boards")
+
+    def _on_redetect(self) -> None:
+        self._boards = []
+        self._tag_grids = []
+        self._tags = []
+        self._add_custom_btn.setChecked(False)
+        BoardListPanel._suppress_delete_confirm = False
+        self._on_detect()
+        if self._stack.currentIndex() != 1:
+            self._stack.setCurrentIndex(1)
 
     def _on_board_list_changed(self) -> None:
         active = self._board_list.get_active_boards()

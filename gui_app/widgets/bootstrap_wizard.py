@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import List, Optional
@@ -654,6 +655,10 @@ class BootstrapWizardDialog(QDialog):
         dir_browse.clicked.connect(self._browse_output_dir)
         dir_layout.addWidget(self._output_dir_edit)
         dir_layout.addWidget(dir_browse)
+        self._default_dir_btn = QPushButton("Default")
+        self._default_dir_btn.setToolTip("Auto-fill to {ProjectDir}/Movie/calibtool_{CameraName}/")
+        self._default_dir_btn.clicked.connect(self._set_default_output_dir)
+        dir_layout.addWidget(self._default_dir_btn)
         output_layout.addRow("Output Dir:", dir_layout)
 
         self._camera_name_label = QLabel("-")
@@ -771,6 +776,21 @@ class BootstrapWizardDialog(QDialog):
         path = QFileDialog.getExistingDirectory(self, "Select Output Directory")
         if path:
             self._output_dir_edit.setText(path)
+
+    def _set_default_output_dir(self) -> None:
+        project_dir = self._project_dir_edit.text().strip()
+        if not project_dir:
+            QMessageBox.warning(self, "Missing Project", "Please set ProjectDir first.")
+            return
+        if self._gui_camera_name:
+            cam_name = self._gui_camera_name
+        else:
+            cam_name = self._camera_combo.currentText()
+            if not cam_name or cam_name == "(select camera)":
+                QMessageBox.warning(self, "Missing Camera", "Please select a camera first.")
+                return
+        default_path = str(Path(project_dir) / "Movie" / f"calibtool_{cam_name}")
+        self._output_dir_edit.setText(default_path)
 
     def _get_checked_types(self) -> List[str]:
         types: List[str] = []
@@ -1045,8 +1065,19 @@ class BootstrapWizardDialog(QDialog):
 
         project_dir = self._project_dir_edit.text().strip()
         if project_dir and not self._output_dir_edit.text().strip():
-            movie_dir = str(Path(project_dir) / "Movie")
-            self._output_dir_edit.setText(movie_dir)
+            # Priority 1: auto-fill from existing mapping if path still valid
+            from gui_app.widgets.camera_mapping_dialog import mapping_path_for_project
+            mapping_path = mapping_path_for_project(project_dir)
+            if mapping_path.exists():
+                _mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
+                _entry = _mapping.get(cam_name, {})
+                _old_cfg = _entry.get("config_folder", "")
+                if _old_cfg and os.path.isdir(_old_cfg):
+                    self._output_dir_edit.setText(_old_cfg)
+            # Priority 2: fallback to Movie/
+            if not self._output_dir_edit.text().strip():
+                movie_dir = str(Path(project_dir) / "Movie")
+                self._output_dir_edit.setText(movie_dir)
 
         self._update_json_preview()
         self._stack.setCurrentIndex(2)
@@ -1103,6 +1134,27 @@ class BootstrapWizardDialog(QDialog):
 
         cam_name = self._camera_name_label.text()
         camera_output_dir = Path(output_dir) / f"calibtool_{cam_name}"
+
+        # Warn if mapping already points to a different location
+        project_dir = self._project_dir_edit.text().strip()
+        if project_dir:
+            from gui_app.widgets.camera_mapping_dialog import mapping_path_for_project
+            mapping_path = mapping_path_for_project(project_dir)
+            if mapping_path.exists():
+                _mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
+                _entry = _mapping.get(cam_name, {})
+                _old_cfg = _entry.get("config_folder", "")
+                if _old_cfg and os.path.isdir(_old_cfg) and _old_cfg != str(camera_output_dir):
+                    reply = QMessageBox.warning(
+                        self, "Mapping Overwrite",
+                        f"This camera already has a mapping pointing to:\n{_old_cfg}\n\n"
+                        f"New config will be saved to:\n{camera_output_dir}\n\n"
+                        f"The old mapping entry will be replaced. Continue?",
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.No,
+                    )
+                    if reply != QMessageBox.Yes:
+                        return
 
         if camera_output_dir.exists():
             reply = QMessageBox.question(

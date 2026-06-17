@@ -476,6 +476,18 @@ class BootstrapWizardDialog(QDialog):
         file_layout.addWidget(browse_btn)
         layout.addWidget(file_group)
 
+        # Auto-fill reference image from existing mapping (GUI mode)
+        if self._gui_camera_name and self._gui_project_dir:
+            from gui_app.widgets.camera_mapping_dialog import mapping_path_for_project
+            _mp = mapping_path_for_project(self._gui_project_dir)
+            if _mp.exists():
+                _m = json.loads(_mp.read_text(encoding="utf-8"))
+                _e = _m.get(self._gui_camera_name, {})
+                _ri = _e.get("real_image", "")
+                if _ri and os.path.isfile(_ri):
+                    self._image_path_edit.setText(_ri)
+                    self._image_path = _ri
+
         type_group = QGroupBox("Board Type (multi-select supported)")
         type_layout = QVBoxLayout(type_group)
         self._cb_checkerboard = QCheckBox("Checkerboard")
@@ -1134,6 +1146,10 @@ class BootstrapWizardDialog(QDialog):
 
         cam_name = self._camera_name_label.text()
         camera_output_dir = Path(output_dir) / f"calibtool_{cam_name}"
+        # Avoid double-nesting when output_dir already ends with calibtool_{cam_name}
+        # (e.g. from "Default" button or mapping auto-fill which use the full path)
+        if Path(output_dir).name == f"calibtool_{cam_name}":
+            camera_output_dir = Path(output_dir)
 
         # Warn if mapping already points to a different location
         project_dir = self._project_dir_edit.text().strip()

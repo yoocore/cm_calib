@@ -177,10 +177,15 @@ class CmSettingsPanel(QGroupBox):
     def _toggle_check_state(self, item: QListWidgetItem) -> None:
         """setItemWidget hides native checkbox — toggle on row click instead."""
         current = item.checkState()
+        # blockSignals prevents _on_camera_selection_changed → clear_precheck_results()
+        # from wiping ALL check_labels before _update_row_status restores the single one
+        self.camera_list.blockSignals(True)
         item.setCheckState(Qt.Unchecked if current == Qt.Checked else Qt.Checked)
+        self.camera_list.blockSignals(False)
         camera_name = item.data(Qt.UserRole)
         if camera_name:
             self._update_row_status(str(camera_name))
+        self.camera_selection_changed.emit()
 
     def selected_cameras(self) -> list[str]:
         selected: list[str] = []

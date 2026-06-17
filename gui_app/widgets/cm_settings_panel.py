@@ -204,7 +204,7 @@ class CmSettingsPanel(QGroupBox):
         self._camera_check_widgets.clear()
         mapping = self._load_camera_mapping()
         for camera_name in cameras:
-            item = QListWidgetItem(f"⋮⋮ {camera_name}")
+            item = QListWidgetItem()
             item.setData(Qt.UserRole, camera_name)
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(Qt.Unchecked)
@@ -213,15 +213,19 @@ class CmSettingsPanel(QGroupBox):
             row_widget = QWidget()
             row_layout = QHBoxLayout(row_widget)
             row_layout.setContentsMargins(4, 2, 4, 2)
-            row_layout.setSpacing(6)
+            row_layout.setSpacing(8)
+
+            name_label = QLabel(f"⋮⋮ {camera_name}")
+            row_layout.addWidget(name_label)
+            row_layout.addStretch()
 
             check_label = QLabel("")
             check_label.setFixedWidth(20)
             row_layout.addWidget(check_label)
 
             config_path = mapping.get(camera_name, "")
-            open_btn = QPushButton("Open Config")
-            open_btn.setFixedWidth(90)
+            open_btn = QPushButton("Config")
+            open_btn.setFixedWidth(60)
             open_btn.setEnabled(bool(config_path))
             if not config_path:
                 open_btn.setToolTip("No config generated yet")
@@ -231,7 +235,6 @@ class CmSettingsPanel(QGroupBox):
                     lambda checked, p=config_path: self._open_config_folder(p)
                 )
             row_layout.addWidget(open_btn)
-            row_layout.addStretch()
 
             item.setSizeHint(row_widget.sizeHint())
             self.camera_list.setItemWidget(item, row_widget)

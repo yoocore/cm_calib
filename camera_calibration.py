@@ -7729,6 +7729,8 @@ class CameraCalibrator:
                     'set vno $View(ev.view)',
                     f'set wi {_wi}',
                     f'set he {_he}',
+                    '# Force-set View() dict so UpdateView uses correct projection (critical when minimized)',
+                    'catch {dict set ::View($vno) Width $wi; dict set ::View($vno) Height $he}',
                     'UpdateView $vno',
                     'catch {gl bindframebuffer_read 0}',
                     'catch {FBO end}',

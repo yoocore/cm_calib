@@ -984,6 +984,7 @@ class BootstrapWizardDialog(QDialog):
             self._stack.setCurrentIndex(1)
 
     def _on_board_list_changed(self) -> None:
+        self._boards = list(self._board_list._boards)  # Sync: board list is the source of truth
         active = self._board_list.get_active_boards()
         self._canvas.set_detections(active, self._tag_grids)
 

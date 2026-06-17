@@ -2793,3 +2793,65 @@ Round 2 best: pos_y=1.034, roll=0.619, yaw=89.05, pos_x=3.167, pitch=24.63, lens
 
 **管线 100% 稳定。残留问题：** rear_tv 分数异常（算法问题）、[Errno 22] multi-start 崩溃（未复现）、right_rear 冒烟 vs 完整标定的分数差异（3 iters vs 100 iters）。
 
+---
+
+## Phase 57: 稳定性根因分析——disable_movie_updateview_timer 解决了什么 (2026-06-17)
+
+### 之前的所有故障模式
+
+| 故障 | 表现 | 根因 |
+|------|------|------|
+| FBO Creation error | capture 时 FBO new 失败 | View::SetSize → C++ ConfigFBO 期间 timer 并发调用 UpdateView |
+| 渲染冻结 | UC 不增长，截图返回 None | `after cancel` 只杀一个 timer，残留 timer 在错误时机触发 |
+| 窗口卡死 | 无响应 | UpdateView_TimerProc 在 FBO 损坏状态下执行 |
+| CheckViewPort 递归 | Tcl 栈溢出 | proc 多次 rename/guard 冲突 |
+
+### 最终唯一有效的改动
+
+`disable_movie_updateview_timer`（rename-all 杀全部 timer）包裹 `View::SetSize → ABRAXAS → CameraSelect`。
+
+```
+# 错误做法：只取消一个 timer 实例
+after cancel UpdateView_TimerProc  # 源码 tclTimer.c:2319 首次匹配后 break
+# → 多相机切换积累多个 timer，cancel 一个其余存活 → View::SetSize 时残留 timer 触发竞态
+
+# 正确做法：彻底禁用 proc，所有引用该 proc 的 after 实例全部失效
+rename UpdateView_TimerProc {}  # 删除 proc，所有 pending timer 执行时找不到命令 → 静默失败
+```
+
+### 为什么之前 30 天没修好
+
+走了大量弯路：
+1. **GPU warm-up**：加延时/warm-up UpdateView（掩盖症状，不解决竞态）→ 三个方向全部回退
+2. **`after 100` / `after update` 延时**：靠 timing 碰运气 → 不可靠
+3. **height bump**（View::SetSize H+1→H）：触发更多 Configure 事件 → 雪上加霜
+4. **wm state / wm lower / wm attributes**：窗口状态黑魔法 → 不相关
+5. **PrintWindow/NaN 检测**：备选 capture 路径 → 不解决根因
+
+所有弯路都有一个共同点：**在 Tcl timer 层面修 C++ ConfigFBO 的竞态，但没意识到 `after cancel` 只杀一个实例**。
+
+### 为什么现在稳定了
+
+去掉 11 层补丁后回到纯 FBO capture + `disable_movie_updateview_timer` 前后保护。本质是：
+
+**消除了多相机切换时 Tcl timer 和 C++ Configure 事件的并发。**
+
+```
+View::SetSize → <Configure> → C++ On_Configure → ConfigFBO（安全的单线程路径）
+# 之前：这个路径执行到一半，timer 触发另一个 UpdateView → 都操作同一个 GL 上下文 → 竞态
+# 现在：timer 已被 disable，View::SetSize + ABRAXAS + CameraSelect 串行完成，无人打断
+```
+
+### 残留的不稳定因素
+
+1. **ConfigFBO 本身没有被消除**——View::SetSize 仍然触发它，只是 timer 不并发。
+2. **ABRAXAS Scene::On_Load**——C++ 回调直接调 ConfigFBO，绕过 timer 防护。
+3. **`[Errno 22]` multi-start 崩溃**——可能与 DDE 连接或文件 handle 泄漏有关，未复现。
+
+### 教训
+
+1. **`after cancel` 在 Tcl 8.6 只杀一个 timer**（`tclTimer.c:TimerCancelDo` 首次匹配 break）。多个 timer 实例时不可用。
+2. **`rename proc {}` 是唯一彻底禁用 Tcl timer 的方法**——使所有 pending after 无法执行。
+3. **warm-up/延时/脏修复全掩盖根因**。每次走错方向后应回退而不是继续堆补丁。
+4. **补丁层 > 3 就该回退重来**——11 层补丁意味着设计方向不对。
+

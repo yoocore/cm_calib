@@ -1030,7 +1030,6 @@ class BootstrapWizardDialog(QDialog):
         )
         self._boards.append(board)
         self._board_list.set_boards(self._boards)
-        self._canvas.set_detections(self._boards, self._tag_grids)
 
     def _on_review_next(self) -> None:
         camera_selection = self._camera_combo.currentText()

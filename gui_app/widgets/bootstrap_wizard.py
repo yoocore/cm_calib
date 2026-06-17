@@ -462,12 +462,8 @@ class BootstrapWizardDialog(QDialog):
                 idx = self._camera_combo.findText(self._gui_camera_name)
                 if idx >= 0:
                     self._camera_combo.setCurrentIndex(idx)
-                    # Hide camera row — determined by which row's Wizard button was clicked
-                    self._camera_combo.setVisible(False)
-                    self._refresh_btn.setVisible(False)
-                    cam_label_li = camera_form.itemAtPosition(2, 0)
-                    if cam_label_li:
-                        cam_label_li.widget().setVisible(False)
+        if self._gui_camera_name:
+            camera_group.setVisible(False)
 
         layout.addWidget(camera_group)
 

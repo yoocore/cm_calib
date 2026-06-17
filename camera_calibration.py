@@ -7803,6 +7803,26 @@ class CameraCalibrator:
         raise final_error
 
     def capture_movie(self, tag: str) -> Path:
+        # Restore IPG-MOVIE window if minimized (minimized GL context blocks FBO)
+        try:
+            from dde_health_check import run_check_attempt, render_dde_execute_script, default_output_dir
+            _out = default_output_dir()
+            _out.mkdir(parents=True, exist_ok=True)
+            run_check_attempt(
+                name="restore_movie_window",
+                service="TclEval",
+                topic="CarMaker",
+                output_dir=_out,
+                script_text=render_dde_execute_script(
+                    _out / "restore_movie_window.txt",
+                    "IPG-MOVIE",
+                    ["catch {wm state . normal}", "catch {raise .}"],
+                ),
+                timeout_sec=5.0,
+            )
+        except Exception as exc:
+            # Non-fatal: window may already be normal
+            pass
         return self._capture_movie_via_dde(tag)
 
     def _diagnose_carmaker_after_failure(self, error: RuntimeError) -> None:

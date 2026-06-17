@@ -272,6 +272,10 @@ class BoardListPanel(QWidget):
         header.setStretchLastSection(True)
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._table.setStyleSheet(
+            "QTableWidget::item:focus { outline: none; }"
+            "QTableWidget::item:selected { background-color: #d0d0d0; color: black; }"
+        )
         self._table.cellChanged.connect(self._on_cell_changed)
         layout.addWidget(self._table)
 

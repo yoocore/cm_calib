@@ -2855,3 +2855,73 @@ View::SetSize → <Configure> → C++ On_Configure → ConfigFBO（安全的单�
 3. **warm-up/延时/脏修复全掩盖根因**。每次走错方向后应回退而不是继续堆补丁。
 4. **补丁层 > 3 就该回退重来**——11 层补丁意味着设计方向不对。
 
+---
+
+## Phase 58: 最小化窗口 + vehicle_writeback 分析 (2026-06-17)
+
+### 最小化窗口修复
+
+#### 问题
+
+最小化 IPG-MOVIE 窗口后启动标定，卡在最初阶段。原因：
+- 最小化时 OpenGL 上下文挂起（GPU 驱动行为，非 IPG-MOVIE bug）
+- `View::SetSize` 调用 `wm geometry` → 窗口最小化时 `Configure` 事件被忽略 → GL 上下文未 resize
+- `View()` dict 未被更新 → capture 从 dict 读到旧尺寸 → FBO 尺寸错误
+- `UpdateView` 投影矩阵使用旧尺寸 → 渲染内容错
+
+#### 分析过程
+
+| 假设 | 验证 | 结论 |
+|------|------|------|
+| FBO 尺寸从 View() dict 读不可靠 | Python 计算预期尺寸（参考图×auto-reduce）直接传给 Tcl 脚本 | FBO 尺寸对了，但投影矩阵还是错的 |
+| UpdateView 投影用 View() dict | capture 前强制 dict set Width/Height | 还是不行——GL 上下文在最小化时根本无内容 |
+| Windows 最小化窗口无 GL 内容 | 这是 GPU 驱动的硬限制 | **最小化时必须临时恢复窗口** |
+
+#### 最终方案 (commit 4890666)
+
+在 `ensure_movie_view_size`（每次切相机执行一次的 set size 步骤）加窗口恢复：
+
+```tcl
+# 只有最小化时才做
+if {[wm state .] eq "iconic"} {
+    wm state . normal    # 临时恢复
+    update; update idletasks
+}
+View::SetSize $w $h    # 现在 GL 上下文有效，Configure 事件触发
+if {$was_iconic} {
+    wm state . iconic    # 恢复最小化
+    update
+}
+```
+
+capture（每 iter 执行多次）不再操作窗口，只使用 Python 计算好的 FBO 尺寸。
+
+#### 效果
+
+最小化时一闪（恢复→set size→最小化，<100ms），capture 正常工作。只在 set size 时做一次，不影响 per-iter 性能。
+
+### vehicle_writeback 缺失分析
+
+#### 问题
+
+三相机 config JSON 全部没有 `vehicle_writeback` 配置，导致：
+- 标定完成 → `_write_best_values_to_vehicle_config()` 因找不到配置被跳过
+- vehicle 文件从未被更新 → 永远从 config JSON 默认值开始（~51 分）
+- pool 虽然记录了历史最优（~43 分），但只用于写保护，不用于初始值选择
+
+#### 读/写双路径断裂
+
+```
+读：DDE probe → 从 CarMaker 获取 TestRun 的 vehicle 路径 → 失败（无写回配置）→ 跳过
+写：_resolve_vehicle_writeback_context(config_path, cfg) → 无 vehicle_writeback → 返回 None → 跳过
+```
+
+#### 修复方向
+
+- 将 sensor_name 映射硬编码到代码中（`left_tv→front_camera`, `rear_tv→rear_camera`, `right_rear→rear_right_camera`）
+- 或通过 mapping 工具（`calibtool_mapping.py`）建立 vehicle sensor → 真实图像 → config 的关联
+
+### v1.2.1 tag
+
+当前版本标记为 `v1.2.1`，包含：前面的所有修复 + 最小化窗口临时恢复 + FBO 尺寸 Python 计算。
+

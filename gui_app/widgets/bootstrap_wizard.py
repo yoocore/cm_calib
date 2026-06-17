@@ -440,8 +440,8 @@ class BootstrapWizardDialog(QDialog):
         self._camera_combo = QComboBox()
         self._camera_combo.setEnabled(False)
         self._camera_combo.addItem("(select camera)")
-        refresh_btn = QPushButton("Refresh")
-        refresh_btn.clicked.connect(self._refresh_camera_list)
+        self._refresh_btn = QPushButton("Refresh")
+        self._refresh_btn.clicked.connect(self._refresh_camera_list)
         camera_form.addWidget(QLabel("Camera:"), 2, 0)
         camera_form.addWidget(self._camera_combo, 2, 1)
         camera_form.addWidget(refresh_btn, 2, 2)
@@ -717,9 +717,17 @@ class BootstrapWizardDialog(QDialog):
         self._camera_combo.clear()
         self._camera_combo.addItem("(select camera)")
         try:
-            from gui_app.services.static_vehicle_reader import resolve_vehicle_info
-            info = resolve_vehicle_info(Path(project_dir), testrun)
-            sensors = [s["name"] for s in info.get("sensors", [])]
+            # Prefer mapping file when available (presence of mapping hides Refresh too)
+            from gui_app.widgets.camera_mapping_dialog import load_camera_config
+            mapping = load_camera_config(project_dir)
+            if mapping:
+                sensors = list(mapping.keys())
+                self._refresh_btn.setVisible(False)
+            else:
+                self._refresh_btn.setVisible(True)
+                from gui_app.services.static_vehicle_reader import resolve_vehicle_info
+                info = resolve_vehicle_info(Path(project_dir), testrun)
+                sensors = [s["name"] for s in info.get("sensors", [])]
             for name in sensors:
                 self._camera_combo.addItem(name)
             self._camera_combo.setEnabled(len(sensors) > 0)

@@ -135,13 +135,10 @@ class MainWindow(QMainWindow):
                 f"Camera sensors (from mapping): {', '.join(sensors)}", source="system",
             )
         else:
-            try:
-                info = resolve_vehicle_info(project_root, testrun)
-                sensors = [s["name"] for s in info.get("sensors", [])]
-                if sensors:
-                    self.output_panel.append_log(f"Camera sensors: {', '.join(sensors)}", source="system")
-            except Exception:
-                sensors = []
+            sensors = []
+            self.output_panel.append_log(
+                "Camera sensors: no mapping file found — edit Camera Mapping first", source="system",
+            )
         self.cm_settings_panel.set_cameras(sensors)
 
     def _refresh_static_info(self) -> None:

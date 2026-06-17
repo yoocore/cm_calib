@@ -116,6 +116,7 @@ class CmSettingsPanel(QGroupBox):
             lambda: self.testrun_changed.emit(self.testrun_edit.text())
         )
         self.camera_list.itemChanged.connect(self._on_camera_selection_changed)
+        self.camera_list.itemClicked.connect(self._toggle_check_state)  # setItemWidget hides checkbox area
         self.camera_list.model().rowsMoved.connect(self._on_camera_rows_moved)
 
         proj_row = QWidget(self)
@@ -198,6 +199,21 @@ class CmSettingsPanel(QGroupBox):
     def _on_camera_rows_moved(self, *_args) -> None:
         self.clear_precheck_results()
         self.camera_selection_changed.emit()
+
+    def _toggle_check_state(self, item: QListWidgetItem) -> None:
+        """setItemWidget hides native checkbox — toggle on row click instead."""
+        current = item.checkState()
+        item.setCheckState(Qt.Unchecked if current == Qt.Checked else Qt.Checked)
+        # itemChanged signal will fire → _on_camera_selection_changed → clear + emit
+
+    def selected_cameras(self) -> list[str]:
+        selected: list[str] = []
+        for index in range(self.camera_list.count()):
+            item = self.camera_list.item(index)
+            if item.checkState() == Qt.Checked:
+                data = item.data(Qt.UserRole)
+                selected.append(str(data) if data is not None else item.text())
+        return selected
 
     def set_cameras(self, cameras: list[str]) -> None:
         self.camera_list.clear()

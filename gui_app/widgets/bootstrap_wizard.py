@@ -89,7 +89,6 @@ class ImageCanvasWidget(QWidget):
         self._draw_mode = False
         self._draw_start: Optional[QPointF] = None
         self._draw_current: Optional[QPointF] = None
-        self._drawn_rects: List[Tuple[int, int, int, int]] = []
         self.setMinimumSize(400, 300)
         self.setMouseTracking(True)
 
@@ -100,7 +99,6 @@ class ImageCanvasWidget(QWidget):
         self._pixmap = pixmap
         self._zoom = 1.0
         self._offset = QPointF(0, 0)
-        self._drawn_rects.clear()
         self._fit_to_view()
         self.update()
 
@@ -182,7 +180,6 @@ class ImageCanvasWidget(QWidget):
             if w > 10 and h > 10:
                 ix, iy = int(max(0, x1)), int(max(0, y1))
                 iw, ih = int(w), int(h)
-                self._drawn_rects.append((ix, iy, iw, ih))
                 self.rectangle_drawn.emit(ix, iy, iw, ih)
             self._draw_start = None
             self._draw_current = None
@@ -234,11 +231,6 @@ class ImageCanvasWidget(QWidget):
             painter.setFont(font)
             painter.drawText(QPointF(x + 4, y - 6 / self._zoom), grid.grid_id)
 
-        custom_color = QColor(200, 50, 200)
-        pen.setColor(custom_color)
-        painter.setPen(pen)
-        for rx, ry, rw, rh in self._drawn_rects:
-            painter.drawRect(QRectF(rx, ry, rw, rh))
 
         if self._draw_start is not None and self._draw_current is not None:
             img_start = self._screen_to_image(self._draw_start)
@@ -283,8 +275,10 @@ class BoardListPanel(QWidget):
 
         self._boards: List[DetectedBoard] = []
         self._unchecked_ids: set = set()
+        self._suppress_events: bool = False
 
     def set_boards(self, boards: List[DetectedBoard]) -> None:
+        self._suppress_events = True
         self._boards = list(boards)
         self._table.blockSignals(True)
         self._table.setRowCount(len(boards))
@@ -321,6 +315,8 @@ class BoardListPanel(QWidget):
         self._table.resizeColumnsToContents()
         for c in range(self._table.columnCount() - 1):
             self._table.setColumnWidth(c, self._table.columnWidth(c) + 16)
+        self._suppress_events = False
+        self.board_changed.emit()
 
     def get_active_boards(self) -> List[DetectedBoard]:
         active: List[DetectedBoard] = []
@@ -367,6 +363,8 @@ class BoardListPanel(QWidget):
         self.board_changed.emit()
 
     def _on_checkbox_changed(self) -> None:
+        if self._suppress_events:
+            return
         self._unchecked_ids.clear()
         for row, board in enumerate(self._boards):
             cb_container = self._table.cellWidget(row, 1)

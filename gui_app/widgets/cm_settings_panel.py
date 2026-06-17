@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
@@ -8,6 +9,7 @@ from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFileDialog,
+    QMessageBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -176,6 +178,9 @@ class CmSettingsPanel(QGroupBox):
         """setItemWidget hides native checkbox — toggle on row click instead."""
         current = item.checkState()
         item.setCheckState(Qt.Unchecked if current == Qt.Checked else Qt.Checked)
+        camera_name = item.data(Qt.UserRole)
+        if camera_name:
+            self._update_row_status(str(camera_name))
 
     def selected_cameras(self) -> list[str]:
         selected: list[str] = []
@@ -222,22 +227,17 @@ class CmSettingsPanel(QGroupBox):
             )
             row_layout.addWidget(wizard_btn)
 
-            config_path = mapping.get(camera_name, "")
             open_btn = QPushButton("Config")
             open_btn.setFixedWidth(60)
-            open_btn.setEnabled(bool(config_path))
-            if not config_path:
-                open_btn.setToolTip("No config generated yet")
-            else:
-                open_btn.setToolTip(config_path)
-                open_btn.clicked.connect(
-                    lambda checked, p=config_path: self._open_config_folder(p)
-                )
+            open_btn.clicked.connect(
+                lambda checked, cn=camera_name: self._on_config_clicked(cn)
+            )
             row_layout.addWidget(open_btn)
 
             item.setSizeHint(row_widget.sizeHint())
             self.camera_list.setItemWidget(item, row_widget)
             self._camera_check_widgets[camera_name] = (check_label, open_btn)
+            self._update_row_status(camera_name)
 
     def _load_camera_mapping(self) -> dict:
         project_dir = self.project_root_edit.text().strip()
@@ -256,10 +256,83 @@ class CmSettingsPanel(QGroupBox):
                 result[name] = folder
         return result
 
-    def _open_config_folder(self, path: str) -> None:
-        import os
-        if os.path.isdir(path):
-            os.startfile(path)
+    def _on_config_clicked(self, camera_name: str) -> None:
+        project_dir = self.project_root_edit.text().strip()
+        if not project_dir:
+            return
+        from gui_app.widgets.camera_mapping_dialog import mapping_path_for_project
+        mapping_path = mapping_path_for_project(project_dir)
+        config_path = ""
+        if mapping_path.exists():
+            mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
+            entry = mapping.get(camera_name, {})
+            config_path = entry.get("config_folder", "")
+        if not config_path:
+            QMessageBox.information(self, "No Config", "No config yet. Use Wizard first.")
+            return
+        if os.path.isdir(config_path):
+            os.startfile(config_path)
+            return
+        self._show_relocate_dialog(camera_name, config_path)
+
+    def _show_relocate_dialog(self, camera_name: str, old_path: str) -> None:
+        from gui_app.widgets.camera_mapping_dialog import mapping_path_for_project
+        msg = QMessageBox(QMessageBox.Warning, "Config Not Found",
+            f"Config folder not found:\n{old_path}\n\nLocate the new location?",
+            QMessageBox.Yes | QMessageBox.No, self)
+        if msg.exec() != QMessageBox.Yes:
+            return
+        new_path = QFileDialog.getExistingDirectory(
+            self, "Locate Config Folder", str(Path(old_path).parent))
+        if not new_path:
+            return
+        project_dir = self.project_root_edit.text().strip()
+        if not project_dir:
+            return
+        mapping_path = mapping_path_for_project(project_dir)
+        if mapping_path.exists():
+            mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
+        else:
+            mapping = {}
+        if camera_name not in mapping:
+            mapping[camera_name] = {}
+        mapping[camera_name]["config_folder"] = new_path
+        mapping_path.parent.mkdir(parents=True, exist_ok=True)
+        mapping_path.write_text(json.dumps(mapping, ensure_ascii=False, indent=4), encoding="utf-8")
+        self._update_row_status(camera_name)
+
+    def _update_row_status(self, camera_name: str) -> None:
+        widgets = self._camera_check_widgets.get(camera_name)
+        if not widgets:
+            return
+        check_label, open_btn = widgets
+        project_dir = self.project_root_edit.text().strip()
+        if not project_dir:
+            check_label.setText("")
+            open_btn.setEnabled(False)
+            open_btn.setToolTip("")
+            return
+        from gui_app.widgets.camera_mapping_dialog import mapping_path_for_project
+        mapping_path = mapping_path_for_project(project_dir)
+        config_path = ""
+        if mapping_path.exists():
+            mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
+            entry = mapping.get(camera_name, {})
+            config_path = entry.get("config_folder", "")
+        if not config_path:
+            check_label.setText("")
+            open_btn.setEnabled(False)
+            open_btn.setToolTip("No config generated yet")
+        elif os.path.isdir(config_path):
+            check_label.setText("✓")
+            check_label.setStyleSheet("color: #4caf50; font-weight: bold;")
+            open_btn.setEnabled(True)
+            open_btn.setToolTip(config_path)
+        else:
+            check_label.setText("✗")
+            check_label.setStyleSheet("color: #e53935; font-weight: bold;")
+            open_btn.setEnabled(False)
+            open_btn.setToolTip(f"Config folder not found:\n{config_path}")
 
     def update_precheck_results(self, results: list[dict]) -> None:
         for result in results:

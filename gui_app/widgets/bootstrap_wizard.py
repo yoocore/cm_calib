@@ -1032,12 +1032,15 @@ class BootstrapWizardDialog(QDialog):
         self._board_list.set_boards(self._boards)
 
     def _on_review_next(self) -> None:
-        camera_selection = self._camera_combo.currentText()
-        if camera_selection and camera_selection != "(select camera)":
-            cam_name = camera_selection
+        if self._gui_camera_name:
+            cam_name = self._gui_camera_name
         else:
-            from gui_app.services.wizard_config_generator import _derive_camera_name
-            cam_name = _derive_camera_name(self._image_path)
+            camera_selection = self._camera_combo.currentText()
+            if camera_selection and camera_selection != "(select camera)":
+                cam_name = camera_selection
+            else:
+                from gui_app.services.wizard_config_generator import _derive_camera_name
+                cam_name = _derive_camera_name(self._image_path)
         self._camera_name_label.setText(cam_name)
 
         project_dir = self._project_dir_edit.text().strip()

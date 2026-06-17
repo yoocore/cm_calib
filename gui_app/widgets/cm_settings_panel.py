@@ -72,6 +72,7 @@ class CmSettingsPanel(QGroupBox):
     precheck_clicked = Signal()
     generate_config_clicked = Signal()
     wizard_clicked = Signal()
+    camera_mapping_clicked = Signal()
     camera_selection_changed = Signal()
 
     def __init__(self, parent: QWidget | None = None):
@@ -146,10 +147,18 @@ class CmSettingsPanel(QGroupBox):
         project_layout.setContentsMargins(10, 6, 10, 8)
         project_layout.addLayout(form)
 
+        self.camera_mapping_button = QPushButton("Camera Mapping")
+        self.camera_mapping_button.setToolTip(
+            "Map vehicle sensors to real camera images.\n"
+            "Creates/edits calibtool_camera_config.json in the Movie folder."
+        )
+        self.camera_mapping_button.clicked.connect(self.camera_mapping_clicked.emit)
+
         self.camera_group = _SectionGroup("Camera Selection", self)
         camera_layout = QVBoxLayout(self.camera_group)
         camera_layout.setContentsMargins(8, 4, 8, 6)
         camera_layout.setSpacing(6)
+        camera_layout.addWidget(self.camera_mapping_button)
         self.camera_list.setMinimumHeight(200)
         camera_layout.addWidget(self.camera_list, 1)
         camera_layout.addWidget(precheck_row)
@@ -232,14 +241,14 @@ class CmSettingsPanel(QGroupBox):
         project_dir = self.project_root_edit.text().strip()
         if not project_dir:
             return {}
-        mapping_path = Path(project_dir) / "Movie" / "calibtool_camera_mapping.json"
-        if not mapping_path.exists():
-            return {}
-        try:
-            with open(mapping_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return {}
+        from gui_app.widgets.camera_mapping_dialog import load_camera_config
+        config = load_camera_config(project_dir)
+        result: dict = {}
+        for name, entry in config.items():
+            folder = entry.get("config_folder", "")
+            if folder:
+                result[name] = folder
+        return result
 
     def _open_config_folder(self, path: str) -> None:
         import os

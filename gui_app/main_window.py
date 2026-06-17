@@ -102,6 +102,7 @@ class MainWindow(QMainWindow):
         self.cm_settings_panel.precheck_clicked.connect(self._run_precheck)
         self.cm_settings_panel.generate_config_clicked.connect(self._generate_configs)
         self.cm_settings_panel.wizard_clicked.connect(self._open_board_wizard)
+        self.cm_settings_panel.camera_mapping_clicked.connect(self._open_camera_mapping)
         self.cm_settings_panel.project_root_changed.connect(self._on_project_root_changed)
         self.cm_settings_panel.testrun_changed.connect(self._on_testrun_changed)
         self.cm_settings_panel.camera_selection_changed.connect(self._rebuild_sensor_progress_plan)
@@ -125,13 +126,22 @@ class MainWindow(QMainWindow):
         if not testrun:
             self.cm_settings_panel.set_cameras([])
             return
-        try:
-            info = resolve_vehicle_info(project_root, testrun)
-            sensors = [s["name"] for s in info.get("sensors", [])]
-            if sensors:
-                self.output_panel.append_log(f"Camera sensors: {', '.join(sensors)}", source="system")
-        except Exception:
-            sensors = []
+
+        from gui_app.widgets.camera_mapping_dialog import load_camera_config
+        mapping = load_camera_config(str(project_root))
+        if mapping:
+            sensors = list(mapping.keys())
+            self.output_panel.append_log(
+                f"Camera sensors (from mapping): {', '.join(sensors)}", source="system",
+            )
+        else:
+            try:
+                info = resolve_vehicle_info(project_root, testrun)
+                sensors = [s["name"] for s in info.get("sensors", [])]
+                if sensors:
+                    self.output_panel.append_log(f"Camera sensors: {', '.join(sensors)}", source="system")
+            except Exception:
+                sensors = []
         self.cm_settings_panel.set_cameras(sensors)
 
     def _refresh_static_info(self) -> None:
@@ -508,6 +518,20 @@ class MainWindow(QMainWindow):
             camera_name=camera_name,
         )
         dialog.exec()
+
+    def _open_camera_mapping(self) -> None:
+        project_dir = self.cm_settings_panel.project_root_edit.text().strip()
+        testrun = self.cm_settings_panel.testrun_edit.text().strip()
+        if not project_dir or not testrun:
+            QMessageBox.warning(
+                self, "Missing Info",
+                "Please fill in ProjectDir and TestRun first.",
+            )
+            return
+        from gui_app.widgets.camera_mapping_dialog import CameraMappingDialog
+        dialog = CameraMappingDialog(project_dir, testrun, self)
+        if dialog.exec():
+            self._refresh_camera_list()
 
     def _apply_status(self, status: AppStatus) -> None:
         self.state.status = status

@@ -738,17 +738,19 @@ class BootstrapWizardDialog(QDialog):
     def _write_camera_mapping(
         self, cam_name: str, config_folder: str, output_dir: Path,
     ) -> None:
-        mapping_path = output_dir / "calibtool_camera_mapping.json"
-        mapping: dict = {}
-        if mapping_path.exists():
-            try:
-                with open(mapping_path, "r", encoding="utf-8") as f:
-                    mapping = json.load(f)
-            except Exception:
-                mapping = {}
-        mapping[cam_name] = config_folder
-        with open(mapping_path, "w", encoding="utf-8") as f:
-            json.dump(mapping, f, ensure_ascii=False, indent=4)
+        from gui_app.widgets.camera_mapping_dialog import (
+            load_camera_config, save_camera_config,
+        )
+        project_dir = self._project_dir_edit.text().strip()
+        if not project_dir:
+            return
+        mapping = load_camera_config(project_dir)
+        entry = mapping.get(cam_name, {})
+        entry["config_folder"] = config_folder
+        if not entry.get("real_image") and self._image_path:
+            entry["real_image"] = str(Path(self._image_path).resolve())
+        mapping[cam_name] = entry
+        save_camera_config(project_dir, mapping)
 
     def _browse_output_dir(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "Select Output Directory")

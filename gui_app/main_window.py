@@ -125,22 +125,34 @@ class MainWindow(QMainWindow):
             self.cm_settings_panel.set_cameras([])
             return
 
+        # Always read sensor list from vehicle file — it's the source of truth
+        try:
+            from gui_app.services.static_vehicle_reader import resolve_vehicle_info
+            info = resolve_vehicle_info(project_root, testrun)
+            sensors = [s["name"] for s in info.get("sensors", [])]
+        except Exception as exc:
+            sensors = []
+            self.output_panel.append_log(f"Vehicle sensor read failed: {exc}", source="system")
+
+        # Check mapping to log which have configs
         from gui_app.widgets.camera_mapping_dialog import mapping_path_for_project
         mapping_path = mapping_path_for_project(str(project_root))
         if mapping_path.exists():
             mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
+            mapped_names = [n for n in sensors if n in mapping]
+            if mapped_names:
+                self.output_panel.append_log(
+                    f"Camera sensors: {', '.join(sensors)} ({len(mapped_names)} mapped)", source="system",
+                )
+            else:
+                self.output_panel.append_log(
+                    f"Camera sensors: {', '.join(sensors)} — run Wizard to map each", source="system",
+                )
         else:
-            mapping = {}
-        if mapping:
-            sensors = list(mapping.keys())
             self.output_panel.append_log(
-                f"Camera sensors (from mapping): {', '.join(sensors)}", source="system",
+                f"Camera sensors: {', '.join(sensors)} — no mapping file yet", source="system",
             )
-        else:
-            sensors = []
-            self.output_panel.append_log(
-                "Camera sensors: no mapping file found — please run Wizard for each camera", source="system",
-            )
+
         self.cm_settings_panel.set_cameras(sensors)
 
     def _refresh_static_info(self) -> None:

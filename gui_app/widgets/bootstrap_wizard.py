@@ -356,6 +356,37 @@ class BootstrapWizardDialog(QDialog):
         page = QWidget()
         layout = QVBoxLayout(page)
 
+        camera_group = QGroupBox("Camera Mapping (optional)")
+        camera_form = QGridLayout(camera_group)
+        camera_form.setColumnStretch(1, 1)
+
+        self._project_dir_edit = QLineEdit()
+        self._project_dir_edit.setPlaceholderText("Project root directory...")
+        proj_browse = QPushButton("Browse...")
+        proj_browse.clicked.connect(self._browse_project_dir)
+        camera_form.addWidget(QLabel("ProjectDir:"), 0, 0)
+        camera_form.addWidget(self._project_dir_edit, 0, 1)
+        camera_form.addWidget(proj_browse, 0, 2)
+
+        self._testrun_edit = QLineEdit()
+        self._testrun_edit.setPlaceholderText("TestRun path relative to Data/TestRun...")
+        tr_browse = QPushButton("Browse...")
+        tr_browse.clicked.connect(self._browse_testrun)
+        camera_form.addWidget(QLabel("TestRun:"), 1, 0)
+        camera_form.addWidget(self._testrun_edit, 1, 1)
+        camera_form.addWidget(tr_browse, 1, 2)
+
+        self._camera_combo = QComboBox()
+        self._camera_combo.setEnabled(False)
+        self._camera_combo.addItem("(select camera)")
+        refresh_btn = QPushButton("Refresh")
+        refresh_btn.clicked.connect(self._refresh_camera_list)
+        camera_form.addWidget(QLabel("Camera:"), 2, 0)
+        camera_form.addWidget(self._camera_combo, 2, 1)
+        camera_form.addWidget(refresh_btn, 2, 2)
+
+        layout.addWidget(camera_group)
+
         file_group = QGroupBox("Reference Image")
         file_layout = QHBoxLayout(file_group)
         self._image_path_edit = QLineEdit()
@@ -583,6 +614,41 @@ class BootstrapWizardDialog(QDialog):
         if path:
             self._image_path_edit.setText(path)
 
+    def _browse_project_dir(self) -> None:
+        path = QFileDialog.getExistingDirectory(self, "Select Project Root")
+        if path:
+            self._project_dir_edit.setText(path)
+
+    def _browse_testrun(self) -> None:
+        project_dir = self._project_dir_edit.text().strip()
+        start_dir = str(Path(project_dir) / "Data" / "TestRun") if project_dir else ""
+        path, _ = QFileDialog.getOpenFileName(self, "Select TestRun", start_dir, "TestRun files (*)")
+        if path and project_dir:
+            testrun_root = Path(project_dir) / "Data" / "TestRun"
+            try:
+                rel = str(Path(path).relative_to(testrun_root))
+                self._testrun_edit.setText(rel)
+            except ValueError:
+                self._testrun_edit.setText(path)
+
+    def _refresh_camera_list(self) -> None:
+        project_dir = self._project_dir_edit.text().strip()
+        testrun = self._testrun_edit.text().strip()
+        if not project_dir or not testrun:
+            return
+        self._camera_combo.clear()
+        self._camera_combo.addItem("(select camera)")
+        try:
+            from gui_app.services.static_vehicle_reader import resolve_vehicle_info
+            info = resolve_vehicle_info(Path(project_dir), testrun)
+            sensors = [s["name"] for s in info.get("sensors", [])]
+            for name in sensors:
+                self._camera_combo.addItem(name)
+            self._camera_combo.setEnabled(len(sensors) > 0)
+        except Exception as exc:
+            self._camera_combo.addItem(f"Error: {exc}")
+            self._camera_combo.setEnabled(False)
+
     def _browse_template(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self, "Select Template Config", "",
@@ -590,6 +656,21 @@ class BootstrapWizardDialog(QDialog):
         )
         if path:
             self._template_edit.setText(path)
+
+    def _write_camera_mapping(
+        self, cam_name: str, config_folder: str, output_dir: Path,
+    ) -> None:
+        mapping_path = output_dir / "calibtool_camera_mapping.json"
+        mapping: dict = {}
+        if mapping_path.exists():
+            try:
+                with open(mapping_path, "r", encoding="utf-8") as f:
+                    mapping = json.load(f)
+            except Exception:
+                mapping = {}
+        mapping[cam_name] = config_folder
+        with open(mapping_path, "w", encoding="utf-8") as f:
+            json.dump(mapping, f, ensure_ascii=False, indent=4)
 
     def _browse_output_dir(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "Select Output Directory")
@@ -832,9 +913,19 @@ class BootstrapWizardDialog(QDialog):
         self._canvas.set_detections(self._boards, self._tag_grids)
 
     def _on_review_next(self) -> None:
-        from gui_app.services.wizard_config_generator import _derive_camera_name
-        cam_name = _derive_camera_name(self._image_path)
+        camera_selection = self._camera_combo.currentText()
+        if camera_selection and camera_selection != "(select camera)":
+            cam_name = camera_selection
+        else:
+            from gui_app.services.wizard_config_generator import _derive_camera_name
+            cam_name = _derive_camera_name(self._image_path)
         self._camera_name_label.setText(cam_name)
+
+        project_dir = self._project_dir_edit.text().strip()
+        if project_dir and not self._output_dir_edit.text().strip():
+            movie_dir = str(Path(project_dir) / "Movie")
+            self._output_dir_edit.setText(movie_dir)
+
         self._update_json_preview()
         self._stack.setCurrentIndex(2)
 
@@ -890,6 +981,18 @@ class BootstrapWizardDialog(QDialog):
 
         cam_name = self._camera_name_label.text()
         camera_output_dir = Path(output_dir) / f"calibtool_{cam_name}"
+
+        if camera_output_dir.exists():
+            reply = QMessageBox.question(
+                self, "Folder Exists",
+                f"Folder already exists:\n{camera_output_dir}\n\nReplace it?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                return
+            shutil.rmtree(str(camera_output_dir))
+
         camera_output_dir.mkdir(parents=True, exist_ok=True)
         output_path = camera_output_dir / f"camera.{cam_name}.json"
 
@@ -916,6 +1019,8 @@ class BootstrapWizardDialog(QDialog):
 
             preview_path = camera_output_dir / f"wizard_preview_{cam_name}.png"
             generate_preview_image(active, self._tag_grids, self._image_path, preview_path)
+
+            self._write_camera_mapping(cam_name, str(camera_output_dir), Path(output_dir))
 
             self._result_label.setText(
                 f"Config saved: {output_path}\n"

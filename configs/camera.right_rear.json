@@ -25,20 +25,19 @@
     "step_decay": 0.7,
     "priority_board_acceptance": {
         "board_ids": [
+            "C4",
             "C1",
-            "C2",
-            "C3",
-            "C4"
+            "C2"
         ],
         "min_board_score_improvement": 0.75,
-        "max_total_score_worsen": 1.0,
+        "max_total_score_worsen": 3.0,
         "min_board_count": 1,
         "min_total_board_score_improvement": 0.0,
         "total_worsen_tradeoff_ratio": 0.0
     },
     "joint_exploration": {
         "apply_to_all_params": true,
-        "max_single_score_worsen": 2.5,
+        "max_single_score_worsen": 3.0,
         "trial_multipliers": [
             1.0,
             2.0,

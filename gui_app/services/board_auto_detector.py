@@ -424,18 +424,32 @@ def group_tags_into_grids(
         return []
 
     centers = np.array([t.center for t in tags], dtype=np.float64)
-    if distance_threshold is None:
-        pairwise_dists = []
-        for i in range(len(centers)):
-            for j in range(i + 1, len(centers)):
-                pairwise_dists.append(np.linalg.norm(centers[i] - centers[j]))
-        if not pairwise_dists:
-            distance_threshold = float("inf")
-        else:
-            median_dist = float(np.median(pairwise_dists))
-            distance_threshold = median_dist * 3.0
-
     n = len(tags)
+
+    if distance_threshold is None and n > 1:
+        nn_dists = []
+        for i in range(n):
+            dists_to_others = [
+                np.linalg.norm(centers[i] - centers[j])
+                for j in range(n) if j != i
+            ]
+            nn_dists.append(min(dists_to_others))
+        nn_dists_sorted = sorted(nn_dists)
+
+        if len(nn_dists_sorted) >= 2:
+            max_gap = 0.0
+            gap_threshold = nn_dists_sorted[-1] * 1.5
+            for k in range(len(nn_dists_sorted) - 1):
+                gap = nn_dists_sorted[k + 1] - nn_dists_sorted[k]
+                if gap > max_gap and nn_dists_sorted[k + 1] > nn_dists_sorted[k] * 1.5:
+                    max_gap = gap
+                    gap_threshold = (nn_dists_sorted[k] + nn_dists_sorted[k + 1]) / 2.0
+            distance_threshold = gap_threshold
+        else:
+            distance_threshold = nn_dists_sorted[0] * 2.0
+    elif distance_threshold is None:
+        distance_threshold = float("inf")
+
     visited = [False] * n
     grids: List[TagGrid] = []
     grid_idx = 0

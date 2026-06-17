@@ -262,25 +262,19 @@ class BoardListPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         self._table = QTableWidget()
-        self._table.setColumnCount(6)
-        self._table.setHorizontalHeaderLabels(["Use", "ID", "Type", "Size", "Points", "BBox"])
-        self._table.horizontalHeader().setStretchLastSection(True)
+        self._table.setColumnCount(7)
+        self._table.setHorizontalHeaderLabels(["Use", "ID", "Type", "Size", "Points", "BBox", ""])
+        self._table.horizontalHeader().setStretchLastSection(False)
+        self._table.setColumnWidth(6, 40)
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._table.cellChanged.connect(self._on_cell_changed)
         layout.addWidget(self._table)
 
-        del_btn_layout = QHBoxLayout()
-        self._delete_btn = QPushButton("Delete Selected")
-        self._delete_btn.clicked.connect(self._on_delete_selected)
-        del_btn_layout.addWidget(self._delete_btn)
-        del_btn_layout.addStretch()
-        layout.addLayout(del_btn_layout)
-
         self._boards: List[DetectedBoard] = []
 
     def set_boards(self, boards: List[DetectedBoard]) -> None:
-        self._boards = boards
+        self._boards = list(boards)
         self._table.blockSignals(True)
         self._table.setRowCount(len(boards))
         for row, board in enumerate(boards):
@@ -295,6 +289,17 @@ class BoardListPanel(QWidget):
             pts = board.corners.shape[0] if board.corners.size > 0 else 0
             self._table.setItem(row, 4, QTableWidgetItem(str(pts)))
             self._table.setItem(row, 5, QTableWidgetItem(str(board.bbox)))
+
+            is_custom = board.board_type == "custom_maker"
+            del_btn = QPushButton("−")
+            del_btn.setFixedSize(28, 24)
+            del_btn.setEnabled(is_custom)
+            del_btn.setToolTip(
+                "Delete this custom board" if is_custom else "Auto-detected: use checkbox to exclude"
+            )
+            if is_custom:
+                del_btn.clicked.connect(lambda checked, r=row: self._delete_row(r))
+            self._table.setCellWidget(row, 6, del_btn)
         self._table.blockSignals(False)
 
     def get_active_boards(self) -> List[DetectedBoard]:
@@ -314,13 +319,11 @@ class BoardListPanel(QWidget):
                 self._boards[row].board_id = item.text()
         self.board_changed.emit()
 
-    def _on_delete_selected(self) -> None:
-        rows = sorted(set(idx.row() for idx in self._table.selectedIndexes()), reverse=True)
-        for row in rows:
-            if 0 <= row < len(self._boards):
-                self._boards.pop(row)
-        self.set_boards(self._boards)
-        self.board_changed.emit()
+    def _delete_row(self, row: int) -> None:
+        if 0 <= row < len(self._boards):
+            self._boards.pop(row)
+            self.set_boards(self._boards)
+            self.board_changed.emit()
 
     def _on_checkbox_changed(self) -> None:
         self.board_changed.emit()
@@ -328,7 +331,13 @@ class BoardListPanel(QWidget):
 
 class BootstrapWizardDialog(QDialog):
 
-    def __init__(self, parent: Optional[QWidget] = None):
+    def __init__(
+        self,
+        parent: Optional[QWidget] = None,
+        project_dir: Optional[str] = None,
+        testrun: Optional[str] = None,
+        camera_name: Optional[str] = None,
+    ):
         super().__init__(parent)
         self.setWindowFlags(
             self.windowFlags()
@@ -343,6 +352,9 @@ class BootstrapWizardDialog(QDialog):
         self._boards: List[DetectedBoard] = []
         self._tag_grids: List[TagGrid] = []
         self._tags: List[DetectedTag] = []
+        self._gui_project_dir = project_dir
+        self._gui_testrun = testrun
+        self._gui_camera_name = camera_name
 
         self._stack = QStackedWidget()
         self._stack.addWidget(self._build_input_page())
@@ -364,7 +376,8 @@ class BootstrapWizardDialog(QDialog):
         self._project_dir_edit.setPlaceholderText("Project root directory...")
         proj_browse = QPushButton("Browse...")
         proj_browse.clicked.connect(self._browse_project_dir)
-        camera_form.addWidget(QLabel("ProjectDir:"), 0, 0)
+        self._proj_dir_label = QLabel("ProjectDir:")
+        camera_form.addWidget(self._proj_dir_label, 0, 0)
         camera_form.addWidget(self._project_dir_edit, 0, 1)
         camera_form.addWidget(proj_browse, 0, 2)
 
@@ -372,7 +385,8 @@ class BootstrapWizardDialog(QDialog):
         self._testrun_edit.setPlaceholderText("TestRun path relative to Data/TestRun...")
         tr_browse = QPushButton("Browse...")
         tr_browse.clicked.connect(self._browse_testrun)
-        camera_form.addWidget(QLabel("TestRun:"), 1, 0)
+        self._testrun_label = QLabel("TestRun:")
+        camera_form.addWidget(self._testrun_label, 1, 0)
         camera_form.addWidget(self._testrun_edit, 1, 1)
         camera_form.addWidget(tr_browse, 1, 2)
 
@@ -384,6 +398,23 @@ class BootstrapWizardDialog(QDialog):
         camera_form.addWidget(QLabel("Camera:"), 2, 0)
         camera_form.addWidget(self._camera_combo, 2, 1)
         camera_form.addWidget(refresh_btn, 2, 2)
+
+        if self._gui_project_dir:
+            self._project_dir_edit.setText(self._gui_project_dir)
+            self._proj_dir_label.setVisible(False)
+            self._project_dir_edit.setVisible(False)
+            proj_browse.setVisible(False)
+        if self._gui_testrun:
+            self._testrun_edit.setText(self._gui_testrun)
+            self._testrun_label.setVisible(False)
+            self._testrun_edit.setVisible(False)
+            tr_browse.setVisible(False)
+        if self._gui_project_dir and self._gui_testrun:
+            self._refresh_camera_list()
+            if self._gui_camera_name:
+                idx = self._camera_combo.findText(self._gui_camera_name)
+                if idx >= 0:
+                    self._camera_combo.setCurrentIndex(idx)
 
         layout.addWidget(camera_group)
 
@@ -532,9 +563,6 @@ class BootstrapWizardDialog(QDialog):
         btn_layout = QHBoxLayout()
         back_btn = QPushButton("< Back")
         back_btn.clicked.connect(lambda: self._stack.setCurrentIndex(0))
-        self._redetect_btn = QPushButton("Re-Detect")
-        self._redetect_btn.setToolTip("Go back to step 1 and re-run detection")
-        self._redetect_btn.clicked.connect(self._on_redetect)
         self._add_custom_btn = QPushButton("Add Custom Board")
         self._add_custom_btn.setCheckable(True)
         self._add_custom_btn.setToolTip(
@@ -545,7 +573,6 @@ class BootstrapWizardDialog(QDialog):
         next_btn = QPushButton("Next >")
         next_btn.clicked.connect(self._on_review_next)
         btn_layout.addWidget(back_btn)
-        btn_layout.addWidget(self._redetect_btn)
         btn_layout.addWidget(self._add_custom_btn)
         btn_layout.addStretch()
         btn_layout.addWidget(next_btn)
@@ -846,16 +873,6 @@ class BootstrapWizardDialog(QDialog):
         finally:
             self._detect_btn.setEnabled(True)
             self._detect_btn.setText("Detect Boards")
-
-    def _on_redetect(self) -> None:
-        self._boards = []
-        self._tag_grids = []
-        self._tags = []
-        self._add_custom_btn.setChecked(False)
-        self._canvas.set_detections([], [])
-        self._board_list.set_boards([])
-        self._stack.setCurrentIndex(0)
-        self._on_detect()
 
     def _on_board_list_changed(self) -> None:
         active = self._board_list.get_active_boards()

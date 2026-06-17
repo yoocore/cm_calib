@@ -497,7 +497,16 @@ class MainWindow(QMainWindow):
 
     def _open_board_wizard(self) -> None:
         from gui_app.widgets.bootstrap_wizard import BootstrapWizardDialog
-        dialog = BootstrapWizardDialog(self)
+        project_dir = self.cm_settings_panel.project_root_edit.text().strip() or None
+        testrun = self.cm_settings_panel.testrun_edit.text().strip() or None
+        cameras = self.cm_settings_panel.selected_cameras()
+        camera_name = cameras[0] if cameras else None
+        dialog = BootstrapWizardDialog(
+            self,
+            project_dir=project_dir,
+            testrun=testrun,
+            camera_name=camera_name,
+        )
         dialog.exec()
 
     def _apply_status(self, status: AppStatus) -> None:

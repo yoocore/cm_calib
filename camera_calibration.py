@@ -264,6 +264,11 @@ def _unlink_if_exists(path: Path) -> None:
 
 
 def _default_sim_output_root() -> Path:
+    return Path("C:/CM_Projects/CMO141_Calibration/SimOutput") / "calibration"
+
+
+def _sim_output_root_legacy() -> Path:
+    """Legacy SimOutput root for backward-compatible path resolution of old runs."""
     return Path("C:/CM_Projects/CMO141_Calibration/SimOutput")
 
 
@@ -1523,11 +1528,13 @@ def _camera_history_summary_compact_path(camera_name: str) -> Path:
 
 
 def _iter_camera_history_dirs(camera_name: str) -> List[Path]:
-    root = _default_sim_output_root()
-    camera_root = root / _canonical_camera_group_name(camera_name)
-    if not camera_root.exists() or not camera_root.is_dir():
-        return []
-    return [camera_root]
+    camera_group = _canonical_camera_group_name(camera_name)
+    dirs: list[Path] = []
+    for root in (_default_sim_output_root(), _sim_output_root_legacy()):
+        candidate = root / camera_group
+        if candidate.exists() and candidate.is_dir():
+            dirs.append(candidate)
+    return dirs
 
 
 def _canonical_camera_group_name(name: str) -> str:
@@ -1552,13 +1559,13 @@ def _canonical_camera_group_name(name: str) -> str:
 
 
 def _camera_name_from_output_dir(output_dir: Path) -> str:
-    root = _default_sim_output_root()
-    try:
-        relative_parts = output_dir.resolve().relative_to(root.resolve()).parts
-    except Exception:
-        return _canonical_camera_group_name(output_dir.name)
-    if relative_parts:
-        return _canonical_camera_group_name(relative_parts[0])
+    for root in (_default_sim_output_root(), _sim_output_root_legacy()):
+        try:
+            relative_parts = output_dir.resolve().relative_to(root.resolve()).parts
+            if relative_parts:
+                return _canonical_camera_group_name(relative_parts[0])
+        except Exception:
+            continue
     return _canonical_camera_group_name(output_dir.name)
 
 
@@ -1863,14 +1870,14 @@ def _marker_name_for_output_dir(output_dir: Path) -> str:
 
 def _camera_scope_output_dir(output_dir: Path) -> Path:
     """Return the camera-scoped root directory under SimOutput for an output path."""
-    root = _default_sim_output_root()
-    try:
-        relative = output_dir.relative_to(root)
-    except Exception:
-        return output_dir
-    if not relative.parts:
-        return output_dir
-    return root / _canonical_camera_group_name(relative.parts[0])
+    for root in (_default_sim_output_root(), _sim_output_root_legacy()):
+        try:
+            relative = output_dir.relative_to(root)
+            if relative.parts:
+                return root / _canonical_camera_group_name(relative.parts[0])
+        except Exception:
+            continue
+    return output_dir
 
 
 def _marker_path_for_output_dir(output_dir: Path) -> Path:

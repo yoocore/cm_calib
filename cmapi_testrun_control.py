@@ -238,14 +238,17 @@ def kill_all_processes() -> list[dict[str, Any]]:
     all_processes = list_cm_processes()
     target_names = (*CARMAKER_PROCESS_NAMES, "Movie.exe")
     targets = [proc for proc in all_processes if proc.get("Name") in target_names]
-    # Always kill by image name — works even if WMI is down (empty targets)
     for image_name in target_names:
-        subprocess.run(
-            ["taskkill", "/IM", image_name, "/F", "/T"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        try:
+            subprocess.run(
+                ["taskkill", "/IM", image_name, "/F", "/T"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=3.0,
+            )
+        except subprocess.TimeoutExpired:
+            print(f"[WARN] taskkill /IM {image_name} timed out")
     return targets
 
 
@@ -305,14 +308,17 @@ def stop_movie_stack_via_movie_quit(
 
 def kill_existing_cm_processes() -> list[dict[str, Any]]:
     processes = list_cm_processes()
-    # Always kill by image name — works even if WMI is down (empty list)
     for image_name in (*CARMAKER_PROCESS_NAMES, "Movie.exe"):
-        subprocess.run(
-            ["taskkill", "/IM", image_name, "/F", "/T"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        try:
+            subprocess.run(
+                ["taskkill", "/IM", image_name, "/F", "/T"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=3.0,
+            )
+        except subprocess.TimeoutExpired:
+            print(f"[WARN] taskkill /IM {image_name} timed out")
     return processes
 
 

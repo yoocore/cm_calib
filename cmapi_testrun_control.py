@@ -106,18 +106,13 @@ def _movie_background_tcl_commands(*, include_root: bool = True) -> list[str]:
     return commands
 
 
-def _run_powershell_json(command: str, timeout_sec: float = 5.0) -> list[dict[str, Any]]:
-    try:
-        completed = subprocess.run(
-            ["powershell", "-NoProfile", "-Command", command],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=timeout_sec,
-        )
-    except subprocess.TimeoutExpired:
-        print(f"[WARN] WMI process enumeration timed out ({timeout_sec}s), returning empty list")
-        return []
+def _run_powershell_json(command: str) -> list[dict[str, Any]]:
+    completed = subprocess.run(
+        ["powershell", "-NoProfile", "-Command", command],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
     stdout = completed.stdout.strip()
     if not stdout:
         return []
@@ -238,10 +233,11 @@ def kill_all_processes() -> list[dict[str, Any]]:
     all_processes = list_cm_processes()
     target_names = (*CARMAKER_PROCESS_NAMES, "Movie.exe")
     targets = [proc for proc in all_processes if proc.get("Name") in target_names]
-    # Always kill by image name — works even if WMI is down (empty targets)
-    for image_name in target_names:
+    if not targets:
+        return []
+    for proc in targets:
         subprocess.run(
-            ["taskkill", "/IM", image_name, "/F", "/T"],
+            ["taskkill", "/PID", str(proc["ProcessId"]), "/F", "/T"],
             capture_output=True,
             text=True,
             check=False,
@@ -305,7 +301,10 @@ def stop_movie_stack_via_movie_quit(
 
 def kill_existing_cm_processes() -> list[dict[str, Any]]:
     processes = list_cm_processes()
-    # Always kill by image name — works even if WMI is down (empty list)
+    if not processes:
+        return []
+
+    # Reset the whole CarMaker/IPG-MOVIE stack so the next run starts from a known state.
     for image_name in (*CARMAKER_PROCESS_NAMES, "Movie.exe"):
         subprocess.run(
             ["taskkill", "/IM", image_name, "/F", "/T"],

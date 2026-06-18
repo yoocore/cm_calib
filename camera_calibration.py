@@ -7850,6 +7850,19 @@ class CameraCalibrator:
     def capture_movie(self, tag: str) -> Path:
         return self._capture_movie_via_dde(tag)
 
+    def _force_update_view(self) -> None:
+        try:
+            import dde  # type: ignore
+        except ImportError:
+            return
+        server = dde.CreateServer()
+        server.Create("CalibForceUpdate")
+        conv = dde.CreateConversation(server)
+        conv.ConnectTo(self.movie_apphost, "IPG-MOVIE")
+        conv.Exec('set vno $View(ev.view); UpdateView $vno')
+        server.Disconnect()
+        time.sleep(0.5)
+
     def _diagnose_carmaker_after_failure(self, error: RuntimeError) -> None:
         """Check CarMaker/IPG-MOVIE error state after a DDE failure.
         Runs a lightweight DDE probe to capture any CarMaker-side errors
@@ -8595,6 +8608,30 @@ class CameraCalibrator:
                 self._draw_annotated_label(
                     sim_bgr,
                     board.board_id,
+                    label_anchor,
+                    color,
+                )
+                occupied_label_boxes.append(label_box)
+            elif board.roi is not None:
+                rx, ry, rw, rh = board.roi
+                sx = transform.scale_x
+                sy = transform.scale_y
+                ox = transform.offset_x
+                oy = transform.offset_y
+                src_x = int(round(rx / sx - ox / sx)) if sx > 0 else rx
+                src_y = int(round(ry / sy - oy / sy)) if sy > 0 else ry
+                src_w = int(round(rw / sx)) if sx > 0 else rw
+                src_h = int(round(rh / sy)) if sy > 0 else rh
+                cv2.rectangle(sim_bgr, (src_x, src_y), (src_x + src_w, src_y + src_h), color, 2)
+                label_anchor, label_box = self._resolve_annotated_label_anchor(
+                    sim_bgr.shape,
+                    board.board_id,
+                    (src_x + 2, max(18, src_y - 10)),
+                    occupied_label_boxes,
+                )
+                self._draw_annotated_label(
+                    sim_bgr,
+                    board.board_id + "?",
                     label_anchor,
                     color,
                 )
@@ -10651,11 +10688,27 @@ class CameraCalibrator:
         if self.real_detections is None:
             self.real_detections = self._detect_reference_boards()
 
+        t0 = time.perf_counter()
         sim_path = self.capture_movie(tag)
+        t_capture = time.perf_counter() - t0
         self._last_eval_image = str(sim_path)
         sim_img = cv2.imread(str(sim_path), cv2.IMREAD_GRAYSCALE)
         if sim_img is None:
             raise RuntimeError(f"Failed reading screenshot: {sim_path}")
+
+        mean_brightness = float(sim_img.mean())
+        if mean_brightness < 5.0:
+            print(f"[health] Black frame detected (mean={mean_brightness:.1f}), attempting UpdateView recovery...")
+            try:
+                self._force_update_view()
+                sim_path = self.capture_movie(tag + "_blackfix")
+                sim_img = cv2.imread(str(sim_path), cv2.IMREAD_GRAYSCALE)
+                if sim_img is not None and float(sim_img.mean()) >= 5.0:
+                    print(f"[health] Black frame fixed after UpdateView (mean={float(sim_img.mean()):.1f})")
+                elif sim_img is not None:
+                    print(f"[health] Black frame persists after UpdateView (mean={float(sim_img.mean()):.1f})")
+            except Exception as exc:
+                print(f"[health] UpdateView recovery failed: {exc}")
 
         # Freshness check: detect stale capture (same pixel data as previous)
         current_hash = hash(sim_img.tobytes())
@@ -10693,14 +10746,19 @@ class CameraCalibrator:
 
         sim_prepared = self._prepare_eval_image(sim_img)
         sim_score_img = self._build_sim_eval_image(sim_img)
+        t_prepare = time.perf_counter() - t0 - t_capture
         board_scores: List[BoardScoreDetail] = []
+        t_detect_start = time.perf_counter()
         for board in self.boards:
             real_detection = self.real_detections[board.board_id]
             detection_img = sim_prepared if _is_custom_marker_board_type(board.board_type) else sim_score_img
             sim_detection = self._detect_board(detection_img, board)
             board_scores.append(self._score_board(board, real_detection, sim_detection, sim_prepared))
 
+        t_detect = time.perf_counter() - t_detect_start
         total_detail = self._aggregate_scores(board_scores, baseline_metrics)
+        t_total = time.perf_counter() - t0
+        print(f"[timing] capture={t_capture:.2f}s prepare={t_prepare:.2f}s detect+score={t_detect:.2f}s total={t_total:.2f}s boards={len(self.boards)}")
         return total_detail, sim_path
     def _build_result_payload(
         self,

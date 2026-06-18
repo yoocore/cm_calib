@@ -424,6 +424,13 @@ class MainWindow(QMainWindow):
                 self.precheck_service = PrecheckService(project_root)
             precheck_results = self.precheck_service.run_for_cameras(launch.cameras)
             self.cm_settings_panel.update_precheck_results(precheck_results)
+            # Log precheck results to output panel
+            for _r in precheck_results:
+                _icon = "✓" if _r.get("ok") else "✗"
+                self.output_panel.append_log(
+                    f"Precheck {_icon} {_r.get('camera', '?')}: {_r.get('message', '')}",
+                    source="system",
+                )
             failed = [r for r in precheck_results if not r.get("ok")]
             if failed:
                 messages = [str(r.get("message", "")) for r in failed]

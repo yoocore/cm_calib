@@ -96,6 +96,7 @@ class CmSettingsPanel(QGroupBox):
         self.camera_list.setToolTip("拖拽调整相机顺序")
 
         self._camera_check_widgets: dict[str, tuple] = {}
+        self._has_precheck_results: bool = False
 
         self.browse_button.clicked.connect(self._browse_project_root)
         self.testrun_browse_button.clicked.connect(self._browse_testrun)
@@ -168,6 +169,9 @@ class CmSettingsPanel(QGroupBox):
 
     def _on_camera_selection_changed(self, _item: QListWidgetItem) -> None:
         self.clear_precheck_results()
+        # Restore mapping status for all cameras after clearing precheck
+        for _cn in self._camera_check_widgets:
+            self._update_row_status(str(_cn))
         self.camera_selection_changed.emit()
 
     def _on_camera_rows_moved(self, *_args) -> None:
@@ -199,6 +203,7 @@ class CmSettingsPanel(QGroupBox):
     def set_cameras(self, cameras: list[str]) -> None:
         self.camera_list.clear()
         self._camera_check_widgets.clear()
+        self._has_precheck_results = False
         mapping = self._load_camera_mapping()
         for camera_name in cameras:
             item = QListWidgetItem()
@@ -307,6 +312,8 @@ class CmSettingsPanel(QGroupBox):
         self._update_row_status(camera_name)
 
     def _update_row_status(self, camera_name: str) -> None:
+        if self._has_precheck_results:
+            return  # don't override precheck results with mapping status
         widgets = self._camera_check_widgets.get(camera_name)
         if not widgets:
             return
@@ -340,6 +347,7 @@ class CmSettingsPanel(QGroupBox):
             open_btn.setToolTip(f"Config folder not found:\n{config_path}")
 
     def update_precheck_results(self, results: list[dict]) -> None:
+        self._has_precheck_results = True
         for result in results:
             camera_name = str(result.get("camera") or "")
             ok = bool(result.get("ok"))
@@ -356,6 +364,7 @@ class CmSettingsPanel(QGroupBox):
                     check_label.setToolTip(msg)
 
     def clear_precheck_results(self) -> None:
+        self._has_precheck_results = False
         for camera_name, (check_label, _) in self._camera_check_widgets.items():
             check_label.setText("")
             check_label.setToolTip("")

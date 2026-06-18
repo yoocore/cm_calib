@@ -12,11 +12,11 @@ class TestCameraCalibrationScoreDisplay:
             degrade_penalty=0.0,
             has_critical_degrade=False,
             degraded_boards=[],
-            isolated_outlier_boards=["S8"],
+            isolated_outlier_boards=["mk_8"],
             compared_board_count=2,
             board_scores=[
                 BoardScoreDetail(
-                    board_id="S8",
+                    board_id="mk_8",
                     board_type="marker",
                     success=True,
                     compared=True,
@@ -30,7 +30,7 @@ class TestCameraCalibrationScoreDisplay:
                     matched_point_count=8,
                 ),
                 BoardScoreDetail(
-                    board_id="S7",
+                    board_id="mk_7",
                     board_type="marker",
                     success=True,
                     compared=True,
@@ -49,6 +49,6 @@ class TestCameraCalibrationScoreDisplay:
         legend_lines = _build_annotation_legend_lines(total_detail)
 
         assert legend_lines == [
-            "S8: 1039.000 (excluded)",
-            "S7: 51.000",
+            "mk_8: 1039.000 (excluded)",
+            "mk_7: 51.000",
         ]

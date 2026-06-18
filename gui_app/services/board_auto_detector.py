@@ -530,32 +530,15 @@ def group_tags_into_grids(
     return grids
 
 
-def classify_checkerboards_by_size(
+def assign_checkerboard_ids(
     boards: List[DetectedBoard],
-) -> Tuple[List[DetectedBoard], List[DetectedBoard]]:
+) -> List[DetectedBoard]:
     checkerboards = [b for b in boards if b.board_type == "checkerboard"]
     if not checkerboards:
-        return [], []
+        return []
 
-    areas = [b.area for b in checkerboards]
-    median_area = float(np.median(areas))
+    checkerboards.sort(key=lambda b: (b.center[0], b.center[1]))
+    for idx, board in enumerate(checkerboards):
+        board.board_id = f"cb_{idx + 1}"
 
-    large: List[DetectedBoard] = []
-    small: List[DetectedBoard] = []
-    for board in checkerboards:
-        if board.area >= median_area * 0.7:
-            large.append(board)
-        else:
-            small.append(board)
-
-    if not small:
-        return large, []
-
-    large.sort(key=lambda b: (b.center[0], b.center[1]))
-    small.sort(key=lambda b: (b.center[0], b.center[1]))
-    for idx, board in enumerate(large):
-        board.board_id = f"B{idx + 1}"
-    for idx, board in enumerate(small):
-        board.board_id = f"S{idx + 1}"
-
-    return large, small
+    return checkerboards

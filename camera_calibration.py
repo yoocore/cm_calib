@@ -1484,14 +1484,21 @@ def bootstrap_config_from_annotation(
     if preview_image is None:
         raise FileNotFoundError(f"Failed to read real image: {resolved_real_image}")
     palette = {
+        "CB": (70, 80, 230),
         "B": (70, 80, 230),
         "S": (60, 170, 90),
+        "MK": (60, 170, 90),
+        "C": (60, 170, 90),
+        "CG": (180, 60, 180),
+        "AG": (60, 180, 180),
+        "AR": (180, 180, 60),
+        "AT": (120, 60, 180),
         "G1": (220, 110, 60),
     }
     for board_cfg in generated_boards:
         x, y, width, height = [int(value) for value in board_cfg["roi"]]
-        family = _board_prototype_family(str(board_cfg.get("board_id", ""))) or "B"
-        family_prefix = "G1" if family.startswith("G1") else family
+        family = _board_prototype_family(str(board_cfg.get("board_id", ""))) or "CB"
+        family_prefix = "G1" if family and family.startswith("G1") else (family or "CB")
         color = palette.get(family_prefix, (200, 200, 70))
         cv2.rectangle(preview_image, (x, y), (x + width, y + height), color, 3)
         cv2.putText(

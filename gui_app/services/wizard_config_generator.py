@@ -9,7 +9,7 @@ from gui_app.services.board_auto_detector import (
     DetectedBoard,
     DetectedTag,
     TagGrid,
-    classify_checkerboards_by_size,
+    assign_checkerboard_ids,
     group_tags_into_grids,
 )
 

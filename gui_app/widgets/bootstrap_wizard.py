@@ -53,7 +53,7 @@ from gui_app.services.board_auto_detector import (
     DetectedTag,
     TagGrid,
     group_tags_into_grids,
-    classify_checkerboards_by_size,
+    assign_checkerboard_ids,
     _bbox_iou,
     _bbox_from_points,
 )
@@ -882,8 +882,8 @@ class BootstrapWizardDialog(QDialog):
                     rows = self._cb_size_rows.value()
                     sizes = [(cols, rows)] if cols > 0 and rows > 0 else None
                     boards = self._detector.detect_checkerboard_instances(img, sizes)
-                    large, small = classify_checkerboards_by_size(boards)
-                    self._boards.extend(large + small)
+                    checkerboards = assign_checkerboard_ids(boards)
+                    self._boards.extend(checkerboards)
 
                 elif board_type == "aruco":
                     dictionary = self._aruco_dict_combo.currentText()
@@ -891,14 +891,14 @@ class BootstrapWizardDialog(QDialog):
                     grids = group_tags_into_grids(tags)
                     self._tags.extend(tags)
                     self._tag_grids.extend(grids)
-                    for grid in grids:
+                    for idx, grid in enumerate(grids):
                         bbox = grid.bbox
                         corners = np.concatenate([t.corners for t in grid.tags], axis=0)
                         self._boards.append(DetectedBoard(
                             board_type="aruco",
                             bbox=bbox,
                             corners=corners,
-                            board_id=grid.grid_id,
+                            board_id=f"ar_{idx + 1}",
                             tags=grid.tags,
                             center=grid.center,
                             area=float(bbox[2] * bbox[3]),
@@ -912,14 +912,14 @@ class BootstrapWizardDialog(QDialog):
                     grids = group_tags_into_grids(tags)
                     self._tags.extend(tags)
                     self._tag_grids.extend(grids)
-                    for grid in grids:
+                    for idx, grid in enumerate(grids):
                         bbox = grid.bbox
                         corners = np.concatenate([t.corners for t in grid.tags], axis=0)
                         self._boards.append(DetectedBoard(
                             board_type="apriltag",
                             bbox=bbox,
                             corners=corners,
-                            board_id=grid.grid_id,
+                            board_id=f"at_{idx + 1}",
                             tags=grid.tags,
                             center=grid.center,
                             area=float(bbox[2] * bbox[3]),
@@ -932,6 +932,8 @@ class BootstrapWizardDialog(QDialog):
                     detected = self._detector.detect_charuco_boards(
                         img, (cols, rows), dictionary,
                     )
+                    for idx, board in enumerate(detected):
+                        board.board_id = f"cc_{idx + 1}"
                     self._boards.extend(detected)
 
                 elif board_type == "circle_grid":
@@ -940,7 +942,7 @@ class BootstrapWizardDialog(QDialog):
                     sizes = [(cols, rows)] if cols > 0 and rows > 0 else None
                     boards = self._detector.detect_circle_grids(img, sizes)
                     for idx, board in enumerate(boards):
-                        board.board_id = f"CG{idx + 1}"
+                        board.board_id = f"cg_{idx + 1}"
                     self._boards.extend(boards)
 
                 elif board_type == "aruco_grid":
@@ -950,7 +952,7 @@ class BootstrapWizardDialog(QDialog):
                     sizes = [(cols, rows)] if cols > 0 and rows > 0 else None
                     boards = self._detector.detect_aruco_grids(img, dictionary, sizes)
                     for idx, board in enumerate(boards):
-                        board.board_id = f"AG{idx + 1}"
+                        board.board_id = f"ag_{idx + 1}"
                     self._boards.extend(boards)
 
             if "checkerboard" in checked_types and any(t in checked_types for t in ("aruco", "apriltag")):
@@ -1055,7 +1057,7 @@ class BootstrapWizardDialog(QDialog):
             board_type="custom_maker",
             bbox=(x, y, w, h),
             corners=corners,
-            board_id=f"C{custom_idx}",
+            board_id=f"mk_{custom_idx}",
             center=((x + w / 2.0), (y + h / 2.0)),
             area=float(w * h),
             weight=0.8,

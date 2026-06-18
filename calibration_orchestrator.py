@@ -179,25 +179,16 @@ def _normalize_camera_names(raw_names: list[str]) -> list[str]:
     return names
 
 
-def _resolve_config_path(project_root: Path, config_dir: Path, camera_name: str) -> Path:
-    """Resolve per-camera config path, checking mapping (wizard-generated configs) first."""
-    # Check mapping first — wizard-generated configs may have per-camera paths
-    mapping_path = project_root / "Movie" / "calibtool_camera_config.json"
-    if mapping_path.exists():
-        try:
-            mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
-            entry = mapping.get(camera_name, {})
-            config_folder = entry.get("config_folder", "")
-            if config_folder:
-                candidate = (Path(config_folder).resolve() / f"camera.{camera_name}.json").resolve()
-                if candidate.exists():
-                    return candidate
-        except (json.JSONDecodeError, OSError):
-            pass
-    candidate = (config_dir / f"camera.{camera_name}.json").resolve()
-    if not candidate.exists():
-        raise FileNotFoundError(f"Config not found for camera {camera_name!r}: {candidate}")
-    return candidate
+def _resolve_config_path(project_root: Path, camera_name: str) -> Path:
+    """Resolve per-camera config path from mapping only (wizard-generated configs)."""
+    from runtime_config_bootstrap import _resolve_config_path_from_mapping
+    config_path = _resolve_config_path_from_mapping(project_root, camera_name)
+    if config_path is not None:
+        return config_path
+    raise FileNotFoundError(
+        f"Config not found for camera {camera_name!r}: no mapping entry found. "
+        f"Open the board wizard for this camera first."
+    )
 
 
 def _load_movie_view_size(config_path: Path) -> tuple[int, int] | None:
@@ -600,7 +591,7 @@ def main() -> None:
             if _STOP_REQUESTED:
                 raise KeyboardInterrupt("Stop requested before next camera run")
 
-            config_path = _resolve_config_path(project_root, config_dir, camera_name)
+            config_path = _resolve_config_path(project_root, camera_name)
             movie_view_size = _load_movie_view_size(config_path)
 
             # Retry once on render freeze: kill all, re-prepare, re-run

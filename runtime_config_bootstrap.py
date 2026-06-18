@@ -94,9 +94,9 @@ def _build_backup_path(config_path: Path) -> Path:
 
 
 def _resolve_config_path_from_mapping(
-    project_root: Path, camera_name: str, fallback_config_dir: Path
-) -> Path:
-    """Resolve per-camera config path from mapping (wizard-generated configs)."""
+    project_root: Path, camera_name: str,
+) -> Optional[Path]:
+    """Resolve per-camera config path from mapping (wizard-generated configs). Returns None if no mapping entry."""
     mapping_path = project_root / "Movie" / "calibtool_camera_config.json"
     if mapping_path.exists():
         try:
@@ -104,10 +104,12 @@ def _resolve_config_path_from_mapping(
             entry = mapping.get(camera_name, {})
             config_folder = entry.get("config_folder", "")
             if config_folder:
-                return (Path(config_folder).resolve() / f"camera.{camera_name}.json").resolve()
+                candidate = (Path(config_folder).resolve() / f"camera.{camera_name}.json").resolve()
+                if candidate.exists():
+                    return candidate
         except (json.JSONDecodeError, OSError):
             pass
-    return (fallback_config_dir / f"camera.{camera_name}.json").resolve()
+    return None
 
 def bootstrap_runtime_config(
     *,
@@ -126,10 +128,10 @@ def bootstrap_runtime_config(
 
     # Check mapping first — wizard-generated configs use per-camera config_folder
     config_path = _resolve_config_path_from_mapping(
-        resolved_project_root, camera_name, resolved_config_dir,
+        resolved_project_root, camera_name,
     )
 
-    if config_path.exists() and not overwrite_existing:
+    if config_path is not None and config_path.exists() and not overwrite_existing:
         # Reuse existing config — read real_image from config for dimensions
         existing_cfg = json.loads(config_path.read_text(encoding="utf-8-sig"))
         raw_image_path_str = existing_cfg.get("real_image", "")

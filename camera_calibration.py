@@ -9887,6 +9887,39 @@ class CameraCalibrator:
             )
         return detections
 
+    @staticmethod
+    def _align_checkerboard_ordering(
+        sim_points: np.ndarray,
+        real_points: np.ndarray,
+        board_size: Tuple[int, int],
+    ) -> np.ndarray:
+        cols, rows = board_size
+        n = cols * rows
+        if len(sim_points) < n or len(real_points) < n:
+            return sim_points
+
+        sim_grid = sim_points[:n].reshape(rows, cols, 2)
+        r0 = real_points[0]
+
+        candidates = [
+            sim_points[:n],
+            sim_points[:n][::-1],
+            sim_grid[::-1].reshape(-1, 2),
+            sim_grid[:, ::-1].reshape(-1, 2),
+        ]
+
+        best = sim_points
+        best_err = float("inf")
+        for c in candidates:
+            err = float(np.sum((c - real_points[:n]) ** 2))
+            if err < best_err:
+                best_err = err
+                result = np.copy(sim_points)
+                result[:n] = c
+                best = result
+
+        return best
+
     def _score_board(
         self,
         board: BoardProfile,
@@ -9975,6 +10008,10 @@ class CameraCalibrator:
 
         real_points = real_detection.ordered_points[:matched_points]
         sim_points = sim_detection.ordered_points[:matched_points]
+        if board.board_type == "checkerboard" and board.board_size is not None:
+            sim_points = self._align_checkerboard_ordering(
+                sim_points, real_points, board.board_size
+            )
         deltas = sim_points - real_points
         distances = np.linalg.norm(deltas, axis=1)
         rmse = float(np.sqrt(np.mean(np.square(distances))))

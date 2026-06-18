@@ -1,5 +1,7 @@
 # 已验证 Prepare 运行链冻结基线（2026-05-12）
 
+> **状态：⚠️ PARTIAL** — 核心流程正确，但 Phase 38 后的精简（auto-prepare、按钮移除）未反映。参见 `technical-principles.md` 获取最新信息。
+
 本文档用于固化本轮已经实测通过的 Prepare 关键运行链，作为后续排障、回归和实现对齐的 knowhow 与基准。
 
 配套参考脚本：

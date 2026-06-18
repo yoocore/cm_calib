@@ -1,3 +1,5 @@
+> **状态：❌ OBSOLETE** — 临时快照，价值已过期。
+
 # IPG-MOVIE Pre-Reboot Snapshot 2026-05-10
 
 ## Purpose

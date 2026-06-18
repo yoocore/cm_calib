@@ -1,3 +1,5 @@
+> **状态：❌ OBSOLETE** — 临时快照，价值已过期。
+
 - 2026-05-09 当前 IPG-MOVIE 健康快照：CarMaker.win64 正常，Movie 进程有 2 个：GPUSensor - 'kel' online 与 IPGMovie - 'kel' online。
 - 当前进程启动时间快照：CarMaker.win64.exe 17:44:49；Movie.exe(GPUSensor) 17:44:50；Movie.exe(IPGMovie) 17:46:14。
 - 当前 send 健康口径必须同时满足：WInfoInterps "IPG-MOVIE" 成功返回 IPG-MOVIE；send IPG-MOVIE 成功；send 返回 payload 含 Tcl patchlevel 与当前 camera。

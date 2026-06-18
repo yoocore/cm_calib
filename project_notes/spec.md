@@ -1,5 +1,7 @@
 # IPGMovie 标定板半自动匹配实现规格说明
 
+> **状态：⚠️ PARTIAL** — 模块定义和接口规范仍有效，多相机编排部分需参考实际代码。参见 `technical-principles.md` 获取最新信息。
+
 ## 1. 文档定位
 
 本文档是 [Data/Script/CameraCalibration/project_notes/design.md](Data/Script/CameraCalibration/project_notes/design.md) 的实现级拆解版本。

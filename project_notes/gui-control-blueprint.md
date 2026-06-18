@@ -1,3 +1,5 @@
+> **状态：⚠️ PARTIAL** — 四层架构/状态机设计仍有效，但 CM Prepare/Status 按钮已于 Phase 38 移除。参见 `technical-principles.md` 获取最新信息。
+
 - 本项目本地单用户控制台优先方案：主控层用 exe gui，不做 web-first；web 若需要，只作为第二阶段的历史结果/图表展示层。
 - GUI 技术建议：PySide6 + QProcess。现有 Python CLI 脚本保持为唯一真实控制层，GUI 第一阶段只做本地编排与观测，不内嵌重写标定算法。
 - 底层优先复用 `Data/Script/CameraCalibration/cmapi_testrun_control.py`、`Data/Script/CameraCalibration/camera_calibration.py`、`Data/Script/CameraCalibration/dde_health_check.py`。

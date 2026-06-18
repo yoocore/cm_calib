@@ -1,3 +1,5 @@
+> **状态：❌ OBSOLETE** — 问题已根因分析+修复，保留供历史追溯。完整技术原理见 `technical-principles.md`
+
 # IPG-MOVIE send 故障与 dde execute 替代链总结 2026-05-10
 
 ## 1. 问题概述

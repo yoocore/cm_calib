@@ -92,6 +92,23 @@ def _build_backup_path(config_path: Path) -> Path:
     return candidate
 
 
+
+def _resolve_config_path_from_mapping(
+    project_root: Path, camera_name: str, fallback_config_dir: Path
+) -> Path:
+    """Resolve per-camera config path from mapping (wizard-generated configs)."""
+    mapping_path = project_root / "Movie" / "calibtool_camera_config.json"
+    if mapping_path.exists():
+        try:
+            mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
+            entry = mapping.get(camera_name, {})
+            config_folder = entry.get("config_folder", "")
+            if config_folder:
+                return (Path(config_folder).resolve() / f"camera.{camera_name}.json").resolve()
+        except (json.JSONDecodeError, OSError):
+            pass
+    return (fallback_config_dir / f"camera.{camera_name}.json").resolve()
+
 def bootstrap_runtime_config(
     *,
     project_root: Path,
@@ -106,20 +123,25 @@ def bootstrap_runtime_config(
     resolved_config_dir = config_dir.resolve()
     resolved_template_path = template_path.resolve()
     resolved_movie_dir = (movie_dir or (resolved_project_root / "Movie")).resolve()
-    resolved_config_dir.mkdir(parents=True, exist_ok=True)
 
-    raw_matches = _find_movie_files(resolved_movie_dir, camera_name, require_origin=True)
-    annotated_matches = _find_movie_files(resolved_movie_dir, camera_name, require_origin=False)
-    if not raw_matches:
-        raise FileNotFoundError(f"No raw Movie image matched camera {camera_name!r} in {resolved_movie_dir}")
-    if not annotated_matches:
-        raise FileNotFoundError(f"No annotated Movie image matched camera {camera_name!r} in {resolved_movie_dir}")
-
-    raw_image_path = raw_matches[0].resolve()
-    annotated_image_path = annotated_matches[0].resolve()
-    config_path = (resolved_config_dir / f"camera.{camera_name}.json").resolve()
+    # Check mapping first — wizard-generated configs use per-camera config_folder
+    config_path = _resolve_config_path_from_mapping(
+        resolved_project_root, camera_name, resolved_config_dir,
+    )
 
     if config_path.exists() and not overwrite_existing:
+        # Reuse existing config — read real_image from config for dimensions
+        existing_cfg = json.loads(config_path.read_text(encoding="utf-8-sig"))
+        raw_image_path_str = existing_cfg.get("real_image", "")
+        if raw_image_path_str:
+            raw_image_path = Path(raw_image_path_str).resolve()
+            if not raw_image_path.exists():
+                raw_image_path = raw_matches[0].resolve() if (raw_matches := _find_movie_files(resolved_movie_dir, camera_name, require_origin=True)) else None
+        else:
+            raw_matches = _find_movie_files(resolved_movie_dir, camera_name, require_origin=True)
+            raw_image_path = raw_matches[0].resolve() if raw_matches else None
+        if raw_image_path is None:
+            raise FileNotFoundError(f"Cannot determine image dimensions for {camera_name!r} — config has no real_image and no raw Movie image found")
         width, height = _read_image_size(raw_image_path)
         return {
             "camera": camera_name,
@@ -127,12 +149,24 @@ def bootstrap_runtime_config(
             "config_path": str(config_path),
             "backup_path": None,
             "raw_image_path": str(raw_image_path),
-            "annotated_image_path": str(annotated_image_path),
-            "raw_match_count": len(raw_matches),
-            "annotated_match_count": len(annotated_matches),
+            "annotated_image_path": "",
+            "raw_match_count": 1 if raw_image_path_str else len(raw_matches) if raw_image_path_str else 0,
+            "annotated_match_count": 0,
             "movie_view_width": width,
             "movie_view_height": height,
         }
+
+    # Generating path: need Movie captures to bootstrap
+    resolved_config_dir.mkdir(parents=True, exist_ok=True)
+    raw_matches = _find_movie_files(resolved_movie_dir, camera_name, require_origin=True)
+    annotated_matches = _find_movie_files(resolved_movie_dir, camera_name, require_origin=False)
+    if not raw_matches:
+        raise FileNotFoundError(f"No raw Movie image matched camera {camera_name!r} in {resolved_movie_dir}")
+    if not annotated_matches:
+        raise FileNotFoundError(f"No annotated Movie image matched camera {camera_name!r} in {resolved_movie_dir}")
+    raw_image_path = raw_matches[0].resolve()
+    annotated_image_path = annotated_matches[0].resolve()
+    config_path = (resolved_config_dir / f"camera.{camera_name}.json").resolve()
 
     backup_path: Optional[Path] = None
     action = "generated"

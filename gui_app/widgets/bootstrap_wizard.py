@@ -1207,6 +1207,22 @@ class BootstrapWizardDialog(QDialog):
                 camera_name=cam_name,
             )
 
+            # Copy real image to config directory for self-containment
+            real_image_src = Path(self._image_path)
+            real_image_dst = camera_output_dir / real_image_src.name
+            if real_image_src.resolve() != real_image_dst.resolve():
+                shutil.copy2(str(real_image_src), str(real_image_dst))
+            cfg["real_image"] = str(real_image_dst.resolve())
+
+            # Add vehicle_writeback for calibration result write-back
+            cfg.setdefault("vehicle_writeback", {}).update({
+                "enabled": True,
+                "sensor_name": cam_name,
+            })
+
+            # Re-save config with updated fields
+            output_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=4), encoding="utf-8")
+
             preview_path = camera_output_dir / f"wizard_preview_{cam_name}.png"
             generate_preview_image(active, self._tag_grids, self._image_path, preview_path)
 

@@ -18,7 +18,7 @@ import hashlib
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, TextIO, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, TextIO, Tuple
 
 import cv2
 import numpy as np
@@ -5480,6 +5480,7 @@ class DetectionResult:
     roi_used: Optional[Tuple[int, int, int, int]] = None
     detector: Optional[str] = None
     error_message: Optional[str] = None
+    match_score: Optional[float] = None
 
 
 @dataclass
@@ -5979,6 +5980,8 @@ class CameraCalibrator:
 
         self.custom_templates = self._load_custom_templates(self.boards)
         self.real_detections: Optional[Dict[str, DetectionResult]] = None
+        self._sim_templates_generated: bool = False
+        self._sim_sourced_board_ids: Set[str] = set()
 
     def _materialize_custom_maker_templates(self) -> None:
         template_dir = _bootstrap_partial_template_dir(self.real_image_path, self.camera_name)
@@ -6427,8 +6430,10 @@ class CameraCalibrator:
 
     @staticmethod
     def _preprocess_template_match_image(
-        gray_image: np.ndarray, board: BoardProfile
+        gray_image: np.ndarray, board: BoardProfile, *, is_sim_sourced: bool = False
     ) -> np.ndarray:
+        if is_sim_sourced:
+            return gray_image
         if board.template_binary_threshold > 0:
             _, processed = cv2.threshold(
                 gray_image,
@@ -9473,9 +9478,11 @@ class CameraCalibrator:
         matched_template_shape: Tuple[int, int] = (int(template_gray.shape[0]), int(template_gray.shape[1]))
         offset = (0, 0)
 
+        sim_sourced = board.board_id in self._sim_sourced_board_ids
+
         for padding in roi_attempts:
             roi_img, current_offset = self._extract_roi(eval_image, board.roi, padding=padding)
-            search_image = self._preprocess_template_match_image(roi_img, board)
+            search_image = self._preprocess_template_match_image(roi_img, board, is_sim_sourced=sim_sourced)
             for variant_gray, variant_crop in template_variants:
                 if (
                     roi_img.shape[0] < variant_gray.shape[0]
@@ -9483,7 +9490,7 @@ class CameraCalibrator:
                 ):
                     continue
 
-                template_image = self._preprocess_template_match_image(variant_gray, board)
+                template_image = self._preprocess_template_match_image(variant_gray, board, is_sim_sourced=sim_sourced)
                 response = cv2.matchTemplate(search_image, template_image, cv2.TM_CCOEFF_NORMED)
                 best_candidate = self._template_match_best_local_candidate(
                     board,
@@ -9527,6 +9534,7 @@ class CameraCalibrator:
                 roi_used=board.roi,
                 detector="template_match",
                 error_message=best_failure_message,
+                match_score=best_failure_value,
             )
 
         template_h, template_w = matched_template_shape
@@ -9961,6 +9969,9 @@ class CameraCalibrator:
             )
 
         if not sim_detection.success:
+            penalty = board.fail_penalty
+            if board.custom_detector == "template_match" and sim_detection.match_score is not None:
+                penalty = board.fail_penalty * (1.0 - max(0.0, float(sim_detection.match_score)))
             return BoardScoreDetail(
                 board_id=board.board_id,
                 board_type=board.board_type,
@@ -9968,7 +9979,7 @@ class CameraCalibrator:
                 compared=True,
                 reference_visible=real_visible,
                 sim_visible=False,
-                total_score=board.fail_penalty,
+                total_score=penalty,
                 rmse=board.fail_penalty,
                 mean_error=board.fail_penalty,
                 max_error=board.fail_penalty,
@@ -10798,6 +10809,35 @@ class CameraCalibrator:
         sim_prepared = self._prepare_eval_image(sim_img)
         sim_score_img = self._build_sim_eval_image(sim_img)
         t_prepare = time.perf_counter() - t0 - t_capture
+
+        if not self._sim_templates_generated:
+            self._sim_templates_generated = True
+            for board in self.boards:
+                if board.board_type != "custom_maker" or board.custom_detector != "template_match" or board.roi is None:
+                    continue
+                rx, ry, rw, rh = board.roi
+                if ry + rh > sim_prepared.shape[0] or rx + rw > sim_prepared.shape[1]:
+                    continue
+                roi_crop = sim_prepared[ry:ry+rh, rx:rx+rw].copy()
+                if roi_crop.size == 0:
+                    continue
+                tpl_info = self.custom_templates.get(board.board_id)
+                if tpl_info is not None:
+                    new_info = dict(tpl_info)
+                    new_info["template"] = roi_crop
+                    new_info["match_template"] = None
+                    new_info["match_crop"] = None
+                    self.custom_templates[board.board_id] = new_info
+                else:
+                    self.custom_templates[board.board_id] = {
+                        "template": roi_crop,
+                        "match_template": None,
+                        "match_crop": None,
+                    }
+                self._sim_sourced_board_ids.add(board.board_id)
+            if self._sim_sourced_board_ids:
+                print(f"[sim-template] Generated simulation-style templates for {len(self._sim_sourced_board_ids)} board(s): {sorted(self._sim_sourced_board_ids)}")
+
         board_scores: List[BoardScoreDetail] = []
         t_detect_start = time.perf_counter()
         for board in self.boards:
@@ -11001,7 +11041,10 @@ class CameraCalibrator:
             board = board_map.get(score.board_id)
             if board is None:
                 continue
-            fail_threshold = max(1.0, float(board.fail_penalty) * 0.95)
+            if board.custom_detector == "template_match":
+                fail_threshold = float(board.fail_penalty) * 0.999
+            else:
+                fail_threshold = max(1.0, float(board.fail_penalty) * 0.95)
             if score.success or float(score.total_score) < fail_threshold:
                 continue
             failed_reason = score.failed_reason or "fail_penalty_reached"

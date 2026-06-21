@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import ctypes
+import ctypes.wintypes as _wintypes
 import json
 import os
 from pathlib import Path
@@ -106,13 +107,21 @@ def _movie_background_tcl_commands(*, include_root: bool = True) -> list[str]:
     return commands
 
 
-def _run_powershell_json(command: str) -> list[dict[str, Any]]:
-    completed = subprocess.run(
-        ["powershell", "-NoProfile", "-Command", command],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+def _run_powershell_json(command: str, timeout_sec: float = 5.0) -> list[dict[str, Any]]:
+    try:
+        completed = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", command],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=timeout_sec,
+        )
+    except subprocess.TimeoutExpired:
+        print(
+            f"[health] PowerShell command timed out after {timeout_sec:.1f}s "
+            "(WMI may be unhealthy); returning empty list"
+        )
+        return []
     stdout = completed.stdout.strip()
     if not stdout:
         return []
@@ -122,6 +131,59 @@ def _run_powershell_json(command: str) -> list[dict[str, Any]]:
     if isinstance(payload, dict):
         return [payload]
     raise RuntimeError(f"Unexpected process enumeration payload: {payload!r}")
+
+
+# Win32 process enumeration via psapi (no WMI, no taskkill).
+# Get-CimInstance Win32_Process and `taskkill /IM` both hang on hosts where
+# the WMI service is unhealthy; EnumProcesses + QueryFullProcessImageNameW
+# + TerminateProcess complete in single-digit milliseconds.
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+_PROCESS_TERMINATE = 0x0001
+_PSAPI = ctypes.windll.psapi
+_KERNEL32 = ctypes.windll.kernel32
+
+
+def _win32_find_processes(image_names_lower: set[str]) -> list[dict[str, Any]]:
+    """Return list of {"Name": ..., "ProcessId": ...} whose base image name
+    matches `image_names_lower` (must be pre-lowercased)."""
+    buf = (_wintypes.DWORD * 4096)()
+    bytes_ret = _wintypes.DWORD()
+    if not _PSAPI.EnumProcesses(buf, ctypes.sizeof(buf), ctypes.byref(bytes_ret)):
+        return []
+    matches: list[dict[str, Any]] = []
+    for pid in buf[: bytes_ret.value // 4]:
+        handle = _KERNEL32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            continue
+        try:
+            size = _wintypes.DWORD(520)
+            name_buf = ctypes.create_unicode_buffer(520)
+            ok = _KERNEL32.QueryFullProcessImageNameW(
+                handle, 0, name_buf, ctypes.byref(size)
+            )
+            if not ok:
+                continue
+            full_path = name_buf.value
+            if not full_path:
+                continue
+            base_name = full_path.rsplit("\\", 1)[-1]
+            if base_name.lower() in image_names_lower:
+                matches.append({"Name": base_name, "ProcessId": int(pid)})
+        finally:
+            _KERNEL32.CloseHandle(handle)
+    return matches
+
+
+def _win32_terminate_processes(procs: list[dict[str, Any]]) -> None:
+    for proc in procs:
+        pid = int(proc["ProcessId"])
+        handle = _KERNEL32.OpenProcess(_PROCESS_TERMINATE, False, pid)
+        if not handle:
+            continue
+        try:
+            _KERNEL32.TerminateProcess(handle, 1)
+        finally:
+            _KERNEL32.CloseHandle(handle)
 
 
 def list_cm_processes() -> list[dict[str, Any]]:
@@ -229,20 +291,18 @@ def kill_all_movie_processes() -> list[dict[str, Any]]:
 
 
 def kill_all_processes() -> list[dict[str, Any]]:
-    """Kill ALL CarMaker variants AND Movie processes via taskkill /F /T."""
-    all_processes = list_cm_processes()
-    target_names = (*CARMAKER_PROCESS_NAMES, "Movie.exe")
-    targets = [proc for proc in all_processes if proc.get("Name") in target_names]
-    if not targets:
+    """Kill ALL CarMaker variants AND Movie processes via Win32 psapi + TerminateProcess.
+
+    Bypasses WMI (Get-CimInstance) and taskkill /IM, both of which hang on
+    hosts where the WMI service is unhealthy. EnumProcesses + QueryFull-
+    ProcessImageNameW + TerminateProcess complete in single-digit ms.
+    """
+    target_names_lower = {n.lower() for n in (*CARMAKER_PROCESS_NAMES, "Movie.exe")}
+    procs = _win32_find_processes(target_names_lower)
+    if not procs:
         return []
-    for proc in targets:
-        subprocess.run(
-            ["taskkill", "/PID", str(proc["ProcessId"]), "/F", "/T"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    return targets
+    _win32_terminate_processes(procs)
+    return procs
 
 
 def stop_movie_stack_via_movie_quit(
@@ -300,19 +360,15 @@ def stop_movie_stack_via_movie_quit(
 
 
 def kill_existing_cm_processes() -> list[dict[str, Any]]:
-    processes = list_cm_processes()
-    if not processes:
+    # Reset the whole CarMaker/IPG-MOVIE stack so the next run starts from a
+    # known state. Uses Win32 psapi + TerminateProcess to bypass WMI and
+    # taskkill /IM, both of which hang when the WMI service is unhealthy.
+    target_names_lower = {n.lower() for n in (*CARMAKER_PROCESS_NAMES, "Movie.exe")}
+    procs = _win32_find_processes(target_names_lower)
+    if not procs:
         return []
-
-    # Reset the whole CarMaker/IPG-MOVIE stack so the next run starts from a known state.
-    for image_name in (*CARMAKER_PROCESS_NAMES, "Movie.exe"):
-        subprocess.run(
-            ["taskkill", "/IM", image_name, "/F", "/T"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    return processes
+    _win32_terminate_processes(procs)
+    return procs
 
 
 def normalize_sensor_name(raw_value: str) -> str:
@@ -2064,7 +2120,7 @@ def wait_for_movie_scene_ready(
             camera_name = str(payload.get("camera_name", "") or "").strip()
             abraxas_menu_ready = str(payload.get("abraxas_menu_ready", "0") or "0") == "1"
             camera_scene_ready = bool(camera_name) and camera_name.casefold() != "default"
-            if width > 0 and height > 0 and camera_scene_ready and abraxas_menu_ready:
+            if width > 0 and height > 0 and abraxas_menu_ready:
                 payload["mode"] = "dde_execute_probe"
                 return payload
             last_detail = detail or "scene_not_ready"

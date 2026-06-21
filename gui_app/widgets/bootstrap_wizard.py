@@ -1152,6 +1152,19 @@ class BootstrapWizardDialog(QDialog):
         # (e.g. from "Default" button or mapping auto-fill which use the full path)
         if Path(output_dir).name == f"calibtool_{cam_name}":
             camera_output_dir = Path(output_dir)
+        # Block if the resolved path still contains redundant nesting
+        resolved_parts = camera_output_dir.resolve().parts
+        nested_name = f"calibtool_{cam_name}"
+        for i in range(len(resolved_parts) - 1):
+            if resolved_parts[i] == nested_name and resolved_parts[i + 1] == nested_name:
+                QMessageBox.critical(
+                    self, "Invalid Output Path",
+                    f"Generated path contains redundant nesting:\n"
+                    f"{camera_output_dir}\n\n"
+                    f"The directory '{nested_name}' appears twice in a row.\n"
+                    f"Please choose a different output directory.",
+                )
+                return
 
         # Warn if mapping already points to a different location
         project_dir = self._project_dir_edit.text().strip()

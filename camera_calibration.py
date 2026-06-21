@@ -8582,15 +8582,13 @@ class CameraCalibrator:
 
         transform = self._get_eval_transform(sim_gray.shape[:2])
         sim_prepared = self._prepare_eval_image(sim_gray)
-        sim_score_img = self._build_sim_eval_image(sim_gray)
         palette = self._get_annotation_palette()
         board_scores: List[BoardScoreDetail] = []
         occupied_label_boxes: List[Tuple[Tuple[int, int], Tuple[int, int]]] = []
 
         for index, board in enumerate(self.boards):
             color = palette[index % len(palette)]
-            detection_img = sim_prepared if _is_custom_marker_board_type(board.board_type) else sim_score_img
-            sim_detection = self._detect_board(detection_img, board)
+            sim_detection = self._detect_board(sim_prepared, board)
             real_detection = self.real_detections[board.board_id]
             score = self._score_board(board, real_detection, sim_detection, sim_prepared)
             board_scores.append(score)
@@ -8920,30 +8918,6 @@ class CameraCalibrator:
             "Final values:",
             _format_scalar_value_map(dict(summary["final_values"])),
         )
-
-    def _build_sim_eval_image(self, captured_gray: np.ndarray) -> np.ndarray:
-        eval_image = self._prepare_eval_image(captured_gray)
-        if self.comparison_mode == "direct":
-            return eval_image
-
-        residual = cv2.absdiff(eval_image, self.real_img)
-        if self.overlay_residual_blur and self.overlay_residual_blur > 1:
-            blur_size = int(self.overlay_residual_blur)
-            if blur_size % 2 == 0:
-                blur_size += 1
-            residual = cv2.GaussianBlur(residual, (blur_size, blur_size), 0)
-
-        if self.overlay_residual_threshold > 0:
-            _, residual = cv2.threshold(
-                residual,
-                float(self.overlay_residual_threshold),
-                255,
-                cv2.THRESH_TOZERO,
-            )
-
-        if int(np.max(residual)) > 0:
-            residual = cv2.normalize(residual, None, 0, 255, cv2.NORM_MINMAX)
-        return residual.astype(np.uint8)
 
     @staticmethod
     def _preprocess_variants(gray: np.ndarray) -> List[np.ndarray]:
@@ -10814,7 +10788,6 @@ class CameraCalibrator:
         self._last_capture_hash = current_hash
 
         sim_prepared = self._prepare_eval_image(sim_img)
-        sim_score_img = self._build_sim_eval_image(sim_img)
         t_prepare = time.perf_counter() - t0 - t_capture
 
         if not self._sim_templates_generated:
@@ -10849,8 +10822,7 @@ class CameraCalibrator:
         t_detect_start = time.perf_counter()
         for board in self.boards:
             real_detection = self.real_detections[board.board_id]
-            detection_img = sim_prepared if _is_custom_marker_board_type(board.board_type) else sim_score_img
-            sim_detection = self._detect_board(detection_img, board)
+            sim_detection = self._detect_board(sim_prepared, board)
             board_scores.append(self._score_board(board, real_detection, sim_detection, sim_prepared))
 
         t_detect = time.perf_counter() - t_detect_start

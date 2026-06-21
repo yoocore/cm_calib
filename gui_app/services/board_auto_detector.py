@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Sequence, Tuple
+from typing import Any, List, Optional, Sequence, Tuple
 
 import cv2
 import numpy as np
@@ -23,6 +23,7 @@ class TagGrid:
     center: Tuple[float, float]
     rows: int = 0
     cols: int = 0
+    area: float = 0.0
 
 
 @dataclass
@@ -48,7 +49,7 @@ _COMMON_CHECKERBOARD_SIZES = [
 ]
 
 
-def _bbox_from_points(points: np.ndarray, padding_ratio: float = 0.15) -> Tuple[int, int, int, int]:
+def _bbox_from_points(points: np.ndarray, padding_ratio: float = 0.5) -> Tuple[int, int, int, int]:
     if points.size == 0:
         return (0, 0, 0, 0)
     pts = points.reshape(-1, 2)
@@ -85,6 +86,66 @@ def _bbox_iou(a: Tuple[int, int, int, int], b: Tuple[int, int, int, int]) -> flo
     b_area = max(0, bx2 - bx1) * max(0, by2 - by1)
     union = a_area + b_area - inter_area
     return inter_area / union if union > 0 else 0.0
+
+
+def _resolve_roi_overlaps_on(
+    items: List[Any],
+    iou_threshold: float = 0.01,
+    max_iters: int = 16,
+) -> List[Any]:
+    """Shrink overlapping ROIs toward their centers, preserving aspect ratio.
+
+    With 50% padding, adjacent boards can produce overlapping wizard ROIs.
+    For each overlapping pair (IoU > `iou_threshold`), scale both bboxes
+    down around their shared midpoint until they no longer cross.
+    Works on any object exposing `.bbox` (x, y, w, h) and `.area`.
+    """
+    n = len(items)
+    if n < 2:
+        return items
+    for _ in range(max_iters):
+        any_overlap = False
+        for i in range(n):
+            for j in range(i + 1, n):
+                if _bbox_iou(items[i].bbox, items[j].bbox) <= iou_threshold:
+                    continue
+                any_overlap = True
+                xi, yi, wi, hi = items[i].bbox
+                xj, yj, wj, hj = items[j].bbox
+                cxi, cyi = xi + wi / 2.0, yi + hi / 2.0
+                cxj, cyj = xj + wj / 2.0, yj + hj / 2.0
+                dx = abs(cxj - cxi)
+                dy = abs(cyj - cyi)
+                sx = 0.9 * (dx / (wi / 2.0 + wj / 2.0)) if (wi + wj) > 0 else 1.0
+                sy = 0.9 * (dy / (hi / 2.0 + hj / 2.0)) if (hi + hj) > 0 else 1.0
+                s = max(0.4, min(0.95, min(sx, sy)))
+                new_wi, new_hi = max(24, int(round(wi * s))), max(24, int(round(hi * s)))
+                new_wj, new_hj = max(24, int(round(wj * s))), max(24, int(round(hj * s)))
+                items[i].bbox = (
+                    int(round(cxi - new_wi / 2.0)),
+                    int(round(cyi - new_hi / 2.0)),
+                    new_wi,
+                    new_hi,
+                )
+                items[j].bbox = (
+                    int(round(cxj - new_wj / 2.0)),
+                    int(round(cyj - new_hj / 2.0)),
+                    new_wj,
+                    new_hj,
+                )
+                items[i].area = _area_from_bbox(items[i].bbox)
+                items[j].area = _area_from_bbox(items[j].bbox)
+        if not any_overlap:
+            break
+    return items
+
+
+def _resolve_roi_overlaps(
+    boards: List[DetectedBoard],
+    iou_threshold: float = 0.01,
+    max_iters: int = 16,
+) -> List[DetectedBoard]:
+    return _resolve_roi_overlaps_on(boards, iou_threshold, max_iters)
 
 
 def _deduplicate_boards(
@@ -137,6 +198,7 @@ class BoardAutoDetector:
                 )
             )
 
+        _resolve_roi_overlaps(all_boards)
         return _deduplicate_boards(all_boards)
 
     def detect_checkerboard_instances(
@@ -190,6 +252,7 @@ class BoardAutoDetector:
                 working = gray.copy()
                 working[search_mask == 0] = 0
 
+        _resolve_roi_overlaps(all_boards)
         return _deduplicate_boards(all_boards)
 
     def detect_aruco_tags(
@@ -357,6 +420,7 @@ class BoardAutoDetector:
                     area=_area_from_bbox(bbox),
                 )
             )
+        _resolve_roi_overlaps(all_boards)
         return _deduplicate_boards(all_boards)
 
     def detect_aruco_grids(
@@ -413,6 +477,7 @@ class BoardAutoDetector:
                     area=_area_from_bbox(bbox),
                 )
             )
+        _resolve_roi_overlaps(all_boards)
         return _deduplicate_boards(all_boards)
 
 
@@ -525,8 +590,10 @@ def group_tags_into_grids(
             center=center,
             rows=rows,
             cols=cols,
+            area=_area_from_bbox(bbox),
         ))
 
+    _resolve_roi_overlaps_on(grids)
     return grids
 
 

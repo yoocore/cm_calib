@@ -894,6 +894,7 @@ class BootstrapWizardDialog(QDialog):
                     for idx, grid in enumerate(grids):
                         bbox = grid.bbox
                         corners = np.concatenate([t.corners for t in grid.tags], axis=0)
+                        corners_bbox = grid.corners_bbox
                         self._boards.append(DetectedBoard(
                             board_type="aruco",
                             bbox=bbox,
@@ -902,6 +903,7 @@ class BootstrapWizardDialog(QDialog):
                             tags=grid.tags,
                             center=grid.center,
                             area=float(bbox[2] * bbox[3]),
+                            corners_bbox=corners_bbox,
                         ))
 
                 elif board_type == "apriltag":
@@ -915,6 +917,7 @@ class BootstrapWizardDialog(QDialog):
                     for idx, grid in enumerate(grids):
                         bbox = grid.bbox
                         corners = np.concatenate([t.corners for t in grid.tags], axis=0)
+                        corners_bbox = grid.corners_bbox
                         self._boards.append(DetectedBoard(
                             board_type="apriltag",
                             bbox=bbox,
@@ -923,6 +926,7 @@ class BootstrapWizardDialog(QDialog):
                             tags=grid.tags,
                             center=grid.center,
                             area=float(bbox[2] * bbox[3]),
+                            corners_bbox=corners_bbox,
                         ))
 
                 elif board_type == "charuco":

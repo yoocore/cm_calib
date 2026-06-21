@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any, List, Optional, Sequence, Tuple
 
@@ -24,6 +25,7 @@ class TagGrid:
     rows: int = 0
     cols: int = 0
     area: float = 0.0
+    corners_bbox: Tuple[int, int, int, int] = (0, 0, 0, 0)
 
 
 @dataclass
@@ -38,6 +40,7 @@ class DetectedBoard:
     area: float = 0.0
     weight: float = 1.0
     template_image: Optional[str] = None
+    corners_bbox: Tuple[int, int, int, int] = (0, 0, 0, 0)
 
 
 _COMMON_CHECKERBOARD_SIZES = [
@@ -67,6 +70,16 @@ def _bbox_from_points(points: np.ndarray, padding_ratio: float = 0.5) -> Tuple[i
     )
 
 
+def _corners_bbox(points: np.ndarray) -> Tuple[int, int, int, int]:
+    """Corner extent without padding — used as shrink floor."""
+    if points.size == 0:
+        return (0, 0, 0, 0)
+    pts = points.reshape(-1, 2)
+    x_min, y_min = pts.min(axis=0)
+    x_max, y_max = pts.max(axis=0)
+    return (int(x_min), int(y_min), int(x_max - x_min), int(y_max - y_min))
+
+
 def _center_from_bbox(bbox: Tuple[int, int, int, int]) -> Tuple[float, float]:
     x, y, w, h = bbox
     return (x + w / 2.0, y + h / 2.0)
@@ -93,12 +106,17 @@ def _resolve_roi_overlaps_on(
     iou_threshold: float = 0.01,
     max_iters: int = 16,
 ) -> List[Any]:
-    """Shrink overlapping ROIs toward their centers, preserving aspect ratio.
+    """Resolve wizard-ROI overlaps without cutting detected corners.
 
-    With 50% padding, adjacent boards can produce overlapping wizard ROIs.
-    For each overlapping pair (IoU > `iou_threshold`), scale both bboxes
-    down around their shared midpoint until they no longer cross.
-    Works on any object exposing `.bbox` (x, y, w, h) and `.area`.
+    Strategy per overlapping pair:
+      1. SHIFT: move both ROIs apart along the axis with the smaller gap,
+         preserving full ROI size. All corners stay inside.
+      2. SHRINK (fallback): if shift can't separate (e.g. centers coincide
+         or shift pushes ROIs negative), scale both ROIs down but clamp
+         each to its `.corners_bbox` so the corner extent is never clipped.
+
+    Works on any object exposing `.bbox` (x, y, w, h), `.area`, and
+    (optionally) `.corners_bbox`.
     """
     n = len(items)
     if n < 2:
@@ -112,15 +130,59 @@ def _resolve_roi_overlaps_on(
                 any_overlap = True
                 xi, yi, wi, hi = items[i].bbox
                 xj, yj, wj, hj = items[j].bbox
+
+                # --- Shift: pick the axis with the smaller center gap ---
                 cxi, cyi = xi + wi / 2.0, yi + hi / 2.0
                 cxj, cyj = xj + wj / 2.0, yj + hj / 2.0
-                dx = abs(cxj - cxi)
-                dy = abs(cyj - cyi)
-                sx = 0.9 * (dx / (wi / 2.0 + wj / 2.0)) if (wi + wj) > 0 else 1.0
-                sy = 0.9 * (dy / (hi / 2.0 + hj / 2.0)) if (hi + hj) > 0 else 1.0
+                dx = cxj - cxi  # signed
+                dy = cyj - cyi
+                half_w = (wi + wj) / 2.0
+                half_h = (hi + hj) / 2.0
+                x_gap = abs(dx) - half_w
+                y_gap = abs(dy) - half_h
+
+                shifted = False
+                if x_gap >= y_gap and abs(dx) > 1e-6:
+                    target = half_w + 2.0
+                    shift = target - abs(dx)
+                    if shift > 0:
+                        sx_i = -math.copysign(shift / 2.0, dx)
+                        sx_j = +math.copysign(shift / 2.0, dx)
+                        nx_i = max(0, int(round(xi + sx_i)))
+                        nx_j = max(0, int(round(xj + sx_j)))
+                        items[i].bbox = (nx_i, yi, wi, hi)
+                        items[j].bbox = (nx_j, yj, wj, hj)
+                        shifted = True
+                elif abs(dy) > 1e-6:
+                    target = half_h + 2.0
+                    shift = target - abs(dy)
+                    if shift > 0:
+                        sy_i = -math.copysign(shift / 2.0, dy)
+                        sy_j = +math.copysign(shift / 2.0, dy)
+                        ny_i = max(0, int(round(yi + sy_i)))
+                        ny_j = max(0, int(round(yj + sy_j)))
+                        items[i].bbox = (xi, ny_i, wi, hi)
+                        items[j].bbox = (xj, ny_j, wj, hj)
+                        shifted = True
+
+                if shifted:
+                    items[i].center = _center_from_bbox(items[i].bbox)
+                    items[j].center = _center_from_bbox(items[j].bbox)
+                    continue
+
+                # --- Shrink fallback: clamp at corners_bbox ---
+                cb_i = getattr(items[i], "corners_bbox", None) or items[i].bbox
+                cb_j = getattr(items[j], "corners_bbox", None) or items[j].bbox
+                min_wi, min_hi = max(24, cb_i[2]), max(24, cb_i[3])
+                min_wj, min_hj = max(24, cb_j[2]), max(24, cb_j[3])
+
+                sx = 0.9 * (abs(dx) / half_w) if half_w > 0 else 1.0
+                sy = 0.9 * (abs(dy) / half_h) if half_h > 0 else 1.0
                 s = max(0.4, min(0.95, min(sx, sy)))
-                new_wi, new_hi = max(24, int(round(wi * s))), max(24, int(round(hi * s)))
-                new_wj, new_hj = max(24, int(round(wj * s))), max(24, int(round(hj * s)))
+                new_wi = max(min_wi, int(round(wi * s)))
+                new_hi = max(min_hi, int(round(hi * s)))
+                new_wj = max(min_wj, int(round(wj * s)))
+                new_hj = max(min_hj, int(round(hj * s)))
                 items[i].bbox = (
                     int(round(cxi - new_wi / 2.0)),
                     int(round(cyi - new_hi / 2.0)),
@@ -195,6 +257,7 @@ class BoardAutoDetector:
                     board_size=(cols, rows),
                     center=_center_from_bbox(bbox),
                     area=_area_from_bbox(bbox),
+                    corners_bbox=_corners_bbox(corners),
                 )
             )
 
@@ -245,6 +308,7 @@ class BoardAutoDetector:
                         board_size=(cols, rows),
                         center=_center_from_bbox(bbox),
                         area=_area_from_bbox(bbox),
+                        corners_bbox=_corners_bbox(pts),
                     )
                 )
                 x, y, w, h = bbox
@@ -418,6 +482,7 @@ class BoardAutoDetector:
                     board_size=(cols, rows),
                     center=_center_from_bbox(bbox),
                     area=_area_from_bbox(bbox),
+                    corners_bbox=_corners_bbox(pts),
                 )
             )
         _resolve_roi_overlaps(all_boards)
@@ -475,6 +540,7 @@ class BoardAutoDetector:
                     board_size=(cols, rows),
                     center=_center_from_bbox(bbox),
                     area=_area_from_bbox(bbox),
+                    corners_bbox=_corners_bbox(pts),
                 )
             )
         _resolve_roi_overlaps(all_boards)
@@ -591,6 +657,7 @@ def group_tags_into_grids(
             rows=rows,
             cols=cols,
             area=_area_from_bbox(bbox),
+            corners_bbox=_corners_bbox(all_corners),
         ))
 
     _resolve_roi_overlaps_on(grids)

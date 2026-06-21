@@ -4082,6 +4082,7 @@ def _next_escape_stagnation_rounds(
 def _build_multi_start_run_configs(
     cfg: dict,
     base_output_dir: Path,
+    camera_name: str,
     start_count: int,
     jitter_steps: float,
     seed: int,
@@ -4096,7 +4097,7 @@ def _build_multi_start_run_configs(
         raise ValueError("parameters must be a non-empty object for multi-start mode")
 
     root_output_dir = output_root_dir or _build_isolated_output_dir(
-        "multistart", camera_parent=base_output_dir.name
+        "multistart", camera_parent=camera_name
     )
     rng = random.Random(seed)
     run_cfgs: List[dict] = []
@@ -4229,6 +4230,7 @@ def _run_multi_start_campaign(
     config_path: Path,
     cfg: dict,
     base_output_dir: Path,
+    camera_name: str,
     start_count: int,
     jitter_steps: float,
     seed: int,
@@ -4242,6 +4244,7 @@ def _run_multi_start_campaign(
     root_output_dir, run_cfgs = _build_multi_start_run_configs(
         cfg,
         base_output_dir=base_output_dir,
+        camera_name=camera_name,
         start_count=start_count,
         jitter_steps=jitter_steps,
         seed=seed,
@@ -4569,6 +4572,7 @@ def _run_explore_then_refine_campaign(
     config_path: Path,
     cfg: dict,
     base_output_dir: Path,
+    camera_name: str,
     start_count: int,
     jitter_steps: float,
     seed: int,
@@ -4588,7 +4592,7 @@ def _run_explore_then_refine_campaign(
         raise ValueError("explore-then-refine mode requires positive explore iterations")
 
     campaign_root = output_root_dir or _build_isolated_output_dir(
-        "campaign", camera_parent=base_output_dir.name
+        "campaign", camera_parent=camera_name
     )
     campaign_root.mkdir(parents=True, exist_ok=True)
 
@@ -4606,6 +4610,7 @@ def _run_explore_then_refine_campaign(
         config_path=config_path,
         cfg=cfg,
         base_output_dir=base_output_dir,
+        camera_name=camera_name,
         start_count=start_count,
         jitter_steps=jitter_steps,
         seed=seed,
@@ -4873,7 +4878,7 @@ def _run_single_optimize(
         run_cfg["output_dir"] = str(output_dir_override)
     else:
         run_cfg["output_dir"] = str(
-            _build_isolated_output_dir("run", camera_parent=base_output_dir.name)
+            _build_isolated_output_dir("run", camera_parent=camera_name)
         )
 
     marker_payload = {
@@ -4955,7 +4960,7 @@ def _run_plain_optimize_rounds(
     if round_count <= 0:
         raise ValueError("round_count must be positive")
 
-    rounds_root = _build_isolated_output_dir("rounds", camera_parent=base_output_dir.name)
+    rounds_root = _build_isolated_output_dir("rounds", camera_parent=camera_name)
     active_cfg = copy.deepcopy(cfg)
     target_score = float(cfg.get("target_score", 5.0))
     round_seed_policy = _resolve_round_seed_policy(cfg)
@@ -5096,7 +5101,7 @@ def _run_multi_start_rounds(
     _run_max_iters = max_iters_override or int(cfg.get("max_iters", 0))
     overall_total_iters = round_count * start_count * _run_max_iters
 
-    rounds_root = _build_isolated_output_dir("rounds", camera_parent=base_output_dir.name)
+    rounds_root = _build_isolated_output_dir("rounds", camera_parent=camera_name)
     active_cfg = copy.deepcopy(cfg)
     target_score = float(cfg.get("target_score", 5.0))
     round_seed_policy = _resolve_round_seed_policy(cfg)
@@ -5142,6 +5147,7 @@ def _run_multi_start_rounds(
             config_path=config_path,
             cfg=active_cfg,
             base_output_dir=base_output_dir,
+            camera_name=camera_name,
             start_count=start_count,
             jitter_steps=jitter_steps,
             seed=round_seed,
@@ -5249,7 +5255,7 @@ def _run_explore_then_refine_rounds(
 
     _refine_max_iters = refine_max_iters or int(cfg.get("max_iters", 0))
     overall_total_iters = round_count * (start_count * explore_max_iters + _refine_max_iters)
-    rounds_root = _build_isolated_output_dir("rounds", camera_parent=base_output_dir.name)
+    rounds_root = _build_isolated_output_dir("rounds", camera_parent=camera_name)
     active_cfg = copy.deepcopy(cfg)
     target_score = float(cfg.get("target_score", 5.0))
     round_seed_policy = _resolve_round_seed_policy(cfg)
@@ -5299,6 +5305,7 @@ def _run_explore_then_refine_rounds(
                 config_path=config_path,
                 cfg=active_cfg,
                 base_output_dir=base_output_dir,
+                camera_name=camera_name,
                 start_count=start_count,
                 jitter_steps=jitter_steps,
                 seed=round_seed,
@@ -12502,7 +12509,7 @@ def main() -> None:
         marker_path = _marker_path_for_output_dir(base_output_dir)
         if args.resume_from_result:
             resume_result_path = _read_latest_result_path(marker_path, base_output_dir)
-        cfg["output_dir"] = str(_build_isolated_output_dir("run", camera_parent=base_output_dir.name))
+        cfg["output_dir"] = str(_build_isolated_output_dir("run", camera_parent=camera_name))
         marker_payload = {
             "started_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "config": str(config_path),

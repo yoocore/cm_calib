@@ -6,9 +6,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from src.calibration.camera_calibration import (
-    CameraCalibrator,
-)
+_ROOT = Path(__file__).resolve().parents[2]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
 from src.calibration.orchestration import (
     _acquire_runtime_session_lock,
     _build_isolated_output_dir,
@@ -530,6 +531,7 @@ def main() -> None:
         marker_payload["live_log"] = str(live_log_path)
         _write_run_marker(marker_path, marker_payload)
 
+    from src.calibration.camera_calibration import CameraCalibrator
     calib = CameraCalibrator(cfg, config_path=config_path)
     calib.live_log_path = live_log_path
     setattr(calib, "print_progress_json", bool(args.print_progress_json))

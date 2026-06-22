@@ -8173,6 +8173,36 @@ class CameraCalibrator:
             raise ValueError("roi is outside image bounds")
         return image[y0:y1, x0:x1], (x0, y0)
 
+    def _detection_within_reference_roi(
+        self,
+        points: np.ndarray,
+        board: BoardProfile,
+        padding: int,
+    ) -> bool:
+        """Reject detections that lock onto a false pattern far from the
+        reference ROI (typical when ROI-padding expansion grows the search
+        region to 200+ px and the sim render has a look-alike pattern
+        elsewhere).
+
+        Returns True (accept) if:
+          - board has no ROI (whole-image detection, nothing to validate),
+          - no padding was applied (ROI itself is the search region), or
+          - detection center is within max(padding, 0.75 * ref_span) of
+            the reference ROI center.
+        """
+        if board.roi is None or padding <= 0:
+            return True
+        if points.size == 0:
+            return True
+        pts = points.reshape(-1, 2)
+        det_cx = float((pts[:, 0].min() + pts[:, 0].max()) / 2.0)
+        det_cy = float((pts[:, 1].min() + pts[:, 1].max()) / 2.0)
+        rx, ry, rw, rh = board.roi
+        ref_cx = rx + rw / 2.0
+        ref_cy = ry + rh / 2.0
+        tolerance = max(float(padding), 0.75 * max(float(rw), float(rh)))
+        return abs(det_cx - ref_cx) <= tolerance and abs(det_cy - ref_cy) <= tolerance
+
     def _detect_roi_padding_attempts(self, board: BoardProfile) -> List[int]:
         attempts = [0]
         configured_padding = max(0, int(board.detect_roi_padding))
@@ -9000,6 +9030,13 @@ class CameraCalibrator:
                     corners = cv2.cornerSubPix(candidate, corners, (11, 11), (-1, -1), criteria)
                     break
             if found and corners is not None:
+                eval_corners = corners.reshape(-1, 2).astype(np.float32)
+                eval_corners[:, 0] += float(offset[0])
+                eval_corners[:, 1] += float(offset[1])
+                if not self._detection_within_reference_roi(eval_corners, board, padding):
+                    found = False
+                    corners = None
+                    continue
                 break
 
         if not found or corners is None:
@@ -9038,6 +9075,8 @@ class CameraCalibrator:
             marker_corners, marker_ids, _ = detector.detectMarkers(roi_img)
             ordered_points = self._flatten_aruco_marker_points(marker_corners, marker_ids, offset)
             if ordered_points.shape[0] == 0:
+                continue
+            if not self._detection_within_reference_roi(ordered_points, board, padding):
                 continue
             return DetectionResult(
                 board_id=board.board_id,
@@ -9122,6 +9161,8 @@ class CameraCalibrator:
                 ordered_points = self._flatten_apriltag_detections(detections, offset)
                 if ordered_points.shape[0] == 0:
                     continue
+                if not self._detection_within_reference_roi(ordered_points, board, padding):
+                    continue
                 return DetectionResult(
                     board_id=board.board_id,
                     success=True,
@@ -9172,6 +9213,8 @@ class CameraCalibrator:
             pts = centers.reshape(-1, 2).astype(np.float32)
             pts[:, 0] += float(offset[0])
             pts[:, 1] += float(offset[1])
+            if not self._detection_within_reference_roi(pts, board, padding):
+                continue
             return DetectionResult(
                 board_id=board.board_id,
                 success=True,
@@ -9232,6 +9275,8 @@ class CameraCalibrator:
             pts = np.asarray(img_pts, dtype=np.float32).reshape(-1, 2)
             pts[:, 0] += float(offset[0])
             pts[:, 1] += float(offset[1])
+            if not self._detection_within_reference_roi(pts, board, padding):
+                continue
             return DetectionResult(
                 board_id=board.board_id,
                 success=True,
@@ -9296,6 +9341,8 @@ class CameraCalibrator:
             ordered_points = ordered_points[np.argsort(flat_ids)]
             ordered_points[:, 0] += float(offset[0])
             ordered_points[:, 1] += float(offset[1])
+            if not self._detection_within_reference_roi(ordered_points, board, padding):
+                continue
             return DetectionResult(
                 board_id=board.board_id,
                 success=True,
@@ -11996,18 +12043,36 @@ class CameraCalibrator:
         )
         return result
 
+    def _prune_intermediate_images(self, final_best_img: Path) -> None:
+        """Delete intermediate iter_*.png, keep only initial and final best."""
+        keep_stems = {"initial", "initial_score", "initial_overlay"}
+        best_stem = final_best_img.stem
+        keep_stems.add(best_stem)
+        keep_stems.add(f"{best_stem}_score")
+        keep_stems.add(f"{best_stem}_overlay")
+        for img_path in list(self.output_dir.glob("iter_*.png")):
+            if img_path.stem not in keep_stems:
+                try:
+                    img_path.unlink()
+                except OSError:
+                    pass
+
     def optimize(self) -> dict:
         if self.optimizer_mode == "bayesian":
-            return self._optimize_bayesian()
+            result = self._optimize_bayesian()
         elif self.optimizer_mode == "auto":
             if _OPTUNA_AVAILABLE:
                 print("Using Bayesian optimizer (optuna available)")
-                return self._optimize_bayesian()
+                result = self._optimize_bayesian()
             else:
                 print("Using coordinate_descent optimizer (optuna not available)")
-                return self._optimize_coordinate_descent()
+                result = self._optimize_coordinate_descent()
         else:
-            return self._optimize_coordinate_descent()
+            result = self._optimize_coordinate_descent()
+        best_img_str = result.get("best_image", "")
+        if best_img_str:
+            self._prune_intermediate_images(Path(best_img_str))
+        return result
 
 
 

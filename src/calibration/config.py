@@ -114,7 +114,7 @@ def _default_parameter_order() -> List[str]:
 
 def _default_bootstrap_config() -> dict:
     calibration_root = Path(__file__).resolve().parent
-    repo_root = Path(__file__).resolve().parents[3]
+    repo_root = Path(__file__).resolve().parents[5]
     return {
         "settings_input_mode": "script_control",
         "script_control_script_path": str((calibration_root / "script_control_apply.tcl").resolve().as_posix()),

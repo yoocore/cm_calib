@@ -193,7 +193,7 @@ class CameraCalibrator(DetectorMixin, ScoringMixin, AnnotationMixin, ScriptContr
     def __init__(self, cfg: dict, config_path: Optional[Path] = None):
         self.cfg = cfg
         self.config_path = config_path
-        self.repo_root = Path(__file__).resolve().parents[3]
+        self.repo_root = Path(__file__).resolve().parents[5]
         self.cmapi_host = str(cfg.get("cmapi_host", "localhost"))
         default_cm_install_root = Path(os.environ.get("IPGHOME", "D:/IPG")) / "carmaker" / "win64-14.1"
         self.cm_install_root = Path(str(cfg.get("cm_install_root", default_cm_install_root)))

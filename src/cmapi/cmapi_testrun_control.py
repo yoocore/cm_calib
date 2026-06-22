@@ -38,9 +38,9 @@ if not hasattr(cmapi, "InvalidConfigurationException"):
         cmapi.InvalidConfigurationException = invalid_configuration_error
 
 
-DEFAULT_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_PROJECT_ROOT = Path(__file__).resolve().parents[5]
 DEFAULT_CM_INSTALL = Path(os.environ.get("IPGHOME", "D:/IPG")) / "carmaker" / "win64-14.1"
-DEFAULT_CONFIG_DIR = Path(__file__).resolve().parents[1] / "configs"
+DEFAULT_CONFIG_DIR = Path(__file__).resolve().parents[2] / "configs"
 CARMAKER_PROCESS_NAMES = ("CarMaker.win64.exe", "HIL.exe", "CM_Office.exe")
 RUNTIME_CARMAKER_PROCESS_NAMES = ("CarMaker.win64.exe", "CM_Office.exe")
 DEFAULT_MOVIE_APPHOST = "kel"

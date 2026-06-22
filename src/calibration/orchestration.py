@@ -1481,7 +1481,7 @@ def _probe_runtime_vehicle_context() -> Optional[dict]:
         print("Skipped vehicle writeback runtime probe: vehicle path was empty")
         return None
 
-    project_root = Path(__file__).resolve().parents[3]
+    project_root = Path(__file__).resolve().parents[5]
     vehicle_path = project_root / "Data" / "Vehicle" / Path(vehicle_key.replace("\\", "/"))
     return {
         "project_root": project_root,
@@ -1501,7 +1501,7 @@ def _resolve_vehicle_writeback_context(config_path: Path, cfg: dict) -> Optional
         _VEHICLE_WRITEBACK_CONTEXT_CACHE[cache_key] = None
         return None
 
-    project_root = Path(payload.get("project_root", Path(__file__).resolve().parents[3]))
+    project_root = Path(payload.get("project_root", Path(__file__).resolve().parents[5]))
     vehicle_key = str(payload.get("vehicle", payload.get("vehicle_key", ""))).strip()
     vehicle_path: Optional[Path] = None
     testrun_name = str(payload.get("testrun", "")).strip() or None

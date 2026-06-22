@@ -206,7 +206,7 @@ def _append_optional_arg(command: list[str], name: str, value: Optional[object])
 
 
 def _build_camera_command(args: argparse.Namespace, config_path: Path) -> list[str]:
-    script_path = Path(__file__).resolve().parents[2] / "calibration" / "camera_calibration.py"
+    script_path = Path(__file__).resolve().parents[1] / "calibration" / "camera_calibration.py"
     command = build_python_subprocess_command(
         script_path,
         [

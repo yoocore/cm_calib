@@ -18,7 +18,7 @@ class PrecheckService:
         self.movie_dir = self.project_root / "Movie"
 
     def run_for_cameras(self, camera_names: list[str]) -> list[dict[str, Any]]:
-        script = self.calibration_root / "precheck_cli.py"
+        script = self.calibration_root / "src" / "health" / "precheck_cli.py"
         cmd = build_python_subprocess_command(
             script,
             ["--project-root", str(self.project_root)],

@@ -400,7 +400,8 @@ class CoordinateDescentMixin:
             result.failed_reason = str(exc)
         return result
 
-    def _optimize_coordinate_descent_impl(self) -> dict:
+    def _optimize_coordinate_descent_impl(self, max_iters: Optional[int] = None) -> dict:
+        limit = max_iters if max_iters is not None else self.max_iters
         self._ensure_live_log()
         self._historical_best_snapshot = None
         if getattr(self, 'use_gauss_newton', False):
@@ -489,7 +490,7 @@ class CoordinateDescentMixin:
         )
 
         it = 1
-        while it <= self.max_iters:
+        while it <= limit:
             improved_in_iter = False
             self._total_iteration_count += 1
             base_values = self._snapshot_values()
@@ -578,7 +579,7 @@ class CoordinateDescentMixin:
 
                         if trial_result.recovered:
                             it += 1
-                            if it > self.max_iters:
+                            if it > limit:
                                 stop_param_search = True
                                 break
                             continue
@@ -622,7 +623,7 @@ class CoordinateDescentMixin:
                             self.preferred_directions[p.name] = direction
 
                         it += 1
-                        if it > self.max_iters:
+                        if it > limit:
                             stop_param_search = True
                             break
                         if (
@@ -641,7 +642,7 @@ class CoordinateDescentMixin:
                 else:
                     candidate_moves.append(best_param_move)
 
-                if it > self.max_iters:
+                if it > limit:
                     break
 
             accepted_params_in_pass: List[str] = []
@@ -654,7 +655,7 @@ class CoordinateDescentMixin:
                     accepted_candidate_moves, key=lambda item: float(item["score"])
                 )
 
-            if candidate_moves and it <= self.max_iters:
+            if candidate_moves and it <= limit:
                 candidate_moves.sort(key=self._candidate_move_sort_key)
                 joint_values = base_values.copy()
                 joint_score = base_score
@@ -693,7 +694,7 @@ class CoordinateDescentMixin:
 
                     if trial_result.recovered:
                         it += 1
-                        if it > self.max_iters:
+                        if it > limit:
                             break
                         continue
 
@@ -714,7 +715,7 @@ class CoordinateDescentMixin:
                         self._apply_value_map({name: previous_value})
 
                     it += 1
-                    if it > self.max_iters:
+                    if it > limit:
                         break
 
                 if accepted_params_in_pass:

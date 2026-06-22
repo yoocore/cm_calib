@@ -135,10 +135,11 @@ class EvaluateMixin:
 
     def optimize(self) -> dict:
         mode = getattr(self, "optimizer_mode", "coordinate_descent")
-        if mode == "hybrid":
+        if mode == "hybrid" or (mode == "auto" and _OPTUNA_AVAILABLE):
+            print(f"Using hybrid (phase1_CD->phase2_Bayesian)" if mode == "auto" else f"Using {mode} optimizer")
             return self._optimize_hybrid()
-        if mode in ("bayesian", "auto") and _OPTUNA_AVAILABLE:
-            print(f"Using {mode} optimizer")
+        if mode == "bayesian" and _OPTUNA_AVAILABLE:
+            print("Using bayesian optimizer")
             return self._optimize_bayesian_impl()
         if mode == "auto":
             print("Optuna not available, falling back to coordinate_descent")

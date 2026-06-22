@@ -353,12 +353,12 @@ class CameraCalibrator(DetectorMixin, ScoringMixin, AnnotationMixin, ScriptContr
         self.no_signal_penalty = float(cfg.get("no_signal_penalty", 1e5))
         self.progress_flush_every = max(1, int(cfg.get("progress_flush_every", 1)))
         self.max_history_entries = max(0, int(cfg.get("max_history_entries", 500)))
-        self.optimizer_mode = str(cfg.get("optimizer_mode", "coordinate_descent")).lower()
+        self.optimizer_mode = str(cfg.get("optimizer_mode", "auto")).lower()
         if self.optimizer_mode not in {"coordinate_descent", "bayesian", "auto", "hybrid"}:
             raise ValueError(
                 "optimizer_mode must be 'coordinate_descent', 'bayesian', 'auto', or 'hybrid'"
             )
-        self.use_gauss_newton = bool(cfg.get("use_gauss_newton", False))
+        self.use_gauss_newton = bool(cfg.get("use_gauss_newton", True))
         self.strategy_adaptation = bool(cfg.get("strategy_adaptation", True))
         self.jitter_eps = float(cfg.get("jitter_eps", 0.01))
         self.jitter_decay = float(cfg.get("jitter_decay", 0.98))

@@ -1,3 +1,5 @@
+> **⚠️ OUTDATED (2026-06-23)** — This document was written before the codebase split (12,608-line single file → 17+ modular files) and optimizer upgrade (P0-P8). Implementation details may not match the current codebase. See `codebase_split_plan.md` and `optimizer_upgrade_plan.md` for accurate current structure.
+
 - 当前项目单摄像头切换的正确落点是 Vehicle infofile 的 `Sensor.xx.Active`，不是 TestRun。本轮已实现控制脚本侧规则：先由 TestRun 解析 `Vehicle`，再按传入 sensor 名或 IPG-MOVIE label `CAMERA_RSI-SENSOR Vhcl.<name>` 匹配到 `Sensor.xx.name`，将该实例 Active=1，其余置 0。
 - 运行前若需重置环境，清理范围应覆盖 `CarMaker.win64.exe` 和 `Movie.exe`，包括 GUI Movie 与 GPUSensor Movie 进程。
 - `cmapi_testrun_control.py` 的 CarMaker 单实例复用现在必须先校验运行态 projectdir：通过 DDE RunScript 在 CarMaker Tcl 中执行 `pwd` 读取当前工程目录；只有与目标 `project_root` 一致时才复用，否则视为复用校验失败。启新实例时显式传 `-projectdir <project_root>`，若允许 cleanup，则在校验失败时清空现有 CarMaker/Movie 栈并按目标工程重启。

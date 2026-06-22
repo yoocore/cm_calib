@@ -1,5 +1,7 @@
 # CameraCalibration 开发过程纪要
 
+> **⚠️ OUTDATED (2026-06-23)** — This document was written before the codebase split (12,608-line single file → 17+ modular files) and optimizer upgrade (P0-P8). Implementation details may not match the current codebase. See `codebase_split_plan.md` and `optimizer_upgrade_plan.md` for accurate current structure.
+
 ## 1. 背景与初始目标
 
 这轮开发最早的目标很直接：

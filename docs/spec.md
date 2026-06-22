@@ -1,5 +1,7 @@
 # IPGMovie 标定板半自动匹配实现规格说明
 
+> **⚠️ OUTDATED (2026-06-23)** — This document was written before the codebase split (12,608-line single file → 17+ modular files) and optimizer upgrade (P0-P8). Implementation details may not match the current codebase. See `codebase_split_plan.md` and `optimizer_upgrade_plan.md` for accurate current structure.
+
 > **状态：⚠️ PARTIAL** — 模块定义和接口规范仍有效，多相机编排部分需参考实际代码。参见 `technical-principles.md` 获取最新信息。
 
 ## 1. 文档定位

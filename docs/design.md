@@ -1,5 +1,9 @@
 # IPGMovie 摄像头安装位置半自动标定方案设计文档
 
+> **⚠️ OUTDATED (2026-06-23)** — This document was written before the codebase split (12,608-line single file → 17+ modular files) and optimizer upgrade (P0-P8). Implementation details may not match the current codebase. See `codebase_split_plan.md` and `optimizer_upgrade_plan.md` for accurate current structure.
+
+(The codebase has been split into 17+ modular files under src/calibration/ and linked directories. See `codebase_split_plan.md` for the current structure.)
+
 > **状态：⚠️ PARTIAL** — 架构原理仍有效，但阶段规划描述落后于实际进展。参见 `technical-principles.md` 获取最新信息。
 
 ## 1. 文档目的

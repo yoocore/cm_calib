@@ -1,5 +1,7 @@
 # IPG-MOVIE 控制流程记录
 
+> **⚠️ OUTDATED (2026-06-23)** — This document was written before the codebase split (12,608-line single file → 17+ modular files) and optimizer upgrade (P0-P8). Implementation details may not match the current codebase. See `codebase_split_plan.md` and `optimizer_upgrade_plan.md` for accurate current structure.
+
 本文档用于沉淀当前工程里已经验证过的 IPG-MOVIE 控制方式、刷新行为、最小化行为，以及后续问答得到的新结论。
 
 当前约定：后续如果围绕 IPG-MOVIE、DDE、Script Control、可见窗口刷新、最小化行为、菜单项控制等继续排查或验证，优先把结论追加到本文档，而不是散落在聊天记录中。

@@ -1,5 +1,7 @@
 ﻿# CameraCalibration — v1.1 文档版本记录
 
+> **⚠️ OUTDATED (2026-06-23)** — This document was written before the codebase split (12,608-line single file → 17+ modular files) and optimizer upgrade (P0-P8). Implementation details may not match the current codebase. See `codebase_split_plan.md` and `optimizer_upgrade_plan.md` for accurate current structure.
+
 > 版本: v1.1 (git tag: v1.1)
 > 发布日期: 2026-06-15
 > 代码基线: v1.0 (git tag: v1.0, commit 644bd02, May 16)

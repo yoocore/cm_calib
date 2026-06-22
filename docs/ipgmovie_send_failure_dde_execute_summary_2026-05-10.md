@@ -2,6 +2,8 @@
 
 # IPG-MOVIE send 故障与 dde execute 替代链总结 2026-05-10
 
+> **⚠️ OUTDATED (2026-06-23)** — This document was written before the codebase split (12,608-line single file → 17+ modular files) and optimizer upgrade (P0-P8). Implementation details may not match the current codebase. See `codebase_split_plan.md` and `optimizer_upgrade_plan.md` for accurate current structure.
+
 ## 1. 问题概述
 
 这次问题必须记成“标定连续性被破坏”的阻塞问题，而不只是“某条控制命令失败”。

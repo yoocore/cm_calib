@@ -1,5 +1,7 @@
 # CameraCalibration 使用流程指南
 
+> **⚠️ OUTDATED (2026-06-23)** — This document was written before the codebase split (12,608-line single file → 17+ modular files) and optimizer upgrade (P0-P8). Implementation details may not match the current codebase. See `codebase_split_plan.md` and `optimizer_upgrade_plan.md` for accurate current structure.
+
 > 创建日期：2026-06-18
 > 状态：✅ ACTIVE
 > 对应版本：v1.1+

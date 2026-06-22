@@ -1,5 +1,41 @@
 # CameraCalibration 技术原理综述
 
+> **⚠️ OUTDATED (2026-06-23)** — This document was written before the codebase split (12,608-line single file → 17+ modular files) and optimizer upgrade (P0-P8). Implementation details may not match the current codebase. See `codebase_split_plan.md` and `optimizer_upgrade_plan.md` for accurate current structure.
+
+## 实施现状 (Implementation Reality)
+
+### 4.5 多阶段优化（Explore-Then-Refine）修正
+
+文档描述的 Phase 1（低分辨率FBO + 粗评分）→ Phase 2（高分辨率FBO + 细评分）**未实现**。
+
+实际实现：`_run_explore_then_refine_campaign` 使用**多起点随机探索 + 单起点精炼**策略，FBO 分辨率和评分精度在全程保持一致。FBO 尺寸根据真实图像尺寸自动适配显示器 safe area，不区分阶段。
+
+### 8.2 历史参数池修正
+
+文档称"最多保留 100 条历史记录"**未实现**。
+
+实际实现（commit 9019710）：池以 **board 签名 hash** 为 key，每套板配置只保留**唯一最优**成绩。新结果仅当更好时覆盖，无数量上限。写车保护：所有池条目在当前板配置上重新评分后取最低分对比，只要当前分 ≤ 池内最佳即写入，**无 10% 阈值**。
+
+### 12.3 Optuna 修正
+
+文档称"Optuna 的采样开销 > 收益"**已过时**。
+
+实际使用：`optimizer_bayesian.py` 使用 Optuna `TPESampler(multivariate=True)`。采样开销 < 每秒 10ms，对比 trial 耗时（capture 0.3s + detect 0.6s = ~1s），开销占比 < 1%。P5 默认启用 hybrid 模式（CD→Bayesian）。
+
+### 当前优化器配置（v1.3.0）
+
+| 优化 | 默认 | 位置 |
+|------|------|------|
+| P0 Gauss-Newton | ✅ True | `optimizer_cd.py` — GN 步失败自动回退 |
+| P1 strategy_adaptation | ✅ True | `config.py` — step_scale/priority/bottleneck |
+| P2 auto-jitter | ✅ 0.01 | `optimizer_cd.py` — 高斯噪声 + 衰减 |
+| P3 InitialSolver | ✅ 可用 | `initial_solver.py` — 有 live_read 时优先用车辆数据 |
+| P4 Sparse scoring | ✅ 自动 | `optimizer_cd.py` — 每轮构建灵敏度矩阵，自动跳过低敏感板 |
+| P5 Hybrid CD→Bayesian | ✅ auto | `evaluate.py` — 有 Optuna → CD→Bayesian；无 → 纯 CD |
+| P6 Multi-start shared | ✅ 可用 | `orchestration.py` — `MultiStartSharedState` EMA 合并 |
+| P7 Curriculum | ✅ 自适应 | 参数 > 6 自动激活 |
+| P8 Parabolic | ✅ 自适应 | 含 "offset" 的参数自动启用 |
+
 > 创建日期：2026-06-18
 > 状态：✅ ACTIVE
 > 对应版本：v1.1+

@@ -1,5 +1,77 @@
 # camera_calibration.py 代码拆分计划
 
+## 完成状态
+
+代码拆分已**全部完成**（2026-06）。实际实现严格遵循下方计划中的 Mixin 继承链策略，最终文件结构和目录组织如下：
+
+### 最终目录结构
+
+```
+CameraCalibration/
+├── configs/                         # Camera config JSONs
+├── diagnostics/                     # Diagnostic tools (check_view, unfreeze, etc.)
+│   └── tmp_tools/                   # Temporary helper scripts + smoke test
+├── docs/                            # Documentation
+├── scripts/                         # Build/cleanup/stress scripts + TCL
+│   └── tcl/
+├── src/                             # All source code
+│   ├── calibration/                 # Calibration algorithm core
+│   │   ├── camera_calibration.py    # Main class (2483 lines, CameraCalibrator with mixins)
+│   │   ├── calib_types.py           # All @dataclass definitions
+│   │   ├── utils.py                 # Stateless utility functions + _TeeStream
+│   │   ├── config.py                # DEFAULT_CONFIG + bootstrap functions
+│   │   ├── detector.py              # DetectorMixin (board detection, template matching)
+│   │   ├── scoring.py               # ScoringMixin (board scoring, aggregation)
+│   │   ├── annotation.py            # AnnotationMixin (image annotation, overlays)
+│   │   ├── script_control.py        # ScriptControlMixin (DDE capture, value apply)
+│   │   ├── evaluate.py              # EvaluateMixin (evaluation, optimization dispatch)
+│   │   ├── optimizer_cd.py          # CoordinateDescentMixin (CD + GN + jitter)
+│   │   ├── optimizer_bayesian.py    # BayesianOptimizerMixin (Optuna TPE)
+│   │   ├── strategy.py              # StrategyMixin (adaptive strategy)
+│   │   ├── orchestration.py         # OrchestrationMixin + all runtime orchestration functions
+│   │   ├── cli.py                   # CLI entry (parse_args, main)
+│   │   ├── sensitivity.py           # P4: geometric sensitivity matrix (auto-enabled)
+│   │   └── initial_solver.py        # P3: initial parameter solver
+│   ├── orchestration/               # Top-level orchestration
+│   │   └── calibration_orchestrator.py  # Multi-camera calibration orchestrator
+│   ├── cmapi/                       # CarMaker API
+│   │   └── cmapi_testrun_control.py
+│   ├── entry/                       # Application entry points
+│   │   ├── launch_gui.py
+│   │   ├── launch_wizard.py
+│   │   └── portable_runtime.py
+│   ├── gui_app/                     # PySide6 GUI application
+│   │   ├── app.py, main_window.py
+│   │   ├── models/, services/, widgets/, tests/
+│   └── health/                      # Health check tools
+│       ├── dde_health_check.py, rendering_health.py
+│       ├── precheck_cli.py, fbo_score_check.py, etc.
+├── tests/
+│   ├── unit/, integration/, stress/
+└── .codegraph/
+```
+
+### 与计划的差异
+
+| 计划 | 实际 | 说明 |
+|------|------|------|
+| `calibration/types.py` | `calibration/calib_types.py` | 避免与 Python `types` 标准库冲突 |
+| `calibration/optimizer/` 子目录 | 扁平文件 `optimizer_cd.py`, `optimizer_bayesian.py` | 简化目录结构，文件数量少不值得建子目录 |
+| Phase 15-16 (删除死代码 + 回归测试) | 已执行 | 死代码已在拆分过程中一并清理 |
+| 14 个 Phase | 实际执行了全部 14 个 Phase | 按顺序验证，每次 Phase 完成后跑测试确认 |
+
+### 新增文件（计划外）
+
+- `src/calibration/sensitivity.py` — 几何敏感性矩阵分析
+- `src/calibration/initial_solver.py` — 初始参数解算器
+- `src/orchestration/calibration_orchestrator.py` — 多相机标定编排器
+- `src/cmapi/cmapi_testrun_control.py` — CarMaker API 测试运行控制
+- `src/entry/` 目录 — 应用程序入口点 (GUI, Wizard, Portable Runtime)
+- `src/gui_app/` 目录 — PySide6 GUI 应用
+- `src/health/` 目录 — 健康检查工具集
+- `diagnostics/` 目录 — 诊断工具
+- `scripts/` 目录 — 构建/清理/压测脚本 + TCL
+
 ## 现状
 
 - 单文件 12,600+ 行

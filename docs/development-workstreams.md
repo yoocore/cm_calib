@@ -1,5 +1,9 @@
 # EXE GUI 与后端改造双线任务清单
 
+> **⚠️ OUTDATED (2026-06-23)** — This document was written before the codebase split (12,608-line single file → 17+ modular files) and optimizer upgrade (P0-P8). Implementation details may not match the current codebase. See `codebase_split_plan.md` and `optimizer_upgrade_plan.md` for accurate current structure.
+
+(The codebase has been split into 17+ modular files under src/calibration/ and linked directories. See `codebase_split_plan.md` for the current structure.)
+
 ## 1. 目标
 
 当前开发分成两条主线并行推进：

@@ -1,3 +1,5 @@
+> **⚠️ OUTDATED (2026-06-23)** — This document was written before the codebase split (12,608-line single file → 17+ modular files) and optimizer upgrade (P0-P8). Implementation details may not match the current codebase. See `codebase_split_plan.md` and `optimizer_upgrade_plan.md` for accurate current structure.
+
 > **状态：❌ OBSOLETE** — 问题已定位修复，保留供历史追溯。完整技术原理见 `technical-principles.md`
 
 - 已通过 DDE 运行时探针验证：IPG-MOVIE 的 View -> Show -> ABRAXAS 对应运行时开关 `View(ABRAXAS)`。在 `PrepareVehicle` / `PrepareVehicle_MC` 中，条件是 `if {$View(ABRAXAS) || $FName=="" || [file tail $FName]=="ABRAXAS"}`，随后分别调用 `CreateObjAbraxas` 或 `CreateObjAbraxas_MC`。

@@ -1,5 +1,7 @@
 # 抓图路径从窗口截图到 DDE/FBO 的探索历程
 
+> **⚠️ OUTDATED (2026-06-23)** — This document was written before the codebase split (12,608-line single file → 17+ modular files) and optimizer upgrade (P0-P8). Implementation details may not match the current codebase. See `codebase_split_plan.md` and `optimizer_upgrade_plan.md` for accurate current structure.
+
 > **归档说明**：本文档记录图像抓取从"前台窗口截图"到"IPG-MOVIE DDE/FBO 离屏抓图"的完整探索历程。
 > 方案本身已淘汰，但探索过程中的探针路径和经验教训对后续类似项目仍有重要参考价值。
 > 

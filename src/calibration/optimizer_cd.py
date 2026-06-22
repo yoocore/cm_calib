@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from src.calibration.calib_types import TotalScoreDetail
+from src.calibration.sensitivity import build_geometric_sensitivity, get_skip_boards
 
 
 
@@ -153,7 +154,10 @@ class CoordinateDescentMixin:
         tag = f"iter_{it:04d}_{p.name}_{'p' if direction > 0 else 'n'}"
         try:
             self._apply_value_map({p.name: trial_value})
-            total_detail, img_path = self.evaluate(tag, baseline_metrics=best_baseline)
+            skip_boards = None
+            if hasattr(self, '_geometric_sensitivity'):
+                skip_boards = get_skip_boards(self._geometric_sensitivity, p.name)
+            total_detail, img_path = self.evaluate(tag, baseline_metrics=best_baseline, skip_boards=skip_boards)
             score = total_detail.total_score
             accepted, accepted_reason = self._acceptance_decision(
                 baseline_score=base_score,
@@ -516,6 +520,11 @@ class CoordinateDescentMixin:
                 stop_reason="running",
                 history=history,
             )
+
+            if not hasattr(self, '_geometric_sensitivity'):
+                self._geometric_sensitivity = build_geometric_sensitivity(
+                    self.boards, self.params, self.real_img.shape[:2]
+                )
 
             for p in ordered_params:
                 preferred_direction = self.preferred_directions.get(p.name, 1.0)

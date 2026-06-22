@@ -19,7 +19,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "Data" / "Script" / "CameraCalibration"))
 
-from health.dde_health_check import render_dde_execute_script, run_check_attempt
+from src.health.dde_health_check import render_dde_execute_script, run_check_attempt
 from src.cmapi_testrun_control import (
     ensure_movie_abraxas_enabled,
     ensure_movie_camera_selected,

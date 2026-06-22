@@ -68,7 +68,7 @@ from src.calibration.config import (
     bootstrap_config_from_annotation,
 )
 
-from health.dde_health_check import (
+from src.health.dde_health_check import (
     default_output_dir as _dde_default_output_dir,
     render_dde_execute_script,
     render_result_script,

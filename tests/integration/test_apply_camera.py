@@ -7,7 +7,7 @@ import sys, time, uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from health.dde_health_check import render_dde_execute_script, run_runscript
+from src.health.dde_health_check import render_dde_execute_script, run_runscript
 
 # right_rear parameters (same as calibration uses)
 PARAMS = {

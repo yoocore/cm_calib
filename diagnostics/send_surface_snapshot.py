@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Set
 
-from health.dde_health_check import (
+from src.health.dde_health_check import (
     DEFAULT_SERVICE,
     DEFAULT_TOPIC,
     LEGACY_SEND_CHAIN_NOTE,

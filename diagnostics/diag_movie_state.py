@@ -2,7 +2,7 @@
 import sys, os
 sys.path.insert(0, '.')
 from pathlib import Path
-from health.dde_health_check import run_check_attempt, default_output_dir, render_dde_execute_script
+from src.health.dde_health_check import run_check_attempt, default_output_dir, render_dde_execute_script
 
 output_dir = default_output_dir()
 output_dir.mkdir(parents=True, exist_ok=True)

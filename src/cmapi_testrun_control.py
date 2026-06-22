@@ -14,7 +14,7 @@ import time
 from typing import Any, Optional
 
 import logging
-from entry.portable_runtime import apply_cmapi_to_current_process
+from src.entry.portable_runtime import apply_cmapi_to_current_process
 
 # Pre-parse --cm-install to add cmapi to sys.path before importing
 _cm_install_arg: str | None = None
@@ -28,7 +28,7 @@ else:
     apply_cmapi_to_current_process()
 
 import cmapi
-from health.dde_health_check import classify_health_summary, default_output_dir, render_dde_execute_script, render_result_script, run_check_attempt, run_read_only_health_suite
+from src.health.dde_health_check import classify_health_summary, default_output_dir, render_dde_execute_script, render_result_script, run_check_attempt, run_read_only_health_suite
 from scripts.runtime_config_bootstrap import bootstrap_runtime_configs_for_cameras, capture_initial_values_to_config, load_movie_view_size_from_real_image
 
 

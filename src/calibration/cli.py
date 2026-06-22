@@ -33,7 +33,7 @@ from src.calibration.config import (
     _default_bootstrap_template_path,
     bootstrap_config_from_annotation,
 )
-from health.precheck_cli import run_precheck
+from src.health.precheck_cli import run_precheck
 
 
 def parse_args() -> argparse.Namespace:

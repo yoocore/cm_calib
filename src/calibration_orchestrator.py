@@ -12,13 +12,13 @@ from pathlib import Path
 from typing import Any, Optional
 
 import src.cmapi_testrun_control as cmctrl
-from entry.portable_runtime import build_python_subprocess_command
+from src.entry.portable_runtime import build_python_subprocess_command
 from scripts.runtime_config_bootstrap import load_movie_view_size_from_real_image
 from src.cmapi_testrun_control import (
     start_simulation_via_tcl,
     stop_simulation_via_tcl,
 )
-from health.dde_health_check import run_runscript
+from src.health.dde_health_check import run_runscript
 
 
 

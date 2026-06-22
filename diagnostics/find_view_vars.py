@@ -7,7 +7,7 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 import win32ui  # noqa: F401
 import dde  # type: ignore
-from health.dde_health_check import render_dde_execute_script, run_check_attempt
+from src.health.dde_health_check import render_dde_execute_script, run_check_attempt
 
 
 def run_dde(body_lines, name, timeout=10):

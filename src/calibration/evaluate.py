@@ -54,7 +54,7 @@ class EvaluateMixin:
             if stale_count >= 3:
                 raise RuntimeError(f"RENDERING_BROKEN: Too many consecutive stale captures ({stale_count}), rendering permanently frozen")
             try:
-                from health.rendering_health import try_restart_rendering
+                from src.health.rendering_health import try_restart_rendering
                 r = try_restart_rendering()
                 if r.get("restart_success"):
                     print(f"[health] Rendering restarted (UC growth={r.get('uc_growth')}), re-capturing...")

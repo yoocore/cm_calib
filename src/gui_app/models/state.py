@@ -42,7 +42,7 @@ class CalibrationLaunchConfig:
     campaign_rounds: int = 1
     multi_start_count: int = 0
     multi_start_iters: Optional[int] = None
-    multi_start_jitter_steps: float = 2.0
+    multi_start_jitter_steps: str = "auto"
     multi_start_seed: int = 20260429
     explore_then_refine: bool = False
     refine_iters: Optional[int] = None

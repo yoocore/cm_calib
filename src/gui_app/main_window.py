@@ -397,9 +397,10 @@ class MainWindow(QMainWindow):
             campaign_rounds=self.calibration_panel.campaign_rounds_spin.value(),
             multi_start_count=ms_count,
             multi_start_iters=ms_iters,
-            multi_start_jitter_steps=self.calibration_panel.jitter_spin.value(),
+            multi_start_jitter_steps="auto",
             refine_iters=ref_iters,
             explore_then_refine=exp_ref,
+            skip_prepare_for_first_camera=True,
         )
 
     @staticmethod

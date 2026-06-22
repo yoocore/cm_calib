@@ -4,7 +4,7 @@ import copy
 import re
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, TextIO, Tuple
 
 from src.calibration.calib_types import TotalScoreDetail
 
@@ -193,3 +193,42 @@ def _build_annotation_legend_lines(total_detail: TotalScoreDetail) -> List[str]:
             line = f"{score.board_id}: skipped"
         lines.append(line)
     return lines
+
+
+class _TeeStream:
+    """Split a stream into two output streams."""
+    def __init__(self, primary: TextIO, secondary: TextIO):
+        self._primary = primary
+        self._secondary = secondary
+
+    def write(self, data: str) -> int:
+        written = self._primary.write(data)
+        self._secondary.write(data)
+        self.flush()
+        return written
+
+    def flush(self) -> None:
+        self._primary.flush()
+        try:
+            self._secondary.flush()
+        except Exception:
+            pass
+
+    def isatty(self) -> bool:
+        try:
+            return bool(self._primary.isatty())
+        except Exception:
+            return False
+
+    def fileno(self) -> int:
+        return self._primary.fileno()
+
+    @property
+    def encoding(self) -> str:
+        return getattr(self._primary, "encoding", "utf-8")
+
+    def reconfigure(self, *args, **kwargs) -> None:
+        if hasattr(self._primary, "reconfigure"):
+            self._primary.reconfigure(*args, **kwargs)
+        if hasattr(self._secondary, "reconfigure"):
+            self._secondary.reconfigure(*args, **kwargs)

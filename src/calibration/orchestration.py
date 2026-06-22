@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set, TextIO, Tuple
 from src.calibration.calib_types import *
 from src.calibration.utils import (
     _DEFAULT_BOUNDS_MULTIPLIER,
+    _TeeStream,
     _board_prototype_family,
     _bootstrap_partial_template_dir,
     _build_explicit_parameter_config,

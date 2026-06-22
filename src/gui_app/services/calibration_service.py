@@ -44,7 +44,7 @@ class CalibrationService(QObject):
         if self.is_running:
             self.stop()
         calibration_root = self._resolve_calibration_root(launch.project_root)
-        script_path = calibration_root / "calibration_orchestrator.py"
+        script_path = calibration_root / "src" / "orchestration" / "calibration_orchestrator.py"
         arguments = [
             "--project-root",
             str(launch.project_root),

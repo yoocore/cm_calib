@@ -11,6 +11,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
+_ROOT = Path(__file__).resolve().parents[2]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
 import src.cmapi.cmapi_testrun_control as cmctrl
 from src.entry.portable_runtime import build_python_subprocess_command
 from scripts.runtime_config_bootstrap import load_movie_view_size_from_real_image

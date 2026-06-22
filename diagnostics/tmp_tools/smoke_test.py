@@ -75,6 +75,7 @@ key_files = [
     'src/entry/portable_runtime.py',
     'src/cmapi/cmapi_testrun_control.py',
     'src/orchestration/calibration_orchestrator.py',
+    'src/calibration/camera_calibration.py',
 ]
 for kf in key_files:
     check(kf, (ROOT / kf).exists())

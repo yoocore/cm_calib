@@ -163,6 +163,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--refine-iters", type=int, default=None)
     parser.add_argument("--resume-from-result", action="store_true")
     parser.add_argument("--verbose-dde-diag", action="store_true")
+    parser.add_argument("--prepare-only", action="store_true", help="Prepare CM environment (kill+restart, bootstrap, camera selection), then exit")
     return parser.parse_args()
 
 
@@ -597,6 +598,49 @@ def main() -> None:
             capture_current_params=False,
         )
         _emit_event(task_id, "config_bootstrap_finished", configs=bootstrap_configs)
+        if args.prepare_only:
+            if cameras:
+                # Prepare first camera's environment only
+                camera_name = cameras[0]
+                config_path = _resolve_config_path(project_root, camera_name)
+                movie_view_size = _load_movie_view_size(config_path)
+
+                _emit_event(task_id, "camera_prepare_started", camera=camera_name, config_path=str(config_path))
+                cmctrl.disable_checkviewport_recursion()
+                try:
+                    runtime_state = _prepare_runtime_for_camera(
+                        args, project_root, testrun_rel_path, camera_name, config_path,
+                        movie_view_size=movie_view_size,
+                    )
+                    _emit_event(
+                        task_id, "camera_prepare_finished",
+                        camera=camera_name,
+                        selected_sensor=runtime_state["activation"]["selected_sensor_name"],
+                        vehicle_path=runtime_state["vehicle_path"],
+                        carmaker_pid=runtime_state["carmaker_pid"],
+                        reused_existing_runtime=bool(runtime_state.get("reused_existing_runtime")),
+                    )
+                finally:
+                    cmctrl.restore_checkviewport()
+
+            _emit_event(task_id, "task_finished", status="ready")
+            print("CM Prepare complete. Environment ready.")
+
+            summary_payload = {
+                "task_id": task_id,
+                "started_at": started_at,
+                "finished_at": _now_iso(),
+                "status": "ready",
+                "project_root": str(project_root),
+                "testrun": testrun_rel_path.as_posix(),
+                "output_dir": str(output_dir),
+                "cameras": cameras,
+                "per_camera": per_camera_results,
+            }
+            summary_path.write_text(json.dumps(summary_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            _emit_prefixed_json(ORCHESTRATION_SUMMARY_PREFIX, summary_payload)
+            return
+
         for camera_name in cameras:
             if _STOP_REQUESTED:
                 raise KeyboardInterrupt("Stop requested before next camera run")

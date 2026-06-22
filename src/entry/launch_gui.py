@@ -5,6 +5,10 @@ import runpy
 import sys
 from pathlib import Path
 
+_ROOT = Path(__file__).resolve().parents[2]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
 from src.entry.portable_runtime import apply_cmapi_to_current_process, ensure_calibration_root_on_sys_path
 
 

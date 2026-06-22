@@ -1,5 +1,10 @@
 """Probe IPG-MOVIE window hierarchy."""
+import sys
 from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 
 OUTPUT_DIR = Path(__file__).resolve().parent / "tmp" / "view_check"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)

@@ -1,6 +1,10 @@
 """Diagnose IPG-MOVIE state when window appears frozen."""
-import sys, os
-sys.path.insert(0, '.')
+import sys
+from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 from pathlib import Path
 from src.health.dde_health_check import run_check_attempt, default_output_dir, render_dde_execute_script
 

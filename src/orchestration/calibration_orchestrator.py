@@ -31,8 +31,8 @@ CALIBRATION_PROGRESS_PREFIX = "CALIBRATION_PROGRESS_JSON:"
 ORCHESTRATION_EVENT_PREFIX = "ORCHESTRATION_EVENT_JSON:"
 ORCHESTRATION_SUMMARY_PREFIX = "ORCHESTRATION_SUMMARY_JSON:"
 
-DEFAULT_PROJECT_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_CONFIG_DIR = Path(__file__).resolve().parents[1] / "configs"
+DEFAULT_PROJECT_ROOT = Path(__file__).resolve().parents[5]
+DEFAULT_CONFIG_DIR = Path(__file__).resolve().parents[2] / "configs"
 DEFAULT_OUTPUT_ROOT = DEFAULT_PROJECT_ROOT / "SimOutput" / "camera_orchestration"
 
 

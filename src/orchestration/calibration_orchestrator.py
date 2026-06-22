@@ -484,6 +484,12 @@ def _run_single_camera_process(
     summary_payload: Optional[dict[str, Any]] = None
     recent_lines: deque[str] = deque(maxlen=15)
 
+    import sys
+
+    # Ensure stdout handles utf-8 gracefully (Windows GBK workaround)
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+
     assert process.stdout is not None
     for line in process.stdout:
         text = line.rstrip("\r\n")

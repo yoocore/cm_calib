@@ -85,5 +85,28 @@ class CalibrationService(QObject):
         self.process_service._process.setProcessEnvironment(env)
         self.process_service.start_python(script_path, arguments, calibration_root)
 
+    def prepare(self, launch: CalibrationLaunchConfig) -> None:
+        if self.is_running:
+            return
+        calibration_root = self._resolve_calibration_root(launch.project_root)
+        script_path = calibration_root / "src" / "orchestration" / "calibration_orchestrator.py"
+        arguments = [
+            "--project-root", str(launch.project_root),
+            "--testrun", launch.testrun,
+            "--prepare-only",
+        ]
+        for camera_name in launch.cameras:
+            arguments.extend(["--camera", camera_name])
+        cm_install = getattr(self, "_cm_install", None)
+        env = QProcessEnvironment.systemEnvironment()
+        if cm_install is not None:
+            pythonpath, _paths = build_cmapi_pythonpath(
+                cm_install,
+                existing_pythonpath=env.value("PYTHONPATH", ""),
+            )
+            if pythonpath:
+                env.insert("PYTHONPATH", pythonpath)
+        self.process_service._process.setProcessEnvironment(env)
+        self.process_service.start_python(script_path, arguments, calibration_root)
     def stop(self) -> None:
         self.process_service.stop()

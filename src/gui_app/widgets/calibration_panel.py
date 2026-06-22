@@ -248,6 +248,9 @@ class CalibrationPanel(QGroupBox):
         self.stop_button.setEnabled(False)
         self.stop_button.setStyleSheet(_DANGER_BUTTON_STYLE)
         self.stop_button.setMinimumHeight(42)
+        self.prepare_button = QPushButton("CM Prepare")
+        self.prepare_button.setStyleSheet(_SECONDARY_BUTTON_STYLE)
+        self.prepare_button.setMinimumHeight(36)
 
         # --- Build UI ---
         self.strategy_group = _SectionGroup("Campaign Rounds")
@@ -338,6 +341,7 @@ class CalibrationPanel(QGroupBox):
         layout.addWidget(self.strategy_group)
         control_layout.addWidget(cm_row)
         control_layout.addLayout(status_row)
+        control_layout.addWidget(self.prepare_button)
         control_layout.addWidget(self.phase_label)
         control_layout.addWidget(button_row)
         layout.addWidget(self.control_group)

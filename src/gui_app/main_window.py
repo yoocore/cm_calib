@@ -100,6 +100,7 @@ class MainWindow(QMainWindow):
     def _wire_signals(self) -> None:
         self.calibration_panel.start_button.clicked.connect(self._start_calibration)
         self.calibration_panel.stop_button.clicked.connect(self._stop_calibration)
+        self.calibration_panel.prepare_button.clicked.connect(self._cm_prepare)
         self.cm_settings_panel.wizard_for_camera_clicked.connect(self._open_board_wizard_for_camera)
         self.cm_settings_panel.project_root_changed.connect(self._on_project_root_changed)
         self.cm_settings_panel.testrun_changed.connect(self._on_testrun_changed)
@@ -480,6 +481,36 @@ class MainWindow(QMainWindow):
         )
         dialog.exec()
         self._refresh_camera_list()  # Refresh to pick up mapping changes from wizard
+    def _cm_prepare(self) -> None:
+        """Kill existing CM, restart, prepare environment."""
+        try:
+            launch = self._build_launch_config()
+        except Exception as exc:
+            self._set_status_summary(str(exc))
+            QMessageBox.critical(self, "CM Prepare Failed", str(exc))
+            return
+
+        try:
+            cm_install = self.calibration_panel.cm_install_path
+            if cm_install is None:
+                raise ValueError("CM version is not selected. Choose a CM version first.")
+            self.calibration_service.set_cm_install(cm_install)
+
+            if self.calibration_service.is_running:
+                self.output_panel.append_log(
+                    "calibration_service already running; stopping first",
+                    source="system",
+                )
+                self.calibration_service.stop()
+
+            self._apply_status(AppStatus.PREPARING)
+            self._set_status_summary("CM Prepare: restarting environment...")
+            self.output_panel.append_log("─" * 60, source="system")
+            self.calibration_service.prepare(launch)
+        except Exception as exc:
+            self._set_status_summary(str(exc))
+            QMessageBox.critical(self, "CM Prepare Failed", str(exc))
+            self._sync_control_states()
 
     def _apply_status(self, status: AppStatus) -> None:
         self.state.status = status
@@ -494,6 +525,7 @@ class MainWindow(QMainWindow):
         can_start = self.state.status in {AppStatus.IDLE, AppStatus.READY, AppStatus.FINISHED, AppStatus.FAILED, AppStatus.STOPPED, AppStatus.PASSIVE}
         running_or_locked = calibration_running or self.calibration_service.is_running
         self.calibration_panel.start_button.setEnabled(can_start and not running_or_locked)
+        self.calibration_panel.prepare_button.setEnabled(can_start and not running_or_locked)
         self.calibration_panel.stop_button.setEnabled(calibration_running)
         controls_enabled = not running_or_locked
         self.cm_settings_panel.set_inputs_locked(not controls_enabled)

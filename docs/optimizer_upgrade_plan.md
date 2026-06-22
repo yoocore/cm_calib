@@ -14,6 +14,27 @@
 | ★☆☆ | **P7**: 参数分组退火 | `strategy.py` | 小 | 分阶段优化，避免参数耦合抖震 |
 | ☆☆☆ | **P8**: 抛物线插值 | `strategy.py` | 小 | 仅对 offset 类参数有效 |
 
+## 完成状态 (2026-06-22)
+
+| Priority | Status | Implementation |
+|----------|--------|---------------|
+| P0 Gauss-Newton | ✅ Done | `optimizer_cd.py`: JacobianAccumulator class + GN step integration. Default `use_gauss_newton: True`. Verified: GN step applied per CD iteration, rejected if no improvement. |
+| P1 strategy_adaptation | ✅ Done | `config.py`: `enabled: True` (1-line change). Active step_scale, priority, bottleneck awareness. |
+| P2 auto-jitter | ✅ Done | `optimizer_cd.py`: `random.gauss()` noise with `jitter_decay` decay. Default `jitter_eps: 0.01`. |
+| P3 InitialSolver | ✅ Done | `initial_solver.py`: standalone file (134 lines). Estimates offset/fov/yaw/pitch from initial corner displacements. |
+| P4 Sparse scoring | ✅ Done | `sensitivity.py`: `build_geometric_sensitivity()` + `get_skip_boards()`. Integrated into CD per-param trials (skip low-sensitivity boards automatically). `evaluate()` accepts `skip_boards` parameter. |
+| P5 Hybrid CD→Bayesian | ✅ Done | `evaluate.py`: `_optimize_hybrid()` with `optimizer_mode: "auto"`. Phase 1: CD × N iters, Phase 2: Optuna TPE in ±3σ search box. Default `optimizer_mode: "auto"`. |
+| P6 Multi-start shared state | ✅ Done | `orchestration.py`: `MultiStartSharedState` EMA merge. Available for multi-start campaigns. |
+| P7 Curriculum annealing | ✅ Done (adaptive) | `camera_calibration.py`: `_ordered_params_for_iteration` checks `len(params) > 6` to activate. Config default `curriculum.enabled: True`. |
+| P8 Parabolic interpolation | ✅ Done (adaptive) | `optimizer_cd.py`: `_parabolic_optimal_offset()`. Auto-detects offset params by name containing "offset". No config flag needed. |
+
+### 与原始计划的主要差异
+
+- **无 `optimizer/` 子目录**：文件保持在 `calibration/` 层级平铺，避免与现有 Mixin 文件混淆
+- **无独立包装类**：方案中的 `CoordinateDescentOptimizer`、`BayesianOptimizer` 等被舍弃，因为它们仅包装现有 Mixin 方法。`evaluate.py:optimize()` 直接分发。
+- **P4、P7、P8 自动启用**：无需手动配置。P4 每次 CD 迭代构建一次敏感度。P7 在参数 > 6 时激活。P8 自动检测 offset 参数。
+
+---
 ## 文件结构
 
 ```

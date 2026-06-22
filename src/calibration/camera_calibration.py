@@ -2542,7 +2542,8 @@ class CameraCalibrator(DetectorMixin, ScoringMixin, AnnotationMixin, ScriptContr
                 self.param_order_index.get(param.name, len(self.param_order_index)),
             ),
         )
-        if hasattr(self, 'curriculum_enabled') and self.curriculum_enabled:
+        if (hasattr(self, 'curriculum_enabled') and self.curriculum_enabled
+                and len(self.params) > 6):
             progress = self._total_iteration_count / max(1, self.max_iters)
             for phase in self.curriculum_phases:
                 if progress <= phase.get("progress_max", 1.0):

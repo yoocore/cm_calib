@@ -865,11 +865,8 @@ class CoordinateDescentMixin:
         return result
 
     def _parabolic_optimal_offset(self, p, base_value, base_score, step, direction, evaluate_fn):
-        """P8: Parabolic interpolation for offset params (default off)."""
-        if not hasattr(self, 'parabolic_enabled') or not self.parabolic_enabled:
-            return None
-        parabolic_params = getattr(self, 'parabolic_params', [])
-        if p.name not in parabolic_params:
+        """P8: Auto parabolic interpolation for offset params."""
+        if "offset" not in p.name.lower():
             return None
         points = [(0.0, base_score)]
         for mult in [1.0, 2.0]:

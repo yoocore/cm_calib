@@ -8,7 +8,7 @@ import pytest
 
 @pytest.fixture
 def dde_module():
-    module = importlib.import_module("health.dde_health_check")
+    module = importlib.import_module("src.health.dde_health_check")
     module = importlib.reload(module)
     return module
 

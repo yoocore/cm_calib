@@ -1745,7 +1745,7 @@ class CameraCalibrator(DetectorMixin, ScoringMixin, AnnotationMixin, ScriptContr
         attempt_no = self.gui_movie_restart_recovery_attempts
         attempt_limit = max(self.max_gui_movie_restart_recoveries, 1)
         try:
-            import cmapi_testrun_control as cmctrl
+            from src.cmapi import cmapi_testrun_control as cmctrl
 
             existing_carmakers = cmctrl.list_carmaker_processes()
             runtime_carmakers = [

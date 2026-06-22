@@ -11,10 +11,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
-import src.cmapi_testrun_control as cmctrl
+import src.cmapi.cmapi_testrun_control as cmctrl
 from src.entry.portable_runtime import build_python_subprocess_command
 from scripts.runtime_config_bootstrap import load_movie_view_size_from_real_image
-from src.cmapi_testrun_control import (
+from src.cmapi.cmapi_testrun_control import (
     start_simulation_via_tcl,
     stop_simulation_via_tcl,
 )
@@ -28,7 +28,7 @@ ORCHESTRATION_EVENT_PREFIX = "ORCHESTRATION_EVENT_JSON:"
 ORCHESTRATION_SUMMARY_PREFIX = "ORCHESTRATION_SUMMARY_JSON:"
 
 DEFAULT_PROJECT_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_CONFIG_DIR = Path(__file__).resolve().parent / "configs"
+DEFAULT_CONFIG_DIR = Path(__file__).resolve().parents[1] / "configs"
 DEFAULT_OUTPUT_ROOT = DEFAULT_PROJECT_ROOT / "SimOutput" / "camera_orchestration"
 
 

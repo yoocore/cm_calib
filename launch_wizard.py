@@ -18,7 +18,7 @@ def main() -> int:
     app.setApplicationName("Board Calibration Wizard")
     print("[wizard] QApplication created")
 
-    from gui_app.widgets.bootstrap_wizard import BootstrapWizardDialog
+    from src.gui_app.widgets.bootstrap_wizard import BootstrapWizardDialog
     print("[wizard] Wizard imported")
 
     dialog = BootstrapWizardDialog()

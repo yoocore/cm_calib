@@ -7,7 +7,7 @@ from pathlib import Path
 
 WORKDIR = Path(__file__).parent.resolve()
 SUMMARY = WORKDIR / "stress_test_summary.json"
-ORCHESTRATOR = WORKDIR / "calibration_orchestrator.py"
+ORCHESTRATOR = WORKDIR / ".." / "src" / "orchestration" / "calibration_orchestrator.py"
 SIMOUT = Path(r"C:\CM_Projects\CMO141_Calibration\SimOutput\camera_orchestration")
 LOG = WORKDIR / "tmp" / "stress_run.log"
 

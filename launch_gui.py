@@ -44,7 +44,7 @@ def main() -> int:
     if _dispatch_embedded_command():
         return 0
 
-    from gui_app.app import main as gui_main
+    from src.gui_app.app import main as gui_main
 
     return gui_main()
 

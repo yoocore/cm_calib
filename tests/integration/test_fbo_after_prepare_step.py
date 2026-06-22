@@ -5,7 +5,7 @@
 import sys
 sys.path.insert(0, r"C:\CM_Projects\CMO141_Calibration\Data\Script\CameraCalibration")
 
-from src.cmapi_testrun_control import (
+from src.cmapi.cmapi_testrun_control import (
     ensure_movie_view_size,
     ensure_movie_abraxas_enabled,
     ensure_movie_camera_selected,

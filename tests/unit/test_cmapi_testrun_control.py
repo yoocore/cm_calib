@@ -19,7 +19,7 @@ def _contains_block(lines: list[str], expected_block: list[str]) -> bool:
 
 @pytest.fixture
 def cmctrl(monkeypatch):
-    sys.modules.pop("src.cmapi_testrun_control", None)
+    sys.modules.pop("src.cmapi.cmapi_testrun_control", None)
 
     fake_cmapi = types.ModuleType("cmapi")
     fake_cmapi.error = types.SimpleNamespace(InvalidConfigurationError=RuntimeError)
@@ -32,9 +32,9 @@ def cmctrl(monkeypatch):
     monkeypatch.setitem(sys.modules, "cmapi", fake_cmapi)
     monkeypatch.setitem(sys.modules, "runtime_config_bootstrap", fake_runtime_bootstrap)
 
-    module = importlib.import_module("src.cmapi_testrun_control")
+    module = importlib.import_module("src.cmapi.cmapi_testrun_control")
     yield module
-    sys.modules.pop("src.cmapi_testrun_control", None)
+    sys.modules.pop("src.cmapi.cmapi_testrun_control", None)
 
 
 def _capture_body_lines(monkeypatch, cmctrl, tmp_path: Path, detail: str) -> dict[str, list[str]]:

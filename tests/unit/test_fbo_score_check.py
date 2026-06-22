@@ -8,7 +8,7 @@ import pytest
 
 @pytest.fixture
 def fbo_module(monkeypatch):
-    module = importlib.import_module("health.fbo_score_check")
+    module = importlib.import_module("src.health.fbo_score_check")
     module = importlib.reload(module)
     return module
 

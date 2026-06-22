@@ -148,9 +148,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--multi-start-jitter-steps",
-        type=float,
-        default=2.0,
-        help="Perturb each unlocked parameter by up to N * step around config initial values",
+        type=str,
+        default="auto",
+        help="Jitter: auto (adaptive) or float value"
     )
     parser.add_argument(
         "--multi-start-seed",
@@ -272,7 +272,7 @@ def main() -> None:
         raise ValueError("--multi-start-count must be >= 0")
     if args.multi_start_iters is not None and args.multi_start_iters <= 0:
         raise ValueError("--multi-start-iters must be > 0")
-    if args.multi_start_jitter_steps < 0.0:
+    if args.multi_start_jitter_steps != "auto" and float(args.multi_start_jitter_steps) < 0.0:
         raise ValueError("--multi-start-jitter-steps must be >= 0")
     if args.refine_iters is not None and args.refine_iters <= 0:
         raise ValueError("--refine-iters must be > 0")
@@ -377,7 +377,7 @@ def main() -> None:
             camera_name=camera_name,
             round_count=int(args.campaign_rounds),
             start_count=campaign_start_count,
-            jitter_steps=float(args.multi_start_jitter_steps),
+            jitter_steps=args.multi_start_jitter_steps,
             seed=int(args.multi_start_seed),
             explore_max_iters=int(campaign_explore_iters),
             refine_max_iters=args.refine_iters,
@@ -426,7 +426,7 @@ def main() -> None:
             camera_name=camera_name,
             round_count=int(args.campaign_rounds),
             start_count=args.multi_start_count,
-            jitter_steps=float(args.multi_start_jitter_steps),
+            jitter_steps=args.multi_start_jitter_steps,
             seed=int(args.multi_start_seed),
             max_iters_override=args.multi_start_iters,
         )

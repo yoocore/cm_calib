@@ -118,9 +118,17 @@ class EvaluateMixin:
                 base = baseline_metrics.get(board.board_id, {})
                 board_scores.append(BoardScoreDetail(
                     board_id=board.board_id,
-                    total_score=base.get("total_score", 0.0),
-                    rmse=base.get("rmse", 0.0),
+                    board_type=getattr(board, 'board_type', ''),
+                    success=True,
                     compared=True,
+                    reference_visible=True,
+                    sim_visible=True,
+                    total_score=base.get('total_score', 0.0),
+                    rmse=base.get('rmse', 0.0),
+                    mean_error=base.get('mean_error', 0.0),
+                    max_error=base.get('max_error', 0.0),
+                    miss_rate=base.get('miss_rate', 0.0),
+                    matched_point_count=int(base.get('matched_point_count', 0)),
                 ))
                 continue
             real_detection = self.real_detections[board.board_id]

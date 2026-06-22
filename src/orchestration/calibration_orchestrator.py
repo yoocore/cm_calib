@@ -156,7 +156,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--campaign-rounds", type=int, default=1)
     parser.add_argument("--multi-start-count", type=int, default=0)
     parser.add_argument("--multi-start-iters", type=int, default=None)
-    parser.add_argument("--multi-start-jitter-steps", type=float, default=2.0)
+    parser.add_argument("--multi-start-jitter-steps", type=str, default="auto",
+        help="Jitter steps: auto (adaptive from history) or a float value")
     parser.add_argument("--multi-start-seed", type=int, default=20260429)
     parser.add_argument("--skip-prepare-for-first-camera", action="store_true")
     parser.add_argument("--explore-then-refine", action="store_true")

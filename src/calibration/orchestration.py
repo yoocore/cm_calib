@@ -3163,6 +3163,27 @@ def _next_escape_stagnation_rounds(
         return 0
     return max(0, int(previous_count)) + 1
 
+
+
+def _compute_auto_jitter(camera_name: str) -> float:
+    """Compute adaptive multi-start jitter from history or fallback 2.0."""
+    summary_path = _camera_history_summary_path(camera_name)
+    if summary_path.exists():
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        scores = [float(r.get("final_score", 0)) for r in summary.get("runs", [])]
+        if len(scores) >= 3:
+            sigma = np.std(scores)
+            if sigma > 0:
+                return max(0.3, min(6.0, sigma * 0.05))
+    pool = _load_params_pool(camera_name)
+    pool_entries = pool.get("entries", {})
+    if len(pool_entries) >= 3:
+        pool_scores = [float(e.get("best_score", 0)) for e in pool_entries.values()]
+        sigma = np.std(pool_scores)
+        if sigma > 0:
+            return max(0.3, min(6.0, sigma * 0.05))
+    return 2.0
+
 def _build_multi_start_run_configs(
     cfg: dict,
     base_output_dir: Path,
@@ -3176,6 +3197,7 @@ def _build_multi_start_run_configs(
     if start_count <= 0:
         raise ValueError("multi-start count must be positive")
 
+    js = _compute_auto_jitter(camera_name) if str(jitter_steps).lower() == "auto" else float(jitter_steps)
     base_parameters = cfg.get("parameters")
     if not isinstance(base_parameters, dict) or not base_parameters:
         raise ValueError("parameters must be a non-empty object for multi-start mode")
@@ -3210,7 +3232,7 @@ def _build_multi_start_run_configs(
         for multiplier in escape_policy.get("coarse_start_multipliers", [8.0, 16.0, 28.0])
     ]
     if not coarse_start_multipliers:
-        coarse_start_multipliers = [max(1.0, float(jitter_steps) or 1.0)]
+        coarse_start_multipliers = [max(1.0, float(js) or 1.0)]
     coarse_escape_active = (
         bool(escape_policy.get("enabled", False))
         and stagnation_rounds >= int(escape_policy.get("activation_min_stagnation_rounds", 1))
@@ -3260,9 +3282,9 @@ def _build_multi_start_run_configs(
             unlocked = not math.isclose(min_value, max_value, rel_tol=0.0, abs_tol=1e-12)
             if (start_index > 0 or escape_variant is not None) and unlocked and step > 0.0:
                 delta = 0.0
-                if jitter_steps > 0.0:
+                if js > 0.0:
                     delta += (
-                        rng.uniform(-jitter_steps, jitter_steps)
+                        rng.uniform(-js, js)
                         * step
                         * max(1.0, float(escape_policy.get("local_jitter_scale", 1.0)))
                     )
@@ -3754,7 +3776,7 @@ def _run_explore_then_refine_campaign(
                 "summary_json": str(Path(explore_summary["output_dir"]) / "multistart_summary.json"),
                 "start_count": start_count,
                 "max_iters": explore_max_iters,
-                "jitter_steps": jitter_steps,
+            "jitter_steps": js,
                 "seed": seed,
                 "best_run": best_run,
             },

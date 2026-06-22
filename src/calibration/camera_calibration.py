@@ -25,6 +25,30 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from src.calibration.calib_types import *
+from src.calibration.utils import (
+    _unlink_if_exists,
+    _default_sim_output_root,
+    _sim_output_root_legacy,
+    _deep_merge_dict,
+    _path_to_json_string,
+    _bootstrap_partial_template_dir,
+    _is_custom_marker_board_type,
+    _is_aruco_family_board_type,
+    _is_apriltag_board_type,
+    _is_circle_grid_board_type,
+    _is_aruco_grid_board_type,
+    _derive_camera_name_from_image_path,
+    _board_prototype_family,
+    _canonical_camera_group_name,
+    _camera_name_from_output_dir,
+    _quantize_float,
+    _format_scalar_value_map,
+    _clamp_to_parameter_bounds,
+    _resolve_parameter_bounds,
+    _build_explicit_parameter_config,
+    _build_annotation_legend_lines,
+    _DEFAULT_BOUNDS_MULTIPLIER,
+)
 import cv2
 import numpy as np
 from PIL import Image
@@ -257,26 +281,6 @@ def _configure_live_log(cfg: dict, resume_from_result: bool) -> Path:
     return _configure_live_log_for_output_dir(output_dir, resume_from_result)
 
 
-def _unlink_if_exists(path: Path) -> None:
-    for _ in range(3):
-        try:
-            path.unlink()
-            return
-        except FileNotFoundError:
-            return
-        except PermissionError:
-            time.sleep(0.05)
-
-
-def _default_sim_output_root() -> Path:
-    return Path("C:/CM_Projects/CMO141_Calibration/SimOutput") / "calibration"
-
-
-def _sim_output_root_legacy() -> Path:
-    """Legacy SimOutput root for backward-compatible path resolution of old runs."""
-    return Path("C:/CM_Projects/CMO141_Calibration/SimOutput")
-
-
 def _default_output_name_from_config(config_path: Optional[Path]) -> str:
     if config_path is not None:
         name = config_path.stem
@@ -484,47 +488,9 @@ def _default_bootstrap_config() -> dict:
     }
 
 
-def _deep_merge_dict(base: dict, override: dict) -> dict:
-    result = copy.deepcopy(base)
-    for key, value in override.items():
-        if isinstance(value, dict) and isinstance(result.get(key), dict):
-            result[key] = _deep_merge_dict(result[key], value)
-        else:
-            result[key] = copy.deepcopy(value)
-    return result
-
-
 def _resolved_bootstrap_config(template_cfg: dict) -> dict:
     cfg = _deep_merge_dict(_default_bootstrap_config(), template_cfg)
     return cfg
-
-
-def _path_to_json_string(path: Path) -> str:
-    return path.resolve().as_posix()
-
-
-def _bootstrap_partial_template_dir(real_image_path: Path, camera_name: str) -> Path:
-    return real_image_path.resolve().parent / "bootstrap_templates" / camera_name
-
-
-def _is_custom_marker_board_type(board_type: str) -> bool:
-    return str(board_type).strip().lower() in {"custom_groundmaker", "custom_maker"}
-
-
-def _is_aruco_family_board_type(board_type: str) -> bool:
-    return str(board_type).strip().lower() in {"aruco", "charuco"}
-
-
-def _is_apriltag_board_type(board_type: str) -> bool:
-    return str(board_type).strip().lower() == "apriltag"
-
-
-def _is_circle_grid_board_type(board_type: str) -> bool:
-    return str(board_type).strip().lower() == "circle_grid"
-
-
-def _is_aruco_grid_board_type(board_type: str) -> bool:
-    return str(board_type).strip().lower() == "aruco_grid"
 
 
 def _preprocess_auto_template_match_image(
@@ -666,41 +632,6 @@ def _materialize_auto_template_image(
     if not cv2.imwrite(str(template_path), template_image):
         raise RuntimeError(f"Failed to write auto template image: {template_path}")
     return template_path, template_crop
-
-
-def _derive_camera_name_from_image_path(image_path: Path) -> str:
-    stem = image_path.stem
-    stem = re.sub(r"_origin$", "", stem, flags=re.IGNORECASE)
-    stem = re.sub(r"^\d+_", "", stem)
-    candidate = re.sub(r"[^A-Za-z0-9_]+", "_", stem).strip("_")
-    if not candidate:
-        raise ValueError(f"Cannot derive camera name from image path: {image_path}")
-    return candidate.lower()
-
-
-def _board_prototype_family(board_id: str) -> Optional[str]:
-    normalized = str(board_id).strip().upper().replace("-", "_")
-    compact = re.sub(r"[^A-Za-z0-9]+", "", str(board_id).strip()).upper()
-    generic_match = re.fullmatch(r"([A-Z]+)(\d+)", compact)
-    if generic_match:
-        return generic_match.group(1)
-    if re.fullmatch(r"B\d+", normalized):
-        return "B"
-    if re.fullmatch(r"S\d+", normalized):
-        return "S"
-    if normalized in {"G1_L", "G1_LEFT", "G1LEFT", "G1_LEFT_MARK", "G1LEFTMARK"}:
-        return "G1_LEFT"
-    if normalized in {"G1_C", "G1_CENTER", "G1CENTRE", "G1_CENTER_CIRCLE", "G1CENTERCIRCLE"}:
-        return "G1_CENTER"
-    if normalized in {"G1_R", "G1_RIGHT", "G1RIGHT", "G1_RIGHT_MARK", "G1RIGHTMARK"}:
-        return "G1_RIGHT"
-    if normalized.startswith("G1") and "LEFT" in normalized:
-        return "G1_LEFT"
-    if normalized.startswith("G1") and ("CENTER" in normalized or "CENTRE" in normalized or normalized.endswith("_C")):
-        return "G1_CENTER"
-    if normalized.startswith("G1") and "RIGHT" in normalized:
-        return "G1_RIGHT"
-    return None
 
 
 def _get_annotation_ocr_engine():
@@ -1547,38 +1478,6 @@ def _iter_camera_history_dirs(camera_name: str) -> List[Path]:
         if candidate.exists() and candidate.is_dir():
             dirs.append(candidate)
     return dirs
-
-
-def _canonical_camera_group_name(name: str) -> str:
-    raw_name = str(name).strip()
-    if not raw_name:
-        return raw_name
-    round_resume_match = re.match(r"^(.*)_round\d+_resume$", raw_name)
-    if round_resume_match and round_resume_match.group(1):
-        return round_resume_match.group(1)
-    for suffix in (
-        "_baseline_compare",
-        "_bootstrap_auto",
-        "_bootstrap_custom_maker",
-        "_from_template",
-        "_lock_validation",
-        "_manual_g1center_test",
-        "_validation",
-    ):
-        if raw_name.endswith(suffix) and len(raw_name) > len(suffix):
-            return raw_name[: -len(suffix)]
-    return raw_name
-
-
-def _camera_name_from_output_dir(output_dir: Path) -> str:
-    for root in (_default_sim_output_root(), _sim_output_root_legacy()):
-        try:
-            relative_parts = output_dir.resolve().relative_to(root.resolve()).parts
-            if relative_parts:
-                return _canonical_camera_group_name(relative_parts[0])
-        except Exception:
-            continue
-    return _canonical_camera_group_name(output_dir.name)
 
 
 def _load_json_if_exists(path: Path) -> Optional[dict]:
@@ -3620,53 +3519,6 @@ def _maybe_autotune_round_strategy(
         "config_updated": bool(config_changed_paths),
         "patch": patch,
     }
-
-
-
-
-def _clamp_to_parameter_bounds(param_cfg: dict, value: float, initial_value: Optional[float] = None) -> float:
-    min_value, max_value = _resolve_parameter_bounds(param_cfg, initial_value=initial_value)
-    decimals = int(param_cfg.get("decimals", 4))
-    min_value = round(min_value, decimals)
-    max_value = round(max_value, decimals)
-    return max(min_value, min(max_value, round(value, decimals)))
-
-
-def _quantize_float(value: float, decimals: int) -> float:
-    return float(f"{float(value):.{decimals}f}")
-
-
-def _format_scalar_value_map(values: Dict[str, float]) -> str:
-    ordered = []
-    for name in sorted(values.keys()):
-        ordered.append(f"{name}={values[name]}")
-    return ", ".join(ordered)
-
-
-_DEFAULT_BOUNDS_MULTIPLIER = 50.0
-
-
-def _resolve_parameter_bounds(param_cfg: dict, initial_value: Optional[float] = None) -> Tuple[float, float]:
-    effective_initial = float(initial_value) if initial_value is not None else float(param_cfg.get("initial", 0.0))
-    bounds_multiplier = float(param_cfg.get("bounds_multiplier", _DEFAULT_BOUNDS_MULTIPLIER))
-    step = float(param_cfg.get("step", 0.001))
-    half_range = step * bounds_multiplier
-    return effective_initial - half_range, effective_initial + half_range
-
-
-def _build_explicit_parameter_config(param_cfg: dict, initial_value: float) -> dict:
-    min_value, max_value = _resolve_parameter_bounds(param_cfg, initial_value=initial_value)
-    decimals = int(param_cfg.get("decimals", 4))
-    min_value = round(min_value, decimals)
-    max_value = round(max_value, decimals)
-    quantized_initial = _clamp_to_parameter_bounds(param_cfg, initial_value, initial_value=initial_value)
-
-    explicit_param_cfg = copy.deepcopy(param_cfg)
-    explicit_param_cfg["initial"] = quantized_initial
-    explicit_param_cfg["min"] = min_value
-    explicit_param_cfg["max"] = max_value
-    return explicit_param_cfg
-
 
 def _set_run_local_script_control_result_path(run_cfg: dict, output_dir: Path) -> None:
     configured_path = str(run_cfg.get("script_control_result_path", "")).strip()

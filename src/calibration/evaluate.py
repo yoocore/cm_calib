@@ -1,7 +1,7 @@
 """EvaluateMixin — evaluate() and optimize() methods for calibration evaluation and optimization."""
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import cv2
 
@@ -18,7 +18,8 @@ except ImportError:
 class EvaluateMixin:
 
     def evaluate(
-        self, tag: str, baseline_metrics: Optional[Dict[str, Dict[str, float]]]
+        self, tag: str, baseline_metrics: Optional[Dict[str, Dict[str, float]]] = None,
+        skip_boards: Optional[Set[str]] = None,
     ) -> Tuple[TotalScoreDetail, Path]:
         if self.real_detections is None:
             self.real_detections = self._detect_reference_boards()
@@ -113,6 +114,15 @@ class EvaluateMixin:
         board_scores: List[BoardScoreDetail] = []
         t_detect_start = time.perf_counter()
         for board in self.boards:
+            if skip_boards and board.board_id in skip_boards and baseline_metrics:
+                base = baseline_metrics.get(board.board_id, {})
+                board_scores.append(BoardScoreDetail(
+                    board_id=board.board_id,
+                    total_score=base.get("total_score", 0.0),
+                    rmse=base.get("rmse", 0.0),
+                    compared=True,
+                ))
+                continue
             real_detection = self.real_detections[board.board_id]
             sim_detection = self._detect_board(sim_prepared, board)
             board_scores.append(self._score_board(board, real_detection, sim_detection, sim_prepared))

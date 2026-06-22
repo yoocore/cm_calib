@@ -195,6 +195,18 @@ def _default_bootstrap_config() -> dict:
         },
         "optimization_order": _default_parameter_order(),
         "parameters": _default_parameter_config(),
+        "curriculum": {
+            "enabled": False,
+            "phases": [
+                {"progress_max": 0.50, "active_params": ["lens_fov", "lens_sensor_offset_x", "lens_sensor_offset_y"]},
+                {"progress_max": 0.80, "active_params": ["lens_fov", "lens_sensor_offset_x", "lens_sensor_offset_y", "mount_yaw", "mount_pitch"]},
+                {"progress_max": 1.00, "active_params": None},
+            ],
+        },
+        "parabolic_interpolation": {
+            "enabled": False,
+            "params": ["lens_sensor_offset_x", "lens_sensor_offset_y"],
+        },
     }
 
 

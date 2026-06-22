@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Tuple
 import cv2
 
 from src.calibration.calib_types import BoardScoreDetail, TotalScoreDetail
+from src.calibration.sensitivity import build_geometric_sensitivity, get_skip_boards
 
 try:
     import optuna
@@ -124,9 +125,82 @@ class EvaluateMixin:
 
     def optimize(self) -> dict:
         mode = getattr(self, "optimizer_mode", "coordinate_descent")
+        if mode == "hybrid":
+            return self._optimize_hybrid()
         if mode in ("bayesian", "auto") and _OPTUNA_AVAILABLE:
             print(f"Using {mode} optimizer")
             return self._optimize_bayesian_impl()
         if mode == "auto":
             print("Optuna not available, falling back to coordinate_descent")
         return self._optimize_coordinate_descent_impl()
+
+    def _optimize_hybrid(self) -> dict:
+        """P5: CD then Bayesian in a tight search box."""
+        phase1_iters = getattr(self, 'hybrid_phase1_iters', 15)
+        search_sigma = getattr(self, 'hybrid_search_box_sigma', 3.0)
+        total = self.max_iters
+        cd_iters = min(phase1_iters, total - 2)
+        if cd_iters < 3:
+            return self._optimize_coordinate_descent_impl()
+
+        print(f"[hybrid] Phase 1: CD × {cd_iters}")
+        cd_result = self._optimize_coordinate_descent_impl(cd_iters)
+        cd_score = cd_result.get("final_score", float("inf"))
+        cd_values = cd_result.get("final_values", {})
+
+        bayes_iters = total - cd_iters
+        print(f"[hybrid] Phase 2: Bayesian × {bayes_iters} around CD best")
+        search_range = {}
+        for p in self.params:
+            step = max(p.step, 1e-6) if p.step else 0.001
+            centre = cd_values.get(p.name, p.initial)
+            half = search_sigma * step
+            search_range[p.name] = (
+                max(p.min_value, centre - half),
+                min(p.max_value, centre + half),
+            )
+        self._apply_value_map(cd_values)
+        import time
+        time.sleep(self.settle_sec)
+
+        def objective(trial):
+            values = {}
+            for param in self.params:
+                low, high = search_range[param.name]
+                step = max(param.step, 1e-6) if param.step else 0.001
+                values[param.name] = trial.suggest_float(param.name, low, high, step=step)
+            self._apply_value_map(values)
+            time.sleep(self.settle_sec)
+            total_detail, _ = self.evaluate("bayes_hybrid", None)
+            return float(total_detail.total_score)
+
+        sampler = optuna.samplers.TPESampler(
+            multivariate=True,
+            n_startup_trials=max(5, min(bayes_iters // 3, 15)),
+            seed=42,
+        )
+        study = optuna.create_study(direction="minimize", sampler=sampler)
+        study.enqueue_trial(cd_values)
+        study.optimize(objective, n_trials=bayes_iters, n_jobs=1)
+
+        best_values = {p.name: study.best_params[p.name] for p in self.params}
+        self._apply_value_map(best_values)
+        time.sleep(self.settle_sec)
+        best_total_detail, best_img = self.evaluate("hybrid_final", None)
+
+        bayes_score = best_total_detail.total_score
+        if cd_score + self.min_improve < bayes_score:
+            print(f"[hybrid] CD best retained ({cd_score:.6f} < {bayes_score:.6f})")
+            return cd_result
+        print(f"[hybrid] Bayesian improved ({bayes_score:.6f} vs CD {cd_score:.6f})")
+        return self._build_result_payload(
+            best_score=bayes_score,
+            best_values=best_values,
+            best_total_detail=best_total_detail,
+            best_img=best_img,
+            best_score_image=self._ensure_best_score_image(best_img, best_total_detail, values=best_values),
+            best_overlay_image=self._ensure_best_overlay_image(best_img),
+            stop_reason="max_iters_reached",
+            history=[],
+            in_progress=False,
+        )

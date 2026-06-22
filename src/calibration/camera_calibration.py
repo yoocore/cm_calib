@@ -2535,13 +2535,22 @@ class CameraCalibrator(DetectorMixin, ScoringMixin, AnnotationMixin, ScriptContr
     def _ordered_params_for_iteration(self) -> List[ParameterSpec]:
         if not (self.strategy_adaptation_enabled and self.strategy_reorder_params):
             return list(self.params)
-        return sorted(
+        params = sorted(
             self.params,
             key=lambda param: (
                 -float(self.strategy_param_state.get(param.name, {}).get("priority_score", 0.0)),
                 self.param_order_index.get(param.name, len(self.param_order_index)),
             ),
         )
+        if hasattr(self, 'curriculum_enabled') and self.curriculum_enabled:
+            progress = self._total_iteration_count / max(1, self.max_iters)
+            for phase in self.curriculum_phases:
+                if progress <= phase.get("progress_max", 1.0):
+                    active = phase.get("active_params")
+                    if active is not None:
+                        params = [p for p in params if p.name in active]
+                    break
+        return params
 
 
     def _new_strategy_iteration_stats(self) -> Dict[str, Dict[str, object]]:

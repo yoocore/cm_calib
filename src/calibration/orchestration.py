@@ -3308,6 +3308,42 @@ def _build_multi_start_run_configs(
 
     return root_output_dir, run_cfgs
 
+
+
+class MultiStartSharedState:
+    """State shared across multi-start runs, merged via exponential moving average."""
+    def __init__(self):
+        self.step_scales: Dict[str, float] = {}
+        self.preferred_directions: Dict[str, float] = {}
+        self.priority_scores: Dict[str, float] = {}
+        self.best_per_board_scores: Dict[str, float] = {}
+
+    def merge(self, start_state: dict, alpha: float = 0.3):
+        for name, scale in start_state.get("step_scales", {}).items():
+            if isinstance(scale, (int, float)):
+                prev = self.step_scales.get(name, scale)
+                self.step_scales[name] = alpha * scale + (1.0 - alpha) * prev
+        for name, direction in start_state.get("preferred_directions", {}).items():
+            if isinstance(direction, (int, float)):
+                prev = self.preferred_directions.get(name, direction)
+                self.preferred_directions[name] = alpha * direction + (1.0 - alpha) * prev
+        for name, score in start_state.get("priority_scores", {}).items():
+            if isinstance(score, (int, float)):
+                prev = self.priority_scores.get(name, score)
+                self.priority_scores[name] = alpha * score + (1.0 - alpha) * prev
+        for bid, score in start_state.get("best_per_board_scores", {}).items():
+            if isinstance(score, (int, float)):
+                prev = self.best_per_board_scores.get(bid, score)
+                self.best_per_board_scores[bid] = min(prev, score)
+
+    def to_dict(self) -> dict:
+        return {
+            "step_scales": dict(self.step_scales),
+            "preferred_directions": dict(self.preferred_directions),
+            "priority_scores": dict(self.priority_scores),
+            "best_per_board_scores": dict(self.best_per_board_scores),
+        }
+
 def _run_multi_start_campaign(
     config_path: Path,
     cfg: dict,

@@ -1,4 +1,5 @@
 import math
+import numpy as np
 import random
 from dataclasses import dataclass
 from pathlib import Path
@@ -6,6 +7,61 @@ from typing import Dict, List, Optional, Tuple
 
 from src.calibration.calib_types import TotalScoreDetail
 
+
+
+
+class JacobianAccumulator:
+    """Accumulates single-param trial results for Gauss-Newton gradient estimation."""
+
+    def __init__(self):
+        self._param_names: List[str] = []
+        self._gradients: Dict[str, float] = {}
+        self._deltas: Dict[str, float] = {}
+        self._trial_scores: Dict[str, float] = {}
+        self._base_score: float = 0.0
+
+    def record_base(self, score: float, values: Dict[str, float]):
+        self._base_score = score
+
+    def record_trial(self, param_name: str, base_value: float, trial_value: float,
+                     base_score: float, trial_score: float):
+        delta = trial_value - base_value
+        if abs(delta) < 1e-12:
+            self._gradients[param_name] = 0.0
+            self._deltas[param_name] = 0.0
+        else:
+            self._gradients[param_name] = (trial_score - base_score) / delta
+            self._deltas[param_name] = delta
+        self._trial_scores[param_name] = trial_score
+        if param_name not in self._param_names:
+            self._param_names.append(param_name)
+
+    def compute_gauss_newton_step(self, params: List, best_values: Dict[str, float],
+                                   damping: float = 1.0) -> Optional[Dict[str, float]]:
+        n = len(self._param_names)
+        if n == 0:
+            return None
+        J = np.zeros((n, n))
+        r = np.zeros(n)
+        for i, name in enumerate(self._param_names):
+            grad = self._gradients.get(name, 0.0)
+            delta = self._deltas.get(name, 1.0)
+            J[i, i] = grad * abs(delta) if abs(delta) > 1e-12 else 0.0
+            r[i] = max(0.0, self._trial_scores.get(name, self._base_score))
+        JTJ = J.T @ J + np.eye(n) * damping
+        try:
+            delta_x = -np.linalg.solve(JTJ, J.T @ r)
+        except np.linalg.LinAlgError:
+            return None
+        result: Dict[str, float] = {}
+        for i, name in enumerate(self._param_names):
+            p = next((pp for pp in params if pp.name == name), None)
+            if p is None:
+                continue
+            new_val = best_values[name] + delta_x[i]
+            new_val = max(p.min_value, min(p.max_value, new_val))
+            result[name] = new_val
+        return result if result else None
 
 class CoordinateDescentMixin:
     """Coordinate Descent optimizer methods for CameraCalibrator."""
@@ -343,6 +399,8 @@ class CoordinateDescentMixin:
     def _optimize_coordinate_descent_impl(self) -> dict:
         self._ensure_live_log()
         self._historical_best_snapshot = None
+        if getattr(self, 'use_gauss_newton', False):
+            self._gn_acc = JacobianAccumulator()
         if self.real_detections is None:
             self.real_detections = self._detect_reference_boards()
 
@@ -361,6 +419,8 @@ class CoordinateDescentMixin:
         best_score = best_total_detail.total_score
         best_baseline = self._as_baseline_metrics(best_total_detail)
         best_values = {p.name: p.value for p in self.params}
+        if getattr(self, 'use_gauss_newton', False) and hasattr(self, '_gn_acc'):
+            self._gn_acc.record_base(best_score, best_values)
         self._remember_historical_best_snapshot(
             score=best_score,
             values=best_values,
@@ -520,6 +580,12 @@ class CoordinateDescentMixin:
                         accepted = trial_result.accepted
                         accepted_reason = trial_result.accepted_reason
                         joint_candidate_reason = trial_result.joint_candidate_reason
+
+                        if getattr(self, 'use_gauss_newton', False) and hasattr(self, '_gn_acc'):
+                            self._gn_acc.record_trial(
+                                p.name, base_values[p.name], trial_value,
+                                base_score, score,
+                            )
 
                         eligible_for_joint = accepted or joint_candidate_reason is not None
                         if eligible_for_joint and (
@@ -718,6 +784,34 @@ class CoordinateDescentMixin:
                     f"joint_update accepted_params={joined} best_score={best_score:.6f} "
                     f"{self._top_board_summary(best_total_detail)}"
                 )
+            # P0: Gauss-Newton step
+            if getattr(self, 'use_gauss_newton', False) and it >= 2:
+                gn = self._gn_acc.compute_gauss_newton_step(
+                    self.params, best_values
+                )
+                if gn:
+                    self._apply_value_map_or_recover(
+                        gn, "Failed to apply GN step",
+                    )
+                    gn_detail, gn_img = self.evaluate(f"gn_{it}", best_baseline)
+                    gn_score = gn_detail.total_score
+                    if gn_score + self.min_improve < best_score:
+                        best_score = gn_score
+                        best_total_detail = gn_detail
+                        best_img = gn_img
+                        best_values = gn.copy()
+                        improved_in_iter = True
+                        print(
+                            f"gauss_newton accepted best_score={best_score:.6f} "
+                            f"{self._top_board_summary(best_total_detail)}"
+                        )
+                    else:
+                        self._apply_value_map_or_recover(
+                            best_values, "Failed to restore after GN rejection",
+                        )
+                    self._gn_acc.record_base(best_score, best_values)
+
+
 
             self._finalize_strategy_iteration(
                 it,
@@ -769,3 +863,25 @@ class CoordinateDescentMixin:
             in_progress=False,
         )
         return result
+
+    def _parabolic_optimal_offset(self, p, base_value, base_score, step, direction, evaluate_fn):
+        """P8: Parabolic interpolation for offset params (default off)."""
+        if not hasattr(self, 'parabolic_enabled') or not self.parabolic_enabled:
+            return None
+        parabolic_params = getattr(self, 'parabolic_params', [])
+        if p.name not in parabolic_params:
+            return None
+        points = [(0.0, base_score)]
+        for mult in [1.0, 2.0]:
+            trial_val = base_value + direction * step * mult
+            score = evaluate_fn({p.name: trial_val})
+            points.append((mult, score))
+        xs = [x for x, _ in points]
+        ys = [y for _, y in points]
+        a, b, _ = np.polyfit(xs, ys, 2)
+        if a <= 0.0:
+            return None
+        optimal_mult = -b / (2.0 * a)
+        if not 0.5 <= optimal_mult <= 3.0:
+            return None
+        return base_value + direction * step * optimal_mult

@@ -1,4 +1,5 @@
 import math
+import random
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -463,6 +464,11 @@ class CoordinateDescentMixin:
                 seen_trial_values: set[float] = set()
                 stop_param_search = False
                 effective_step = self._strategy_effective_step(p)
+
+                if getattr(self, "jitter_eps", 0.0) > 0:
+                    self.jitter_eps = max(0.0, self.jitter_eps * getattr(self, "jitter_decay", 0.98))
+                    jitter = random.gauss(0, self.jitter_eps * effective_step)
+                    effective_step = max(p.min_step, effective_step + jitter)
 
                 for direction in trial_directions:
                     for trial_multiplier in self._trial_multipliers_for_param(p.name):

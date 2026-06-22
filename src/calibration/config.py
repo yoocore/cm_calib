@@ -154,7 +154,7 @@ def _default_bootstrap_config() -> dict:
             "trial_multipliers": [1.0, 2.0, 4.0],
         },
         "strategy_adaptation": {
-            "enabled": False,
+            "enabled": True,
             "reorder_params": True,
             "adjust_step_scale": True,
             "focus_on_joint_candidates": True,

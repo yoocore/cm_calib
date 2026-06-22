@@ -123,18 +123,10 @@ class EvaluateMixin:
         return total_detail, sim_path
 
     def optimize(self) -> dict:
-        if self.optimizer_mode == "bayesian":
-            result = self._optimize_bayesian()
-        elif self.optimizer_mode == "auto":
-            if _OPTUNA_AVAILABLE:
-                print("Using Bayesian optimizer (optuna available)")
-                result = self._optimize_bayesian()
-            else:
-                print("Using coordinate_descent optimizer (optuna not available)")
-                result = self._optimize_coordinate_descent()
-        else:
-            result = self._optimize_coordinate_descent()
-        best_img_str = result.get("best_image", "")
-        if best_img_str:
-            self._prune_intermediate_images(Path(best_img_str))
-        return result
+        mode = getattr(self, "optimizer_mode", "coordinate_descent")
+        if mode in ("bayesian", "auto") and _OPTUNA_AVAILABLE:
+            print(f"Using {mode} optimizer")
+            return self._optimize_bayesian_impl()
+        if mode == "auto":
+            print("Optuna not available, falling back to coordinate_descent")
+        return self._optimize_coordinate_descent_impl()

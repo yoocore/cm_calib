@@ -390,8 +390,17 @@ class CameraCalibrator(DetectorMixin, ScoringMixin, AnnotationMixin, ScriptContr
         self.progress_flush_every = max(1, int(cfg.get("progress_flush_every", 1)))
         self.max_history_entries = max(0, int(cfg.get("max_history_entries", 500)))
         self.optimizer_mode = str(cfg.get("optimizer_mode", "coordinate_descent")).lower()
-        if self.optimizer_mode not in {"coordinate_descent", "bayesian", "auto"}:
-            raise ValueError("optimizer_mode must be 'coordinate_descent', 'bayesian', or 'auto'")
+        if self.optimizer_mode not in {"coordinate_descent", "bayesian", "auto", "hybrid"}:
+            raise ValueError(
+                "optimizer_mode must be 'coordinate_descent', 'bayesian', 'auto', or 'hybrid'"
+            )
+        self.use_gauss_newton = bool(cfg.get("use_gauss_newton", False))
+        self.strategy_adaptation = bool(cfg.get("strategy_adaptation", True))
+        self.jitter_eps = float(cfg.get("jitter_eps", 0.01))
+        self.jitter_decay = float(cfg.get("jitter_decay", 0.98))
+        self.hybrid_phase1_iters = int(cfg.get("hybrid_phase1_iters", 15))
+        self.curriculum_annealing = bool(cfg.get("curriculum_annealing", False))
+        self.parabolic_refinement = bool(cfg.get("parabolic_refinement", False))
         self.keep_aspect_resize = bool(cfg.get("keep_aspect_resize", True))
         self.auto_generate_best_score_image = bool(
             cfg.get("auto_generate_best_score_image", True)

@@ -62,7 +62,7 @@ class MainWindow(QMainWindow):
         left_mid_splitter = QSplitter(Qt.Horizontal, self)
         left_mid_splitter.addWidget(self.cm_settings_panel)
         left_mid_splitter.addWidget(self.calibration_panel)
-        left_mid_splitter.setSizes([560, 360])
+        left_mid_splitter.setSizes([440, 260])
         left_mid_splitter.setHandleWidth(8)
         left_mid_splitter.setCollapsible(0, False)
         left_mid_splitter.setCollapsible(1, False)

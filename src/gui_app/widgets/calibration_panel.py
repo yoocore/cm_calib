@@ -216,7 +216,7 @@ class CalibrationPanel(QGroupBox):
 
         self.status_label = QLabel("idle")
         self.status_label.setAlignment(Qt.AlignCenter)
-        self.status_label.setMinimumHeight(34)
+        self.status_label.setMinimumHeight(36)
         self.status_label.setMinimumWidth(120)
 
         self.phase_label = QLabel("")
@@ -237,11 +237,11 @@ class CalibrationPanel(QGroupBox):
         self.start_button.setDefault(True)
         self.start_button.setAutoDefault(True)
         self.start_button.setStyleSheet(_PRIMARY_BUTTON_STYLE)
-        self.start_button.setMinimumHeight(42)
+        self.start_button.setMinimumHeight(36)
         self.stop_button = QPushButton("Calib Stop")
         self.stop_button.setEnabled(False)
         self.stop_button.setStyleSheet(_DANGER_BUTTON_STYLE)
-        self.stop_button.setMinimumHeight(42)
+        self.stop_button.setMinimumHeight(36)
         self.prepare_button = QPushButton("CM Prepare")
         self.prepare_button.setStyleSheet(_SECONDARY_BUTTON_STYLE)
         self.prepare_button.setMinimumHeight(36)

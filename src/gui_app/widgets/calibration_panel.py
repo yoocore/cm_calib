@@ -215,10 +215,14 @@ class CalibrationPanel(QGroupBox):
         self._er_refine_iters_spin.setValue(80)
 
         # --- Shared spinners ---
+        self.jitter_auto_cb = QCheckBox("Auto")
+        self.jitter_auto_cb.setChecked(True)
         self.jitter_spin = QDoubleSpinBox()
         self.jitter_spin.setRange(0.0, 999.0)
         self.jitter_spin.setValue(2.0)
         self.jitter_spin.setDecimals(2)
+        self.jitter_spin.setEnabled(False)
+        self.jitter_auto_cb.toggled.connect(self.jitter_spin.setEnabled)
 
         self.status_label = QLabel("idle")
         self.status_label.setAlignment(Qt.AlignCenter)
@@ -310,7 +314,7 @@ class CalibrationPanel(QGroupBox):
         rounds_inner.addWidget(self.strategy_tabs)
 
         jitter_row = QHBoxLayout()
-        jitter_row.addWidget(QLabel("Jitter"))
+        jitter_row.addWidget(self.jitter_auto_cb)
         jitter_row.addWidget(self.jitter_spin, 1)
         rounds_inner.addLayout(jitter_row)
 
@@ -389,7 +393,7 @@ class CalibrationPanel(QGroupBox):
 
     def estimated_per_camera_seconds(self) -> int:
         campaign_rounds = int(self.campaign_rounds_spin.value())
-        jitter_val = float(self.jitter_spin.value())
+        jitter_val = 2.0 if self.jitter_auto_cb.isChecked() else float(self.jitter_spin.value())
         if self.explore_then_refine:
             start_count = max(0, int(self._er_count_spin.value()))
             explore_iters = int(self._er_iters_spin.value()) or 30
@@ -451,7 +455,8 @@ class CalibrationPanel(QGroupBox):
         self._er_count_spin.setEnabled(not locked)
         self._er_iters_spin.setEnabled(not locked)
         self._er_refine_iters_spin.setEnabled(not locked)
-        self.jitter_spin.setEnabled(not locked)
+        self.jitter_spin.setEnabled(not locked and not self.jitter_auto_cb.isChecked())
+        self.jitter_auto_cb.setEnabled(not locked)
         self.strategy_tabs.setEnabled(not locked)
         self.cm_version_combo.setEnabled(not locked)
 

@@ -3216,23 +3216,6 @@ def _build_multi_start_run_configs(
         raise ValueError("multi-start count must be positive")
 
     js = _compute_auto_jitter(camera_name) if str(jitter_steps).lower() == "auto" else float(jitter_steps)
-
-    # Warm-start from pool best params for all multi-start runs
-    pool_initial_values: Dict[str, float] = {}
-    try:
-        pool = _load_params_pool(camera_name)
-        exact_entry = _pool_entry_for_current_config(pool, cfg)
-        if exact_entry is not None:
-            raw = exact_entry.get('best_params', {})
-            if raw:
-                pool_initial_values = {
-                    name: float(v) for name, v in raw.items()
-                    if isinstance(v, (int, float))
-                }
-                ps = exact_entry.get('best_score', '?')
-                print(f'[multi-start] Warm-start from pool best (score={ps})')
-    except Exception as e:
-        print(f'[multi-start] Pool warm-start skipped: {e}')
     base_parameters = cfg.get("parameters")
     if not isinstance(base_parameters, dict) or not base_parameters:
         raise ValueError("parameters must be a non-empty object for multi-start mode")
@@ -3308,8 +3291,7 @@ def _build_multi_start_run_configs(
             }
 
         for name, base_param in base_parameters.items():
-            base_initial = float(base_param["initial"])
-            initial_value = pool_initial_values.get(name, base_initial)
+            initial_value = float(base_param["initial"])
             min_value, max_value = _resolve_parameter_bounds(base_param)
 
             step = abs(float(base_param.get("step", 0.0)))

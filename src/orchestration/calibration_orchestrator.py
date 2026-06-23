@@ -256,24 +256,19 @@ def _prepare_runtime_for_camera(
     movie_view_size: tuple[int, int] | None = None,
     skip_bootstrap: bool = False,
 ) -> dict[str, Any]:
-    # --- Step 0: Ensure CarMaker is running (sync_gui/bootstrap both need it) ---
-    existing = cmctrl.list_carmaker_processes()
-    _fresh_start = not existing
-    if not existing:
-        executable = cmctrl.resolve_carmaker_executable(args.cm_install.resolve())
-        print(f"Starting CarMaker: {executable} -projectdir {project_root}")
-        subprocess.Popen(
-            [str(executable), "-projectdir", str(project_root)],
-            cwd=str(executable.parent),
-        )
-        cmctrl.wait_for_carmaker_tcleval_ready(timeout_sec=60.0)
-        print("CarMaker started and TclEval ready.")
-    # --- Step 1: Activate sensor & sync TestRun in CarMaker GUI ---
+    # --- Step 0: Kill all existing processes for clean environment ---
+    cmctrl.kill_all_processes()
+    # --- Step 1: Start CarMaker fresh ---
+    executable = cmctrl.resolve_carmaker_executable(args.cm_install.resolve())
+    print(f"Starting CarMaker: {executable} -projectdir {project_root}")
+    subprocess.Popen(
+        [str(executable), "-projectdir", str(project_root)],
+        cwd=str(executable.parent),
+    )
+    cmctrl.wait_for_carmaker_tcleval_ready(timeout_sec=60.0)
+    print("CarMaker started and TclEval ready.")
+    # --- Step 2: Resolve vehicle path ---
     vehicle_path, vehicle_key = cmctrl.resolve_vehicle_path(project_root, testrun_rel_path)
-    activation = cmctrl.activate_single_vehicle_sensor(vehicle_path, camera_name)
-    selected_testrun = cmctrl.sync_gui_testrun_selection(project_root, testrun_rel_path)
-    # --- sync_gui re-initializes IPG-MOVIE (re-registers CheckViewPort), so re-guard ---
-    cmctrl.disable_checkviewport_recursion()
     # --- Step 2: StartSim / StopSim (bootstrap the TestRun for Movie) ---
     carmaker_pid, bootstrap_testrun = cmctrl.bootstrap_testrun_for_movie_via_cmapi_sync(
         project_root=project_root,
@@ -322,16 +317,9 @@ def _prepare_runtime_for_camera(
         movie_scene["view_widget"] = str(applied_view.get("widget") or "")
         movie_scene["mode"] = str(applied_view.get("mode") or movie_scene.get("mode") or "")
     abraxas = cmctrl.ensure_movie_abraxas_enabled(timeout_sec=float(args.health_check_timeout_sec))
-    camera_selection = cmctrl.ensure_movie_camera_selected(
-        activation["ipgmovie_sensor_label"],
-        timeout_sec=float(args.health_check_timeout_sec),
-    )
-    movie_scene["camera_name"] = str(camera_selection.get("current") or movie_scene.get("camera_name") or "")
     camera_widgets = cmctrl.ensure_movie_camera_widgets(timeout_sec=float(args.health_check_timeout_sec))
     # Restore render timer after View::SetSize + ABRAXAS are done
     cmctrl.enable_movie_updateview_timer(timeout_sec=5.0)
-    # --- Step 8: Capture initial parameter values ---
-    config_initial_capture = cmctrl.capture_initial_values_to_config(config_path)
     # --- Step 9: Health check ---
     health_classification: Optional[dict[str, Any]] = None
     if args.health_check_after_switch:
@@ -364,18 +352,23 @@ def _prepare_runtime_for_camera(
     return {
         "vehicle_path": str(vehicle_path),
         "vehicle_key": vehicle_key,
-        "selected_testrun": selected_testrun,
+        "selected_testrun": bootstrap_testrun,
         "bootstrap_testrun": bootstrap_testrun,
-        "activation": activation,
+        "activation": {
+            "vehicle_path": str(vehicle_path),
+            "selected_sensor_name": camera_name,
+            "selected_sensor_index": None,
+            "ipgmovie_sensor_label": f"CAMERA_RSI-SENSOR Vhcl.{camera_name}",
+            "changed": False,
+        },
         "carmaker_pid": carmaker_pid,
         "movie_scene": movie_scene,
         "abraxas": abraxas,
-        "camera_selection": camera_selection,
+        "camera_selection": None,
         "camera_widgets": camera_widgets,
-        "config_initial_capture": config_initial_capture,
+        "config_initial_capture": None,
         "health": health_classification,
     }
-
 
 def _reuse_existing_runtime_for_camera(
     args: argparse.Namespace,
@@ -419,12 +412,17 @@ def _reuse_existing_runtime_for_camera(
             f"{status_summary.get('status_reason') or 'unknown reason'}"
         )
 
-    active_sensors = status_summary.get("active_sensors") if isinstance(status_summary.get("active_sensors"), list) else []
-    if camera_name not in [str(sensor) for sensor in active_sensors]:
-        raise RuntimeError(
-            f"Current runtime active sensor does not match first camera {camera_name!r}: {active_sensors!r}"
-        )
-
+    # --- Activate sensor ---
+    activation = cmctrl.activate_single_vehicle_sensor(vehicle_path, camera_name)
+    # --- Restart TestRun to reload vehicle file ---
+    start_simulation_via_tcl(
+        running_timeout_sec=float(args.bootstrap_running_timeout_sec),
+        probe_name="reuse_runtime_vehicle_reload",
+    )
+    stop_simulation_via_tcl(
+        idle_timeout_sec=float(args.bootstrap_idle_timeout_sec),
+        probe_name="reuse_runtime_vehicle_reload",
+    )
     selected_testrun = cmctrl.sync_gui_testrun_selection(project_root, testrun_rel_path)
     # --- sync_gui re-initializes IPG-MOVIE (re-registers CheckViewPort), so re-guard ---
     cmctrl.disable_checkviewport_recursion()
@@ -444,11 +442,11 @@ def _reuse_existing_runtime_for_camera(
         "selected_testrun": selected_testrun,
         "bootstrap_testrun": None,
         "activation": {
-            "vehicle_path": str(vehicle_path),
-            "selected_sensor_name": camera_name,
-            "selected_sensor_index": None,
-            "ipgmovie_sensor_label": f"CAMERA_RSI-SENSOR Vhcl.{camera_name}",
-            "changed": False,
+            "vehicle_path": activation["vehicle_path"],
+            "selected_sensor_name": activation["selected_sensor_name"],
+            "selected_sensor_index": activation["selected_sensor_index"],
+            "ipgmovie_sensor_label": activation["ipgmovie_sensor_label"],
+            "changed": activation["changed"],
         },
         "carmaker_pid": None,
         "movie_scene": {},

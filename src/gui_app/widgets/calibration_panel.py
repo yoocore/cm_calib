@@ -223,7 +223,7 @@ class CalibrationPanel(QGroupBox):
         self.jitter_spin.setValue(2.0)
         self.jitter_spin.setDecimals(2)
         self.jitter_spin.setEnabled(False)
-        self.jitter_auto_cb.toggled.connect(self.jitter_spin.setEnabled)
+        self.jitter_auto_cb.toggled.connect(lambda checked: self.jitter_spin.setEnabled(not checked))
 
         self.status_label = QLabel("idle")
         self.status_label.setAlignment(Qt.AlignCenter)

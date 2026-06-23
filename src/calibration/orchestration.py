@@ -1519,7 +1519,6 @@ def _resolve_vehicle_writeback_context(config_path: Path, cfg: dict) -> Optional
     print(f"[writeback] Resolving context: config={config_path}, vehicle_writeback keys={list(payload.keys())}")
     if payload.get("enabled") is False:
         print(f"[writeback] SKIPPED: vehicle_writeback.enabled is False")
-        _VEHICLE_WRITEBACK_CONTEXT_CACHE[cache_key] = None
         return None
 
     project_root = Path(payload.get("project_root", Path(__file__).resolve().parents[5]))
@@ -1550,7 +1549,6 @@ def _resolve_vehicle_writeback_context(config_path: Path, cfg: dict) -> Optional
     if vehicle_path is None:
         print(f"[writeback] SKIPPED: vehicle_path is None, probe result was: {runtime_context}")
         print(f"Skipped vehicle writeback: unable to resolve vehicle path for {config_path}")
-        _VEHICLE_WRITEBACK_CONTEXT_CACHE[cache_key] = None
         return None
 
     context = {

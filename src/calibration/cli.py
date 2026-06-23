@@ -357,7 +357,9 @@ def main() -> None:
         runtime_context = _probe_runtime_vehicle_context()
         if runtime_context and runtime_context.get("vehicle_path"):
             cfg.setdefault("vehicle_writeback", {}).setdefault("vehicle", str(runtime_context["vehicle_path"]))
-            print(f"Vehicle writeback path cached: {runtime_context['vehicle_path']}")
+            print(f"[writeback] Vehicle path cached from probe: {runtime_context['vehicle_path']}")
+        else:
+            print(f"[writeback] Vehicle path NOT cached: probe returned {runtime_context}")
         print(f"Config initial values AFTER vehicle DDE read for {camera_name}:")
         for name, param in sorted(cfg.get("parameters", {}).items()):
             if "initial" in param:

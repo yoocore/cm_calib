@@ -3601,13 +3601,70 @@ def _resolve_round_seed_anchor(
     anchor_score: Optional[float] = None
     anchor_source = "live_read"
 
-    # Use config initial values (from DDE vehicle-file read)
+    prefer_history = bool(policy.get("prefer_history_best", True))
+
+    if prefer_history:
+        pool = _load_params_pool(camera_name)
+
+        # 1. Try exact board-signature match from pool
+        exact_entry = _pool_entry_for_current_config(pool, cfg)
+        if exact_entry is not None:
+            raw_values = exact_entry.get("best_params", {})
+            if raw_values:
+                anchor_values = {
+                    name: float(value)
+                    for name, value in raw_values.items()
+                    if isinstance(value, (int, float))
+                }
+                parameters = cfg.get("parameters", {})
+                for name in list(anchor_values.keys()):
+                    param_cfg = parameters.get(name)
+                    if param_cfg is None:
+                        continue
+                    raw = anchor_values[name]
+                    clamped = _clamp_to_parameter_bounds(param_cfg, raw)
+                    if abs(clamped - raw) > 1e-9:
+                        print(f"[WARN] clamping pool exact-sig {name}={raw} to {clamped}")
+                    anchor_values[name] = clamped
+                anchor_score = float(exact_entry.get("best_score", 0))
+                anchor_source = "pool_exact_sig"
+                print(f"Using pool exact-sig as seed anchor (score={anchor_score})")
+                return anchor_values, anchor_score, anchor_source
+
+        # 2. Fall back to best cross-signature params from pool
+        cross_entry = _find_best_pool_entry_across_signatures(pool)
+        if cross_entry is not None:
+            raw_values = cross_entry.get("best_params", {})
+            if raw_values:
+                anchor_values = {
+                    name: float(value)
+                    for name, value in raw_values.items()
+                    if isinstance(value, (int, float))
+                }
+                parameters = cfg.get("parameters", {})
+                for name in list(anchor_values.keys()):
+                    param_cfg = parameters.get(name)
+                    if param_cfg is None:
+                        continue
+                    raw = anchor_values[name]
+                    clamped = _clamp_to_parameter_bounds(param_cfg, raw)
+                    if abs(clamped - raw) > 1e-9:
+                        print(f"[WARN] clamping pool cross-sig {name}={raw} to {clamped}")
+                    anchor_values[name] = clamped
+                anchor_score = float(cross_entry.get("best_score", 0))
+                anchor_source = "pool_cross_sig"
+                print(f"Using pool cross-sig as seed anchor (score={anchor_score})")
+                return anchor_values, anchor_score, anchor_source
+
+    # 3. Fall back to config initial values
     config_initial = _extract_initial_values_from_cfg(cfg)
     if config_initial:
+        anchor_values = config_initial
+        anchor_source = "config_initial"
         print(f"Using config initial values as seed anchor")
-        return config_initial, anchor_score, "config_initial"
+        return anchor_values, anchor_score, anchor_source
 
-    # Fall back to live read (empty anchor)
+    # 4. Fall back to live read (empty anchor)
     return anchor_values, anchor_score, anchor_source
 
 def _choose_next_round_seed_values(

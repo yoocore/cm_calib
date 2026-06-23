@@ -204,6 +204,7 @@ class CameraResultCard(QGroupBox):
         self.init_score_value = QLabel("-")
         self.best_score_value = QLabel("-")
         self.current_iter_value = QLabel("-")
+        self._score_windows: list[QWidget] = []
         self.iter_preview = ArtifactPreviewLabel("")
         self.score_preview = ArtifactPreviewLabel("")
         self.overlay_preview = ArtifactPreviewLabel("")
@@ -265,6 +266,8 @@ class CameraResultCard(QGroupBox):
                 "border-color: #e2e8f0;"
                 "}"
             )
+        self.open_score_live_button.setEnabled(False)
+        self.open_score_plot_button.setEnabled(False)
 
         layout = QVBoxLayout(self)
         layout.addLayout(info_layout)
@@ -565,6 +568,9 @@ class OutputPanel(QGroupBox):
         if not result_json:
             return
         window = ScoreCurveWindow(camera_name, result_json, mode=mode)
+        window.setAttribute(Qt.WA_DeleteOnClose)
+        window.destroyed.connect(lambda obj=None, w=window: self._score_windows.remove(w) if w in self._score_windows else None)
+        self._score_windows.append(window)
         window.show()
 
     def _open_camera_artifact(self, camera_name: str, role: int) -> None:

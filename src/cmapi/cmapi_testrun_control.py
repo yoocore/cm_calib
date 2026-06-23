@@ -1321,6 +1321,11 @@ async def bootstrap_testrun_for_movie_via_cmapi(
     idle_timeout_ms = max(1000, int(max(1.0, float(idle_timeout_sec)) * 1000))
     wait_for_carmaker_status("idle", 10000, probe_name=f"{probe_name}_idle_before")
 
+    # Load the correct TestRun into CarMaker GUI before starting simulation.
+    # Without this, StartSim/Exec fails when CarMaker starts with internal default
+    # configuration (e.g. fresh start after kill_all_processes without prior session).
+    selected_name = sync_gui_testrun_selection(project_root, testrun_rel_path)
+
     try:
         start_simulation_via_tcl(
             running_timeout_sec=max(1.0, float(running_timeout_ms) / 1000.0),
@@ -1337,7 +1342,6 @@ async def bootstrap_testrun_for_movie_via_cmapi(
     except Exception as exc:
         raise RuntimeError(f"Failed to stop TestRun via {TESTRUN_CONTROL_LABEL}: {exc}") from exc
 
-    selected_name = sync_gui_testrun_selection(project_root, testrun_rel_path)
 
     return resolved_carmaker, resolved_pid, selected_name
 

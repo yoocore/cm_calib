@@ -999,6 +999,24 @@ def _build_camera_history_summary_compact(summary: dict) -> dict:
         "latest_campaign": (summary.get("campaigns") or [None])[-1],
     }
 
+
+def _build_camera_trend_data(camera_name: str) -> list[dict]:
+    """Return time-series trend data for charting: per-run score, board sig, timestamp."""
+    summary = _build_camera_history_summary(camera_name)
+    runs = [r for r in (summary.get("runs") or []) if isinstance(r, dict)]
+    trend = []
+    for r in runs:
+        trend.append({
+            "timestamp": r.get("timestamp", ""),
+            "final_score": r.get("final_score"),
+            "start_score": r.get("start_score"),
+            "boards_count": r.get("boards_count"),
+            "board_signature": r.get("board_signature", ""),
+            "mode": r.get("mode", ""),
+        })
+    return trend
+
+
 def _write_camera_history_summary_compact(camera_name: str, summary: dict) -> Path:
     compact_summary = _build_camera_history_summary_compact(summary)
     compact_summary_path = _camera_history_summary_compact_path(camera_name)

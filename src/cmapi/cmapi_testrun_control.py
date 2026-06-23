@@ -1092,7 +1092,7 @@ def sync_gui_testrun_selection(
     output_dir.mkdir(parents=True, exist_ok=True)
     probe_name = "cmapi_testrun_control_load_testrun_probe"
     expected_name = testrun_rel_path.name
-    escaped_testrun = testrun_rel_path.as_posix().replace("\\", "/").replace('"', '\\"')
+    escaped_testrun = (Path("Data") / "TestRun" / testrun_rel_path).as_posix().replace("\\", "/").replace('"', '\\"')
     result = run_check_attempt(
         name=probe_name,
         service="TclEval",

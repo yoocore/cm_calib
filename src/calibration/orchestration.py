@@ -1516,7 +1516,9 @@ def _resolve_vehicle_writeback_context(config_path: Path, cfg: dict) -> Optional
         return copy.deepcopy(cached) if isinstance(cached, dict) else None
 
     payload = cfg.get("vehicle_writeback") if isinstance(cfg.get("vehicle_writeback"), dict) else {}
+    print(f"[writeback] Resolving context: config={config_path}, vehicle_writeback keys={list(payload.keys())}")
     if payload.get("enabled") is False:
+        print(f"[writeback] SKIPPED: vehicle_writeback.enabled is False")
         _VEHICLE_WRITEBACK_CONTEXT_CACHE[cache_key] = None
         return None
 
@@ -1530,11 +1532,13 @@ def _resolve_vehicle_writeback_context(config_path: Path, cfg: dict) -> Optional
         candidate = Path(vehicle_key.replace("\\", "/"))
         if candidate.is_absolute():
             vehicle_path = candidate
+            print(f"[writeback] Using absolute vehicle_key: {vehicle_key}")
         else:
             parts = list(candidate.parts)
             if len(parts) >= 2 and parts[0].lower() == "data" and parts[1].lower() == "vehicle":
                 candidate = Path(*parts[2:])
             vehicle_path = project_root / "Data" / "Vehicle" / candidate
+            print(f"[writeback] Resolved vehicle_path from vehicle_key: {vehicle_path}")
     else:
         runtime_context = _probe_runtime_vehicle_context()
         if runtime_context is not None:
@@ -1544,6 +1548,7 @@ def _resolve_vehicle_writeback_context(config_path: Path, cfg: dict) -> Optional
             testrun_name = testrun_name or runtime_context.get("testrun")
 
     if vehicle_path is None:
+        print(f"[writeback] SKIPPED: vehicle_path is None, probe result was: {runtime_context}")
         print(f"Skipped vehicle writeback: unable to resolve vehicle path for {config_path}")
         _VEHICLE_WRITEBACK_CONTEXT_CACHE[cache_key] = None
         return None
@@ -1612,8 +1617,12 @@ def _write_best_values_to_vehicle_config(
     best_score: float,
     values: Dict[str, float],
 ) -> Optional[dict]:
+    print(f"[writeback] Called: config={config_path}, camera={camera_name}, best_score={float(best_score):.4f}, values_count={len(values)}")
+    for k, v in sorted(values.items()):
+        print(f"[writeback]   {k}={v}")
     context = _resolve_vehicle_writeback_context(config_path, cfg)
     if context is None:
+        print(f"[writeback] SKIPPED: _resolve_vehicle_writeback_context returned None for config={config_path}")
         return None
 
     vehicle_path = Path(context["vehicle_path"])

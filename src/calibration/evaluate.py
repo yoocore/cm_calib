@@ -162,17 +162,17 @@ class EvaluateMixin:
         if cd_iters < 3:
             return self._optimize_coordinate_descent_impl()
 
-        print(f"[hybrid] Phase 1: CD × {cd_iters}")
+        print(f"[hybrid] Phase 1: CD x {cd_iters}")
         cd_result = self._optimize_coordinate_descent_impl(cd_iters)
         cd_score = cd_result.get("final_score", float("inf"))
         cd_values = cd_result.get("final_values", {})
 
         bayes_iters = total - cd_iters
-        print(f"[hybrid] Phase 2: Bayesian × {bayes_iters} around CD best")
+        print(f"[hybrid] Phase 2: Bayesian x {bayes_iters} around CD best")
         search_range = {}
         for p in self.params:
             step = max(p.step, 1e-6) if p.step else 0.001
-            centre = cd_values.get(p.name, p.initial)
+            centre = cd_values.get(p.name, p.value)
             half = search_sigma * step
             search_range[p.name] = (
                 max(p.min_value, centre - half),

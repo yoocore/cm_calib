@@ -420,6 +420,10 @@ def _reuse_existing_runtime_for_camera(
 
     # --- Activate sensor ---
     activation = cmctrl.activate_single_vehicle_sensor(vehicle_path, camera_name)
+    # --- Switch testrun BEFORE starting simulation (CarMaker must be IDLE) ---
+    selected_testrun = cmctrl.sync_gui_testrun_selection(project_root, testrun_rel_path)
+    # --- sync_gui re-initializes IPG-MOVIE (re-registers CheckViewPort), so re-guard ---
+    cmctrl.disable_checkviewport_recursion()
     # --- Restart TestRun to reload vehicle file ---
     start_simulation_via_tcl(
         running_timeout_sec=float(args.bootstrap_running_timeout_sec),
@@ -429,9 +433,6 @@ def _reuse_existing_runtime_for_camera(
         idle_timeout_sec=float(args.bootstrap_idle_timeout_sec),
         probe_name="reuse_runtime_vehicle_reload",
     )
-    selected_testrun = cmctrl.sync_gui_testrun_selection(project_root, testrun_rel_path)
-    # --- sync_gui re-initializes IPG-MOVIE (re-registers CheckViewPort), so re-guard ---
-    cmctrl.disable_checkviewport_recursion()
     # --- Install re-entrant guard on CheckViewPort + delete-trace for persistence ---
     cmctrl.wrap_checkviewport()
     abraxas = cmctrl.ensure_movie_abraxas_enabled(timeout_sec=float(args.health_check_timeout_sec))

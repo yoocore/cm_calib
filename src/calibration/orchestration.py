@@ -1825,6 +1825,22 @@ def _write_best_values_to_vehicle_config(
                         if m.group("value").strip() != expected:
                             verify_mismatches.append(f"FoV: expected={expected}, actual={m.group('value').strip()}")
                         break
+            elif field.startswith(f"Sensor.Param.{ref_param_index}.ImageScaling"):
+                expected = _format_vehicle_float(float(values.get("lens_scale", 0)))
+                for vline in verify_text.splitlines():
+                    m = _VEHICLE_SENSOR_PARAM_VALUE_RE.match(vline.rstrip())
+                    if m and m.group("index") == ref_param_index and m.group("field") == "ImageScaling":
+                        if m.group("value").strip() != expected:
+                            verify_mismatches.append(f"ImageScaling: expected={expected}, actual={m.group('value').strip()}")
+                        break
+            elif field.startswith(f"Sensor.Param.{ref_param_index}.PrincipalPntOffset"):
+                expected = " ".join(_format_vehicle_float(float(values[name])) for name in ("lens_offset_x", "lens_offset_y"))
+                for vline in verify_text.splitlines():
+                    m = _VEHICLE_SENSOR_PARAM_VALUE_RE.match(vline.rstrip())
+                    if m and m.group("index") == ref_param_index and m.group("field") == "PrincipalPntOffset":
+                        if m.group("value").strip() != expected:
+                            verify_mismatches.append(f"PrincipalPntOffset: expected={expected}, actual={m.group('value').strip()}")
+                        break
         if verify_mismatches:
             print(
                 f"VEHICLE READBACK MISMATCH: path={vehicle_path}, sensor={sensor_name}, "

@@ -1253,7 +1253,7 @@ def _update_params_pool_with_result(pool: dict, boards: list, score: float, para
     sig_hash = _compute_board_signature_hash(sig)
     entries = pool.setdefault("entries", {})
     existing = entries.get(sig_hash)
-    if existing and float(score) >= float(existing.get("best_score", float("inf"))) - 1e-9:
+    if existing and float(score) > float(existing.get("best_score", float("inf"))) + 1e-6:
         return pool
     entries[sig_hash] = {
         "board_signature": [list(pair) for pair in sorted(sig, key=lambda x: (x[0], x[1]))],

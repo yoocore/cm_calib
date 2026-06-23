@@ -1624,6 +1624,7 @@ def _write_best_values_to_vehicle_config(
     # Historical scores came from different board configurations, so the only
     # fair comparison is to test each pool entry's params on CURRENT boards.
     best_re_eval_score: Optional[float] = None
+    best_re_eval_params: Dict[str, float] = {}
     pool = _load_params_pool(camera_name)
     pool_entries = pool.get("entries", {})
     if pool_entries:
@@ -1640,20 +1641,23 @@ def _write_best_values_to_vehicle_config(
                 print(f"  entry {sig_hash[:8]}: original={original_score}, re-evaluated={entry_score:.2f}")
                 if best_re_eval_score is None or entry_score < best_re_eval_score:
                     best_re_eval_score = entry_score
+                    best_re_eval_params = dict(entry_params)
             else:
                 print(f"  entry {sig_hash[:8]}: re-eval FAILED, original={original_score}")
         if best_re_eval_score is not None:
             if float(best_score) > best_re_eval_score + 1e-6:
                 print(
-                    f"Skipped vehicle writeback: current score {float(best_score):.2f} "
-                    f"worse than re-evaluated best {best_re_eval_score:.2f} "
+                    f"Pool better: writing pool best (score={best_re_eval_score:.2f}) ",
+                    f"instead of current ({float(best_score):.2f}) ",
                     f"(camera={camera_name}, vehicle={vehicle_path})",
                 )
-                return None
-            print(
-                f"[write_protect] Write OK: current {float(best_score):.2f} "
-                f"<= re-eval best {best_re_eval_score:.2f}",
-            )
+                best_score = best_re_eval_score
+                values = dict(best_re_eval_params)
+            else:
+                print(
+                    f"[write_protect] Write OK: current {float(best_score):.2f} ",
+                    f"<= re-eval best {best_re_eval_score:.2f}",
+                )
 
     boards = cfg.get("boards")
     text = vehicle_path.read_text(encoding="utf-8")

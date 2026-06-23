@@ -3719,7 +3719,7 @@ def _run_explore_then_refine_campaign(
     if start_count <= 0:
 
         raise ValueError("explore-then-refine mode requires a positive start count")
-    if explore_max_iters <= 0:
+    if explore_max_iters < 0:
         raise ValueError("explore-then-refine mode requires positive explore iterations")
 
     campaign_root = output_root_dir or _build_isolated_output_dir(

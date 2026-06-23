@@ -270,7 +270,7 @@ def main() -> None:
 
     args = parse_args()
 
-    if args.refine_iters is not None and args.refine_iters <= 0:
+    if args.refine_iters is not None and args.refine_iters < 0:
         raise ValueError("--refine-iters must be > 0")
     if args.campaign_rounds <= 0:
         raise ValueError("--campaign-rounds must be > 0")

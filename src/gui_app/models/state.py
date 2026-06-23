@@ -40,11 +40,7 @@ class CalibrationLaunchConfig:
     testrun: str
     cameras: list[str]
     campaign_rounds: int = 1
-    multi_start_count: int = 0
-    multi_start_iters: Optional[int] = None
-    multi_start_jitter_steps: str = "auto"
-    multi_start_seed: int = 20260429
-    explore_then_refine: bool = False
+    explore_then_refine: bool = True
     refine_iters: Optional[int] = None
     resume_from_result: bool = False
     output_dir: Optional[Path] = None

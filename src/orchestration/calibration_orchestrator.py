@@ -154,11 +154,6 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--health-check-timeout-sec", type=float, default=2.5)
     parser.add_argument("--health-check-settle-sec", type=float, default=0.3)
     parser.add_argument("--campaign-rounds", type=int, default=1)
-    parser.add_argument("--multi-start-count", type=int, default=0)
-    parser.add_argument("--multi-start-iters", type=int, default=None)
-    parser.add_argument("--multi-start-jitter-steps", type=str, default="auto",
-        help="Jitter steps: auto (adaptive from history) or a float value")
-    parser.add_argument("--multi-start-seed", type=int, default=20260429)
     parser.add_argument("--skip-prepare-for-first-camera", action="store_true")
     parser.add_argument("--explore-then-refine", action="store_true")
     parser.add_argument("--refine-iters", type=int, default=None)
@@ -216,17 +211,10 @@ def _build_camera_command(args: argparse.Namespace, config_path: Path) -> list[s
         str(config_path),
         "--campaign-rounds",
         str(args.campaign_rounds),
-        "--multi-start-count",
-        str(args.multi_start_count),
-        "--multi-start-jitter-steps",
-        str(args.multi_start_jitter_steps),
-        "--multi-start-seed",
-        str(args.multi_start_seed),
         "--print-summary-json",
         "--print-progress-json",
         ],
     )
-    _append_optional_arg(command, "--multi-start-iters", args.multi_start_iters)
     _append_optional_arg(command, "--refine-iters", args.refine_iters)
     if args.explore_then_refine:
         command.append("--explore-then-refine")

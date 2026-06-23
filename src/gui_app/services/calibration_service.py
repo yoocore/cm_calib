@@ -52,19 +52,10 @@ class CalibrationService(QObject):
             launch.testrun,
             "--campaign-rounds",
             str(launch.campaign_rounds),
-            "--multi-start-count",
-            str(launch.multi_start_count),
-            "--multi-start-jitter-steps",
-            str(launch.multi_start_jitter_steps),
-            "--multi-start-seed",
-            str(launch.multi_start_seed),
+            "--explore-then-refine",
         ]
-        if launch.multi_start_iters is not None:
-            arguments.extend(["--multi-start-iters", str(launch.multi_start_iters)])
         if launch.refine_iters is not None:
             arguments.extend(["--refine-iters", str(launch.refine_iters)])
-        if launch.explore_then_refine:
-            arguments.append("--explore-then-refine")
         if launch.resume_from_result:
             arguments.append("--resume-from-result")
         if launch.skip_prepare_for_first_camera:

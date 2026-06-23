@@ -318,6 +318,12 @@ def _prepare_runtime_for_camera(
         movie_scene["mode"] = str(applied_view.get("mode") or movie_scene.get("mode") or "")
     abraxas = cmctrl.ensure_movie_abraxas_enabled(timeout_sec=float(args.health_check_timeout_sec))
     camera_widgets = cmctrl.ensure_movie_camera_widgets(timeout_sec=float(args.health_check_timeout_sec))
+    # --- Activate sensor and select camera in IPG-MOVIE ---
+    cmctrl.activate_single_vehicle_sensor(vehicle_path, camera_name)
+    camera_selection = cmctrl.ensure_movie_camera_selected(
+        f"CAMERA_RSI-SENSOR Vhcl.{camera_name}",
+        timeout_sec=float(args.health_check_timeout_sec),
+    )
     # Restore render timer after View::SetSize + ABRAXAS are done
     cmctrl.enable_movie_updateview_timer(timeout_sec=5.0)
     # --- Step 9: Health check ---
@@ -359,12 +365,12 @@ def _prepare_runtime_for_camera(
             "selected_sensor_name": camera_name,
             "selected_sensor_index": None,
             "ipgmovie_sensor_label": f"CAMERA_RSI-SENSOR Vhcl.{camera_name}",
-            "changed": False,
+            "changed": True,
         },
         "carmaker_pid": carmaker_pid,
         "movie_scene": movie_scene,
         "abraxas": abraxas,
-        "camera_selection": None,
+        "camera_selection": camera_selection,
         "camera_widgets": camera_widgets,
         "config_initial_capture": None,
         "health": health_classification,
@@ -379,6 +385,18 @@ def _reuse_existing_runtime_for_camera(
     movie_view_size: tuple[int, int] | None = None,
 ) -> dict[str, Any]:
     vehicle_path, vehicle_key = cmctrl.resolve_vehicle_path(project_root, testrun_rel_path)
+
+    # --- Fast process check: if no CarMaker is running, fall back to fresh prepare ---
+    # Avoids slow DDE probing against a non-existent CarMaker instance.
+    if not cmctrl.list_carmaker_processes():
+        print(
+            "No CarMaker processes found. Falling back to fresh runtime prepare."
+        )
+        return _prepare_runtime_for_camera(
+            args, project_root, testrun_rel_path, camera_name, config_path,
+            movie_view_size=movie_view_size,
+        )
+
     status_summary = cmctrl.build_status_summary(
         project_root=project_root,
         cm_install=args.cm_install.resolve(),

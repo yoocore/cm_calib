@@ -19,6 +19,7 @@ from src.calibration.orchestration import (
     _marker_path_for_output_dir,
     _print_camera_history_summary,
     _print_camera_history_summary_compact,
+    _probe_runtime_vehicle_context,
     _read_latest_result_path,
     _read_vehicle_initial_values_mandatory,
     _resolve_config_output_dir,
@@ -353,6 +354,10 @@ def main() -> None:
                 cfg["parameters"][name]["initial"] = value
             else:
                 print(f"  WARNING: {name} from vehicle file not in config parameters")
+        runtime_context = _probe_runtime_vehicle_context()
+        if runtime_context and runtime_context.get("vehicle_path"):
+            cfg.setdefault("vehicle_writeback", {}).setdefault("vehicle", str(runtime_context["vehicle_path"]))
+            print(f"Vehicle writeback path cached: {runtime_context['vehicle_path']}")
         print(f"Config initial values AFTER vehicle DDE read for {camera_name}:")
         for name, param in sorted(cfg.get("parameters", {}).items()):
             if "initial" in param:
@@ -412,6 +417,13 @@ def main() -> None:
                     rounds_output_dir=Path(rounds_payload["rounds_output_dir"]).resolve(),
                 )
             )
+
+        if best_run:
+            _write_best_values_to_vehicle_config(
+                config_path, cfg, camera_name,
+                float(best_run.get("best_score", 999)),
+                best_run.get("best_values", {}),
+            )
         return
 
     if args.multi_start_count > 0:
@@ -458,6 +470,13 @@ def main() -> None:
                     summary_json_path=Path(rounds_payload["summary_json"]).resolve(),
                     rounds_output_dir=Path(rounds_payload["rounds_output_dir"]).resolve(),
                 )
+            )
+
+        if best_run:
+            _write_best_values_to_vehicle_config(
+                config_path, cfg, camera_name,
+                float(best_run.get("best_score", 999)),
+                best_run.get("best_values", {}),
             )
         return
 

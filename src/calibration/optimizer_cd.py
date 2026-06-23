@@ -210,6 +210,17 @@ class CoordinateDescentMixin:
                 best_total_detail=best_total_detail, best_img=best_img,
                 stop_reason="running", history=history,
             )
+            if accepted and score + self.min_improve < best_score:
+                latest_best_values = dict(best_values)
+                latest_best_values[p.name] = trial_value
+                self._write_progress_result(
+                    best_score=score,
+                    best_values=latest_best_values,
+                    best_total_detail=total_detail, best_img=img_path,
+                    stop_reason="running",
+                    history=self._trim_history(history),
+                    in_progress=True,
+                )
             self._apply_value_map({p.name: base_values[p.name]})
 
             result.total_detail = total_detail

@@ -429,17 +429,7 @@ def _reuse_existing_runtime_for_camera(
         idle_timeout_sec=float(args.bootstrap_idle_timeout_sec),
         probe_name="reuse_runtime_vehicle_reload",
     )
-    try:
-        selected_testrun = cmctrl.sync_gui_testrun_selection(project_root, testrun_rel_path)
-    except RuntimeError:
-        print(
-            f"sync_gui_testrun_selection failed (testrun mismatch). "
-            "Falling back to fresh runtime prepare."
-        )
-        return _prepare_runtime_for_camera(
-            args, project_root, testrun_rel_path, camera_name, config_path,
-            movie_view_size=movie_view_size,
-        )
+    selected_testrun = cmctrl.sync_gui_testrun_selection(project_root, testrun_rel_path)
     # --- sync_gui re-initializes IPG-MOVIE (re-registers CheckViewPort), so re-guard ---
     cmctrl.disable_checkviewport_recursion()
     # --- Install re-entrant guard on CheckViewPort + delete-trace for persistence ---

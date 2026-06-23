@@ -1646,11 +1646,17 @@ def _write_best_values_to_vehicle_config(
             )
             if entry_score is not None:
                 print(f"  entry {sig_hash[:8]}: original={original_score}, re-evaluated={entry_score:.2f}")
+                # Correct stored score to reflect current configuration (self-healing)
+                if original_score is not None and abs(float(entry_score) - float(original_score)) > 1e-6:
+                    entry["best_score"] = float(entry_score)
+                    print(f"    -> corrected pool entry score from {original_score} to {entry_score:.2f}")
                 if best_re_eval_score is None or entry_score < best_re_eval_score:
                     best_re_eval_score = entry_score
                     best_re_eval_params = dict(entry_params)
             else:
                 print(f"  entry {sig_hash[:8]}: re-eval FAILED, original={original_score}")
+        # Persist corrected pool scores (self-healing)
+        _save_params_pool(camera_name, pool)
         if best_re_eval_score is not None:
             if float(best_score) > best_re_eval_score + 1e-6:
                 print(
@@ -3560,11 +3566,6 @@ def _cfg_with_initial_values(cfg: dict, initial_values: Dict[str, float]) -> dic
             continue
         next_initial = float(initial_values.get(name, param_cfg.get("initial", 0.0)))
         parameters[name] = _build_explicit_parameter_config(param_cfg, next_initial)
-    import pathlib
-    dp = pathlib.Path(r'C:\CM_Projects\CMO141_Calibration\SimOutput\calibration\TRight') / '_diag_cfgiv.txt'
-    dp.parent.mkdir(parents=True, exist_ok=True)
-    with open(dp, 'a', encoding='utf-8') as df:
-        df.write(f'CFGIV: in_cfg_roll_initial={cfg.get("parameters",{}).get("roll",{}).get("initial","NA")} iv_roll={initial_values.get("roll","NA")}\n')
     return run_cfg
 
 def _extract_initial_values_from_cfg(cfg: dict) -> Dict[str, float]:

@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.gui_app.models.state import CameraResult
+from src.gui_app.widgets.score_curve_window import ScoreCurveWindow
 
 
 RESULT_JSON_ROLE = Qt.UserRole + 1
@@ -209,9 +210,8 @@ class CameraResultCard(QGroupBox):
         self.open_log_button = QPushButton("Log")
         self.open_result_button = QPushButton("Result")
         self.open_current_button = QPushButton("Current")
-        self.open_best_button = QPushButton("Best")
-        self.open_score_button = QPushButton("Score")
-        self.open_overlay_button = QPushButton("Overlay")
+        self.open_score_live_button = QPushButton("Score Live")
+        self.open_score_plot_button = QPushButton("Score Plot")
 
         info_layout = QHBoxLayout()
         info_layout.setContentsMargins(0, 0, 0, 0)
@@ -241,17 +241,15 @@ class CameraResultCard(QGroupBox):
         actions_layout.addWidget(self.open_log_button)
         actions_layout.addWidget(self.open_result_button)
         actions_layout.addWidget(self.open_current_button)
-        actions_layout.addWidget(self.open_best_button)
-        actions_layout.addWidget(self.open_score_button)
-        actions_layout.addWidget(self.open_overlay_button)
+        actions_layout.addWidget(self.open_score_live_button)
+        actions_layout.addWidget(self.open_score_plot_button)
 
         for button in (
             self.open_log_button,
             self.open_result_button,
             self.open_current_button,
-            self.open_best_button,
-            self.open_score_button,
-            self.open_overlay_button,
+            self.open_score_live_button,
+            self.open_score_plot_button,
         ):
             button.setMinimumHeight(30)
             button.setStyleSheet(
@@ -491,6 +489,7 @@ class OutputPanel(QGroupBox):
 
         card = self._ensure_result_card(result.camera)
         card.update_result(result)
+        card.open_score_plot_button.setEnabled(result.status == "completed")
 
         if self.result_tree.currentItem() is None:
             self._select_camera(result.camera)
@@ -530,9 +529,8 @@ class OutputPanel(QGroupBox):
         card.open_log_button.clicked.connect(lambda _checked=False, name=camera_name: self._open_camera_artifact(name, LIVE_LOG_ROLE))
         card.open_result_button.clicked.connect(lambda _checked=False, name=camera_name: self._open_camera_artifact(name, RESULT_JSON_ROLE))
         card.open_current_button.clicked.connect(lambda _checked=False, name=camera_name: self._open_camera_artifact(name, CURRENT_ITER_IMAGE_ROLE))
-        card.open_best_button.clicked.connect(lambda _checked=False, name=camera_name: self._open_camera_artifact(name, BEST_IMAGE_ROLE))
-        card.open_score_button.clicked.connect(lambda _checked=False, name=camera_name: self._open_camera_artifact(name, BEST_SCORE_IMAGE_ROLE))
-        card.open_overlay_button.clicked.connect(lambda _checked=False, name=camera_name: self._open_camera_artifact(name, BEST_OVERLAY_IMAGE_ROLE))
+        card.open_score_live_button.clicked.connect(lambda _checked=False, name=camera_name: self._open_score_curve(name, "live"))
+        card.open_score_plot_button.clicked.connect(lambda _checked=False, name=camera_name: self._open_score_curve(name, "plot"))
         card.iter_preview.clicked.connect(lambda name=camera_name: self._open_camera_artifact(name, CURRENT_ITER_IMAGE_ROLE))
         card.score_preview.clicked.connect(lambda name=camera_name: self._open_camera_artifact(name, BEST_SCORE_IMAGE_ROLE))
         card.overlay_preview.clicked.connect(lambda name=camera_name: self._open_camera_artifact(name, BEST_OVERLAY_IMAGE_ROLE))
@@ -561,6 +559,15 @@ class OutputPanel(QGroupBox):
             return
         self.result_tree.setCurrentItem(item)
         self._refresh_selection()
+
+    def _open_score_curve(self, camera_name: str, mode: str) -> None:
+        self._select_camera(camera_name)
+        item = self._find_item(camera_name)
+        result_json = self._item_data(item, RESULT_JSON_ROLE) if item is not None else None
+        if not result_json:
+            return
+        window = ScoreCurveWindow(camera_name, result_json, mode=mode)
+        window.show()
 
     def _open_camera_artifact(self, camera_name: str, role: int) -> None:
         self._select_camera(camera_name)

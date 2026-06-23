@@ -3560,6 +3560,11 @@ def _cfg_with_initial_values(cfg: dict, initial_values: Dict[str, float]) -> dic
             continue
         next_initial = float(initial_values.get(name, param_cfg.get("initial", 0.0)))
         parameters[name] = _build_explicit_parameter_config(param_cfg, next_initial)
+    import pathlib
+    dp = pathlib.Path(r'C:\CM_Projects\CMO141_Calibration\SimOutput\calibration\TRight') / '_diag_cfgiv.txt'
+    dp.parent.mkdir(parents=True, exist_ok=True)
+    with open(dp, 'a', encoding='utf-8') as df:
+        df.write(f'CFGIV: in_cfg_roll_initial={cfg.get("parameters",{}).get("roll",{}).get("initial","NA")} iv_roll={initial_values.get("roll","NA")}\n')
     return run_cfg
 
 def _extract_initial_values_from_cfg(cfg: dict) -> Dict[str, float]:

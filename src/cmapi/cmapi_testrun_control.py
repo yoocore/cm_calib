@@ -168,7 +168,7 @@ def _win32_find_processes(image_names_lower: set[str]) -> list[dict[str, Any]]:
                 continue
             base_name = full_path.rsplit("\\", 1)[-1]
             if base_name.lower() in image_names_lower:
-                matches.append({"Name": base_name, "ProcessId": int(pid)})
+                matches.append({"Name": base_name, "ProcessId": int(pid), "CommandLine": "", "CreationDate": ""})
         finally:
             _KERNEL32.CloseHandle(handle)
     return matches
@@ -187,7 +187,10 @@ def _win32_terminate_processes(procs: list[dict[str, Any]]) -> None:
 
 
 def list_cm_processes() -> list[dict[str, Any]]:
-    return _run_powershell_json(PROCESS_ENUMERATION_COMMAND)
+    result = _run_powershell_json(PROCESS_ENUMERATION_COMMAND)
+    if not result:
+        result = _win32_find_processes({"hil.exe", "movie.exe", "carmaker.win64.exe", "cm_office.exe"})
+    return result
 
 
 def list_carmaker_processes() -> list[dict[str, Any]]:
@@ -215,6 +218,8 @@ def is_gui_movie_process(process: dict[str, Any]) -> bool:
     if is_gpusensor_movie_process(process):
         return False
     command_line = str(process.get("CommandLine") or "")
+    if not command_line:
+        return True  # psapi fallback: assume GUI Movie when CommandLine unavailable
     command_line_lower = command_line.lower()
     return all(marker.lower() in command_line_lower for marker in GUI_MOVIE_MARKERS)
 

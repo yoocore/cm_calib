@@ -24,7 +24,6 @@ from src.calibration.orchestration import (
     _read_vehicle_initial_values_mandatory,
     _resolve_config_output_dir,
     _run_explore_then_refine_rounds,
-    _run_multi_start_rounds,
     _run_plain_optimize_rounds,
     _write_best_values_to_vehicle_config,
     _write_camera_history_summary,
@@ -136,33 +135,35 @@ def parse_args() -> argparse.Namespace:
         help="Optional output path for --annotate-image",
     )
     parser.add_argument(
-        "--multi-start-count",
+        "--explore-start-count",
         type=int,
-        default=0,
-        help="Run multiple optimizations from perturbed config initial values; 0 disables this mode",
+        default=4,
+        help="Number of perturbed explore runs per camera"
     )
     parser.add_argument(
-        "--multi-start-iters",
-        type=int,
-        default=None,
-        help="Optional max_iters override for each multi-start run",
-    )
-    parser.add_argument(
-        "--multi-start-jitter-steps",
+        "--explore-jitter-steps",
         type=str,
         default="auto",
         help="Jitter: auto (adaptive) or float value"
     )
     parser.add_argument(
-        "--multi-start-seed",
+        "--explore-start-seed",
         type=int,
         default=20260429,
-        help="Random seed for deterministic multi-start initial value generation",
+        help="Random seed for explore initial value generation"
     )
     parser.add_argument(
         "--explore-then-refine",
         action="store_true",
-        help="Run a short multi-start exploration first, then launch one refinement run from the best explored start",
+        dest="explore_then_refine",
+        default=True,
+        help="Run a short exploration first, then launch one refinement run from the best explored start (default)"
+    )
+    parser.add_argument(
+        "--no-explore-then-refine",
+        action="store_false",
+        dest="explore_then_refine",
+        help="Disable explore-then-refine and fall back to single optimize"
     )
     parser.add_argument(
         "--refine-iters",
@@ -269,12 +270,6 @@ def main() -> None:
 
     args = parse_args()
 
-    if args.multi_start_count < 0:
-        raise ValueError("--multi-start-count must be >= 0")
-    if args.multi_start_iters is not None and args.multi_start_iters <= 0:
-        raise ValueError("--multi-start-iters must be > 0")
-    if args.multi_start_jitter_steps != "auto" and float(args.multi_start_jitter_steps) < 0.0:
-        raise ValueError("--multi-start-jitter-steps must be >= 0")
     if args.refine_iters is not None and args.refine_iters <= 0:
         raise ValueError("--refine-iters must be > 0")
     if args.campaign_rounds <= 0:
@@ -292,7 +287,7 @@ def main() -> None:
             raise ValueError(
                 "--bootstrap-config-from-annotation requires --bootstrap-real-image and --bootstrap-annotated-image"
             )
-        if args.multi_start_count > 0 or args.explore_then_refine or args.resume_from_result:
+        if args.explore_then_refine or args.resume_from_result:
             raise ValueError(
                 "bootstrap-config-from-annotation cannot be combined with optimization campaign options"
             )
@@ -370,13 +365,11 @@ def main() -> None:
     if requires_runtime_session:
         _acquire_runtime_session_lock(base_output_dir, config_path)
 
-    if args.explore_then_refine:
-        if not should_optimize:
-            raise ValueError("explore-then-refine mode cannot be combined with capture/propose/annotate commands")
+    if should_optimize and args.explore_then_refine:
         if args.resume_from_result:
             print("Explore-then-refine mode ignores --resume-from-result and always starts from config initial values.")
-        campaign_start_count = args.multi_start_count or 4
-        campaign_explore_iters = args.multi_start_iters or min(int(cfg.get("max_iters", 100)), 24)
+        campaign_start_count = args.explore_start_count
+        campaign_explore_iters = min(int(cfg.get("max_iters", 100)), 24)
         rounds_payload = _run_explore_then_refine_rounds(
             config_path=config_path,
             cfg=cfg,
@@ -384,8 +377,8 @@ def main() -> None:
             camera_name=camera_name,
             round_count=int(args.campaign_rounds),
             start_count=campaign_start_count,
-            jitter_steps=args.multi_start_jitter_steps,
-            seed=int(args.multi_start_seed),
+            jitter_steps=args.explore_jitter_steps,
+            seed=int(args.explore_start_seed),
             explore_max_iters=int(campaign_explore_iters),
             refine_max_iters=args.refine_iters,
         )
@@ -428,59 +421,6 @@ def main() -> None:
             )
         return
 
-    if args.multi_start_count > 0:
-        if not should_optimize:
-            raise ValueError("multi-start mode cannot be combined with capture/propose/annotate commands")
-        if args.resume_from_result:
-            print("Multi-start mode ignores --resume-from-result and always starts from config initial values.")
-        rounds_payload = _run_multi_start_rounds(
-            config_path=config_path,
-            cfg=cfg,
-            base_output_dir=base_output_dir,
-            camera_name=camera_name,
-            round_count=int(args.campaign_rounds),
-            start_count=args.multi_start_count,
-            jitter_steps=args.multi_start_jitter_steps,
-            seed=int(args.multi_start_seed),
-            max_iters_override=args.multi_start_iters,
-        )
-        best_round = rounds_payload["best_round"] or {}
-        best_run = best_round.get("best_run") or {}
-        print("Rounds summary JSON:", rounds_payload["summary_json"])
-        print("Rounds output dir:", rounds_payload["rounds_output_dir"])
-        print("Completed rounds:", rounds_payload["round_count_completed"])
-        print("Best round index:", best_round.get("round_index"))
-        print("Multi-start best score:", best_run["best_score"])
-        print("Multi-start best image:", best_run["best_image"])
-        print("Multi-start best result JSON:", best_run["result_json"])
-        camera_history_summary_path, camera_history_summary = _write_camera_history_summary(camera_name)
-        camera_history_summary_compact_path = _write_camera_history_summary_compact(
-            camera_name,
-            camera_history_summary,
-        )
-        _print_camera_history_summary(camera_history_summary, camera_history_summary_path)
-        _print_camera_history_summary_compact(camera_history_summary_compact_path)
-        if args.print_summary_json:
-            best_result_json_path = Path(best_run["result_json"]).resolve()
-            _emit_cli_summary_json(
-                _build_cli_summary_payload(
-                    camera_name=camera_name,
-                    config_path=config_path,
-                    mode="multi_start_rounds",
-                    result_json_path=best_result_json_path,
-                    result_payload=_load_json_if_exists(best_result_json_path) or {},
-                    summary_json_path=Path(rounds_payload["summary_json"]).resolve(),
-                    rounds_output_dir=Path(rounds_payload["rounds_output_dir"]).resolve(),
-                )
-            )
-
-        if best_run:
-            _write_best_values_to_vehicle_config(
-                config_path, cfg, camera_name,
-                float(best_run.get("best_score", 999)),
-                best_run.get("best_values", {}),
-            )
-        return
 
     marker_path: Optional[Path] = None
     marker_payload: Optional[dict] = None

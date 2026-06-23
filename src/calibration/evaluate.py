@@ -202,15 +202,17 @@ class EvaluateMixin:
         study.enqueue_trial(cd_values)
         study.optimize(objective, n_trials=bayes_iters, n_jobs=1)
 
+        bayes_score = study.best_value
+        if bayes_score >= cd_score - self.min_improve:
+            # Bayesian didn't improve enough — CD wins
+            print(f"[hybrid] CD best retained ({cd_score:.6f} vs Bayesian {bayes_score:.6f})")
+            return cd_result
+
+        # Bayesian improved — apply best, capture final
         best_values = {p.name: study.best_params[p.name] for p in self.params}
         self._apply_value_map(best_values)
         time.sleep(self.settle_sec)
         best_total_detail, best_img = self.evaluate("hybrid_final", None)
-
-        bayes_score = best_total_detail.total_score
-        if cd_score + self.min_improve < bayes_score:
-            print(f"[hybrid] CD best retained ({cd_score:.6f} < {bayes_score:.6f})")
-            return cd_result
         print(f"[hybrid] Bayesian improved ({bayes_score:.6f} vs CD {cd_score:.6f})")
         return self._build_result_payload(
             best_score=bayes_score,

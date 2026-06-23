@@ -316,10 +316,8 @@ class CameraResultCard(QGroupBox):
 
         self.open_log_button.setEnabled(bool(result.live_log))
         self.open_result_button.setEnabled(bool(result.result_json))
-        self.open_current_button.setEnabled(bool(result.current_iter_image or result.best_image))
-        self.open_best_button.setEnabled(bool(result.best_image))
-        self.open_score_button.setEnabled(bool(result.best_score_image))
-        self.open_overlay_button.setEnabled(bool(result.best_overlay_image))
+        self.open_current_button.setEnabled(bool(result.current_iter_image))
+        self.open_score_live_button.setEnabled(bool(result.best_image or result.current_iter_image))
 
     def _update_preview_stretch(self) -> None:
         from PySide6.QtGui import QImage

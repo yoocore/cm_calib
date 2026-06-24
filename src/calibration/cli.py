@@ -280,9 +280,9 @@ def main() -> None:
         raise ValueError("--refine-iters must be >= 0")
     if args.campaign_rounds <= 0:
         raise ValueError("--campaign-rounds must be > 0")
+    root = args.project_root.resolve() if args.project_root else Path.cwd()
 
     if args.precheck:
-        root = args.project_root.resolve() if args.project_root else Path.cwd()
         cameras = args.cameras if args.cameras else _auto_detect_cameras(root)
         results = run_precheck(root, cameras)
         print(json.dumps(results, indent=2, ensure_ascii=False))

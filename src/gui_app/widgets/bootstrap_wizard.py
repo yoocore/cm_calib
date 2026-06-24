@@ -1233,10 +1233,11 @@ class BootstrapWizardDialog(QDialog):
                 shutil.copy2(str(real_image_src), str(real_image_dst))
             cfg["real_image"] = str(real_image_dst.resolve())
 
-            # Add vehicle_writeback for calibration result write-back
+            project_root = self._gui_project_dir or self._project_dir_edit.text().strip()
             cfg.setdefault("vehicle_writeback", {}).update({
                 "enabled": True,
                 "sensor_name": cam_name,
+                "project_root": project_root,
             })
 
             # Re-save config with updated fields

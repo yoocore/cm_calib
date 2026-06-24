@@ -188,9 +188,10 @@ class ScoreCurveWindow(QWidget):
         except Exception:
             return None
         for _ in range(10):
-            candidate = current / "camera_history_summary.json"
-            if candidate.exists():
-                return candidate
+            for name in ("camera_history_summary.json", "camera_summary.json"):
+                candidate = current / name
+                if candidate.exists():
+                    return candidate
             parent = current.parent
             if not parent or parent == current:
                 break

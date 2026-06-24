@@ -210,6 +210,8 @@ def _build_camera_command(args: argparse.Namespace, config_path: Path) -> list[s
     command = build_python_subprocess_command(
         script_path,
         [
+        "--project-root",
+        str(args.project_root),
         "--config",
         str(config_path),
         "--explore-start-count",

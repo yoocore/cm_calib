@@ -230,8 +230,11 @@ class CalibrationPanel(QGroupBox):
             self.cm_version_combo.setItemText(0, "No CM versions detected")
         else:
             for ver in cm_versions:
-                self.cm_version_combo.addItem(ver, cm_versions[ver])
-        self.cm_version_combo.setCurrentIndex(0)
+                install_path = cm_versions[ver]
+                has_cmapi = (install_path / "Python" / "Lib" / "site-packages" / "cmapi" / "__init__.py").exists()
+                suffix = "(cmapi)" if has_cmapi else "(no cmapi)"
+                self.cm_version_combo.addItem(f"{ver}{suffix}", install_path)
+            self.cm_version_combo.setCurrentIndex(0)
         self.cm_version_combo.setFixedHeight(36)
 
         self.start_button = QPushButton("Calib Start")

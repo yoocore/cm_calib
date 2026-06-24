@@ -136,8 +136,6 @@ class ArtifactPreviewLabel(QLabel):
         self._artifact_path: str | None = None
         self.setAlignment(Qt.AlignCenter)
         self.setWordWrap(True)
-        self.setMinimumSize(180, 120)
-        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         self.setStyleSheet("border: 1px solid #666; padding: 4px;")
 
     def set_artifact(self, artifact_path: str | None) -> None:
@@ -187,6 +185,7 @@ class ArtifactPreviewLabel(QLabel):
 
         pixmap = QPixmap.fromImage(img)
         scaled = pixmap.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.setFixedSize(scaled.size())
         self.setPixmap(scaled)
         self.setText("")
 

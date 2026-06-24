@@ -351,7 +351,7 @@ class CmSettingsPanel(QGroupBox):
             open_btn.setEnabled(False)
             open_btn.setToolTip("No config generated yet")
         elif os.path.isdir(config_path):
-            check_label.setText("✓")
+            check_label.setText("●")
             check_label.setStyleSheet("color: #4caf50; font-weight: bold;")
             open_btn.setEnabled(True)
             open_btn.setToolTip(config_path)

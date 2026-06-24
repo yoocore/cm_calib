@@ -216,7 +216,7 @@ class CalibrationPanel(QGroupBox):
 
         self.status_label = QLabel("idle")
         self.status_label.setAlignment(Qt.AlignCenter)
-        self.status_label.setMinimumHeight(36)
+        self.status_label.setFixedHeight(36)
         self.status_label.setMinimumWidth(120)
 
         self.phase_label = QLabel("")
@@ -232,6 +232,7 @@ class CalibrationPanel(QGroupBox):
             for ver in cm_versions:
                 self.cm_version_combo.addItem(ver, cm_versions[ver])
         self.cm_version_combo.setCurrentIndex(0)
+        self.cm_version_combo.setFixedHeight(36)
 
         self.start_button = QPushButton("Calib Start")
         self.start_button.setDefault(True)
@@ -287,9 +288,11 @@ class CalibrationPanel(QGroupBox):
         self.control_group = _SectionGroup("Run Controls")
         control_layout = QVBoxLayout(self.control_group)
         control_layout.setContentsMargins(6, 2, 6, 4)
-        control_layout.setSpacing(3)
+        control_layout.setSpacing(0)
 
-        status_row = QHBoxLayout()
+        status_wrapper = QWidget(self.control_group)
+        status_row = QHBoxLayout(status_wrapper)
+        status_row.setContentsMargins(0, 0, 0, 0)
         status_row.addWidget(QLabel("Status"))
         status_row.addWidget(self.status_label, 1)
 
@@ -310,9 +313,13 @@ class CalibrationPanel(QGroupBox):
         layout.setSpacing(6)
         layout.addWidget(self.strategy_group)
         control_layout.addWidget(cm_row)
-        control_layout.addLayout(status_row)
+        control_layout.addSpacing(1)
+        control_layout.addWidget(status_wrapper)
+        control_layout.addSpacing(2)
         control_layout.addWidget(self.prepare_button)
+        control_layout.addSpacing(2)
         control_layout.addWidget(self.phase_label)
+        control_layout.addSpacing(2)
         control_layout.addWidget(button_row)
         layout.addWidget(self.control_group)
 

@@ -66,6 +66,8 @@ class CalibrationService(QObject):
         for camera_name in launch.cameras:
             arguments.extend(["--camera", camera_name])
         cm_install = getattr(self, "_cm_install", None)
+        if cm_install is not None:
+            arguments.extend(["--cm-install", str(cm_install)])
         env = QProcessEnvironment.systemEnvironment()
         if cm_install is not None:
             pythonpath, _paths = build_cmapi_pythonpath(
@@ -92,6 +94,8 @@ class CalibrationService(QObject):
         for camera_name in launch.cameras:
             arguments.extend(["--camera", camera_name])
         cm_install = getattr(self, "_cm_install", None)
+        if cm_install is not None:
+            arguments.extend(["--cm-install", str(cm_install)])
         env = QProcessEnvironment.systemEnvironment()
         if cm_install is not None:
             pythonpath, _paths = build_cmapi_pythonpath(

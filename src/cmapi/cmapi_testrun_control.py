@@ -37,9 +37,30 @@ if not hasattr(cmapi, "InvalidConfigurationException"):
     if invalid_configuration_error is not None:
         cmapi.InvalidConfigurationException = invalid_configuration_error
 
+# cmapi 15.x moved CarMaker.set_state() to CarMaker._set_state()
+if not hasattr(cmapi.CarMaker, "set_state") and hasattr(cmapi.CarMaker, "_set_state"):
+    cmapi.CarMaker.set_state = cmapi.CarMaker._set_state
 
-DEFAULT_PROJECT_ROOT = Path(__file__).resolve().parents[5]
-DEFAULT_CM_INSTALL = Path(os.environ.get("IPGHOME", "D:/IPG")) / "carmaker" / "win64-14.1"
+
+DEFAULT_PROJECT_ROOT = Path(os.getcwd())
+
+def _resolve_default_cm_install() -> Path:
+    """Auto-discover the latest CarMaker install; fall back to common paths."""
+    try:
+        from src.entry.portable_runtime import resolve_default_cm_install
+        resolved = resolve_default_cm_install()
+        if resolved is not None:
+            return resolved
+    except Exception:
+        pass
+    ipghome = Path(os.environ.get("IPGHOME", "D:/IPG")) / "carmaker"
+    if ipghome.is_dir():
+        for entry in sorted(ipghome.iterdir(), reverse=True):
+            if entry.is_dir() and (entry / "bin" / "CarMaker.win64.exe").exists():
+                return entry
+    return ipghome
+
+DEFAULT_CM_INSTALL = _resolve_default_cm_install()
 DEFAULT_CONFIG_DIR = Path(__file__).resolve().parents[2] / "configs"
 CARMAKER_PROCESS_NAMES = ("CarMaker.win64.exe", "HIL.exe", "CM_Office.exe")
 RUNTIME_CARMAKER_PROCESS_NAMES = ("CarMaker.win64.exe", "CM_Office.exe")

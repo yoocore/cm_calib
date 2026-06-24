@@ -111,6 +111,15 @@ def discover_cmapi_paths(
     return _unique_paths(ordered)
 
 
+def resolve_default_cm_install() -> Path | None:
+    """Return the most recent CarMaker installation discovered on this system.
+
+    Used as a fallback when no explicit cm-install is provided.
+    """
+    installs = discover_carmaker_installs()
+    return installs[0] if installs else None
+
+
 def build_cmapi_pythonpath(
     cm_install: Path | None,
     *,
@@ -130,13 +139,7 @@ def apply_cmapi_to_current_process(
     *,
     version_info: tuple[int, int] | None = None,
 ) -> list[Path]:
-    pythonpath, paths = build_cmapi_pythonpath(
-        cm_install,
-        existing_pythonpath=os.environ.get("PYTHONPATH", ""),
-        version_info=version_info,
-    )
-    if pythonpath:
-        os.environ["PYTHONPATH"] = pythonpath
+    paths = discover_cmapi_paths(cm_install, version_info=version_info)
     for path in reversed(paths):
         as_text = str(path)
         if as_text not in sys.path:

@@ -139,6 +139,8 @@ def apply_cmapi_to_current_process(
     *,
     version_info: tuple[int, int] | None = None,
 ) -> list[Path]:
+    if cm_install is None:
+        return []
     paths = discover_cmapi_paths(cm_install, version_info=version_info)
     for path in reversed(paths):
         as_text = str(path)

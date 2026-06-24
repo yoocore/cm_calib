@@ -381,8 +381,8 @@ class MainWindow(QMainWindow):
 
         self.state.selected_cameras = selected_cameras
         project_root = Path(self.cm_settings_panel.project_root_edit.text().strip() or self.project_root)
-        ref_iters = self._spin_value_or_none(self.calibration_panel._er_refine_iters_spin)
-        explore_iters = self._spin_value_or_none(self.calibration_panel._er_iters_spin)
+        ref_iters = int(self.calibration_panel._er_refine_iters_spin.value())
+        explore_iters = int(self.calibration_panel._er_iters_spin.value())
         explore_start_count = self.calibration_panel._er_count_spin.value()
         return CalibrationLaunchConfig(
             project_root=project_root,
@@ -396,10 +396,6 @@ class MainWindow(QMainWindow):
             skip_prepare_for_first_camera=True,
         )
 
-    @staticmethod
-    def _spin_value_or_none(widget) -> int | None:
-        value = int(widget.value())
-        return None if value <= 0 else value
 
     @Slot()
     def _start_calibration(self) -> None:

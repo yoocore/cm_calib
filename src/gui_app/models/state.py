@@ -41,12 +41,12 @@ class CalibrationLaunchConfig:
     cameras: list[str]
     campaign_rounds: int = 1
     explore_then_refine: bool = True
-    refine_iters: Optional[int] = None
+    refine_iters: int = 0
     resume_from_result: bool = False
     output_dir: Optional[Path] = None
     skip_prepare_for_first_camera: bool = False
     explore_start_count: int = 4
-    explore_iters: Optional[int] = None
+    explore_iters: int = 0
 
 
 @dataclass(slots=True)

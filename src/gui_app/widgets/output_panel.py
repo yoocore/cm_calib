@@ -279,7 +279,7 @@ class CameraResultCard(QGroupBox):
         group = QGroupBox(title, self)
         group.setStyleSheet(_PREVIEW_GROUP_STYLE)
         inner = QVBoxLayout(group)
-        inner.setContentsMargins(4, 4, 4, 4)
+        inner.setContentsMargins(0, 0, 0, 0)
         label.setParent(group)
         inner.addWidget(label)
         return group

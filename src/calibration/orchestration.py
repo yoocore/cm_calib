@@ -1425,8 +1425,8 @@ def _read_sensor_values_from_vehicle(
           + ", ".join(f"{k}={v}" for k, v in result.items()))
     return result
 
-def _read_vehicle_initial_values_via_dde(camera_name: str) -> Optional[Dict[str, float]]:
-    runtime_context = _probe_runtime_vehicle_context()
+def _read_vehicle_initial_values_via_dde(camera_name: str, project_root: Optional[Path] = None) -> Optional[Dict[str, float]]:
+    runtime_context = _probe_runtime_vehicle_context(project_root)
     if runtime_context is None:
         return None
     vehicle_path = runtime_context.get("vehicle_path")
@@ -1439,11 +1439,12 @@ def _read_vehicle_initial_values_via_dde(camera_name: str) -> Optional[Dict[str,
 
 def _read_vehicle_initial_values_mandatory(
     camera_name: str,
+    project_root: Optional[Path] = None,
     max_retries: int = 3,
     retry_delay_sec: float = 2.0,
 ) -> Dict[str, float]:
     for attempt in range(1, max_retries + 1):
-        values = _read_vehicle_initial_values_via_dde(camera_name)
+        values = _read_vehicle_initial_values_via_dde(camera_name, project_root=project_root)
         if values:
             return values
         if attempt < max_retries:
@@ -1540,7 +1541,7 @@ def _resolve_vehicle_writeback_context(config_path: Path, cfg: dict) -> Optional
             vehicle_path = project_root / "Data" / "Vehicle" / candidate
             print(f"[writeback] Resolved vehicle_path from vehicle_key: {vehicle_path}")
     else:
-        runtime_context = _probe_runtime_vehicle_context()
+        runtime_context = _probe_runtime_vehicle_context(project_root)
         if runtime_context is not None:
             project_root = Path(runtime_context.get("project_root") or project_root)
             vehicle_key = str(runtime_context.get("vehicle_key") or "").strip()

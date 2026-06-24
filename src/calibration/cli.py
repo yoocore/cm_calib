@@ -346,7 +346,7 @@ def main() -> None:
                 print(f"  {name}: {param['initial']}")
             else:
                 print(f"  {name}: (no initial)")
-        _vehicle_initial_values = _read_vehicle_initial_values_mandatory(camera_name)
+        _vehicle_initial_values = _read_vehicle_initial_values_mandatory(camera_name, project_root=root)
         print(f"Vehicle DDE read returned {len(_vehicle_initial_values)} values:")
         for name, value in sorted(_vehicle_initial_values.items()):
             print(f"  {name}: {value}")

@@ -169,9 +169,11 @@ class ArtifactPreviewLabel(QLabel):
 
         if not path.exists():
             self.setPixmap(QPixmap())
-            self.setText(f"Missing\n{path.name}")
+            self.setText("")
+            self.hide()
             return
 
+        self.show()
         QPixmapCache.clear()
         img = QImage(str(path))
         if img.isNull():

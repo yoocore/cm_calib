@@ -153,20 +153,23 @@ class EvaluateMixin:
         mode = getattr(self, "optimizer_mode", "coordinate_descent")
         if mode == "hybrid" or (mode == "auto" and _OPTUNA_AVAILABLE):
             print(f"Using hybrid (phase1_CD->phase2_Bayesian)" if mode == "auto" else f"Using {mode} optimizer")
-            return self._optimize_hybrid()
-        if mode == "bayesian" and _OPTUNA_AVAILABLE:
+            result = self._optimize_hybrid()
+        elif mode == "bayesian" and _OPTUNA_AVAILABLE:
             print("Using bayesian optimizer")
-            return self._optimize_bayesian_impl()
-        if mode == "auto":
-            print("Optuna not available, falling back to coordinate_descent")
-        return self._optimize_coordinate_descent_impl()
+            result = self._optimize_bayesian_impl()
+        else:
+            if mode == "auto":
+                print("Optuna not available, falling back to coordinate_descent")
+            result = self._optimize_coordinate_descent_impl()
+        self._prune_intermediate_images(Path(result["best_image"]))
+        return result
 
     def _optimize_hybrid(self) -> dict:
         """P5: CD then Bayesian in a tight search box."""
         phase1_iters = getattr(self, 'hybrid_phase1_iters', 15)
         search_sigma = getattr(self, 'hybrid_search_box_sigma', 3.0)
         total = self.max_iters
-        cd_iters = min(phase1_iters, total - 2)
+        cd_iters = min(phase1_iters, total - max(3, total // 4))
         if cd_iters < 3:
             return self._optimize_coordinate_descent_impl()
 
@@ -203,7 +206,7 @@ class EvaluateMixin:
 
         sampler = optuna.samplers.TPESampler(
             multivariate=True,
-            n_startup_trials=max(5, min(bayes_iters // 3, 15)),
+            n_startup_trials=max(2, min(bayes_iters // 2, 15)),
             seed=42,
         )
         study = optuna.create_study(direction="minimize", sampler=sampler)

@@ -531,13 +531,13 @@ class OrchestrationMixin:
         return kept
 
     def _prune_intermediate_images(self, final_best_img: Path) -> None:
-        """Delete intermediate iter_*.png, keep only initial and final best."""
+        """Delete intermediate .png, keep only initial and final best."""
         keep_stems = {"initial", "initial_score", "initial_overlay"}
         best_stem = final_best_img.stem
         keep_stems.add(best_stem)
         keep_stems.add(f"{best_stem}_score")
         keep_stems.add(f"{best_stem}_overlay")
-        for img_path in list(self.output_dir.glob("iter_*.png")):
+        for img_path in list(self.output_dir.glob("*.png")):
             if img_path.stem not in keep_stems:
                 try:
                     img_path.unlink()

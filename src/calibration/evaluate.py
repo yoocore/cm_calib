@@ -48,37 +48,45 @@ class EvaluateMixin:
 
         # Freshness check: detect stale capture (same pixel data as previous)
         current_hash = hash(sim_img.tobytes())
+        current_params = self._snapshot_values()
         prev_hash = getattr(self, "_last_capture_hash", None)
         if prev_hash is not None and current_hash == prev_hash:
-            stale_count = getattr(self, "_consecutive_stale_count", 0) + 1
-            self._consecutive_stale_count = stale_count
-            print(f"[health] Stale capture #{stale_count} for '{tag}': image identical to previous. Attempting recovery...")
-            if stale_count >= 3:
-                raise RuntimeError(f"RENDERING_BROKEN: Too many consecutive stale captures ({stale_count}), rendering permanently frozen")
-            try:
-                from src.health.rendering_health import try_restart_rendering
-                r = try_restart_rendering()
-                if r.get("restart_success"):
-                    print(f"[health] Rendering restarted (UC growth={r.get('uc_growth')}), re-capturing...")
-                    sim_path = self.capture_movie(tag + "_re")
-                    sim_img = cv2.imread(str(sim_path), cv2.IMREAD_GRAYSCALE)
-                    if sim_img is None:
-                        raise RuntimeError(f"Failed reading re-captured screenshot: {sim_path}")
-                    re_hash = hash(sim_img.tobytes())
-                    if re_hash == current_hash:
-                        raise RuntimeError(f"Stale capture persists after rendering restart: {sim_path}")
-                    current_hash = re_hash
-                else:
-                    raise RuntimeError(f"Stale capture and rendering restart failed: {r.get('error', 'unknown')}")
-            except RuntimeError:
-                raise  # Propagate explicit RuntimeErrors above
-            except ImportError:
-                raise RuntimeError(f"Stale capture detected (rendering_health not available): {sim_path}")
-            except Exception as exc:
-                raise RuntimeError(f"Stale capture recovery failed: {exc}")
+            # Check if parameters changed — same params means same image is expected
+            prev_params = getattr(self, "_last_capture_params", None)
+            if prev_params is not None and current_params == prev_params:
+                # Parameters unchanged: identical image is expected, not a rendering issue
+                self._consecutive_stale_count = 0
+            else:
+                stale_count = getattr(self, "_consecutive_stale_count", 0) + 1
+                self._consecutive_stale_count = stale_count
+                print(f"[health] Stale capture #{stale_count} for '{tag}': image identical to previous. Attempting recovery...")
+                if stale_count >= 3:
+                    raise RuntimeError(f"RENDERING_BROKEN: Too many consecutive stale captures ({stale_count}), rendering permanently frozen")
+                try:
+                    from src.health.rendering_health import try_restart_rendering
+                    r = try_restart_rendering()
+                    if r.get("restart_success"):
+                        print(f"[health] Rendering restarted (UC growth={r.get('uc_growth')}), re-capturing...")
+                        sim_path = self.capture_movie(tag + "_re")
+                        sim_img = cv2.imread(str(sim_path), cv2.IMREAD_GRAYSCALE)
+                        if sim_img is None:
+                            raise RuntimeError(f"Failed reading re-captured screenshot: {sim_path}")
+                        re_hash = hash(sim_img.tobytes())
+                        if re_hash == current_hash:
+                            raise RuntimeError(f"Stale capture persists after rendering restart: {sim_path}")
+                        current_hash = re_hash
+                    else:
+                        raise RuntimeError(f"Stale capture and rendering restart failed: {r.get('error', 'unknown')}")
+                except RuntimeError:
+                    raise  # Propagate explicit RuntimeErrors above
+                except ImportError:
+                    raise RuntimeError(f"Stale capture detected (rendering_health not available): {sim_path}")
+                except Exception as exc:
+                    raise RuntimeError(f"Stale capture recovery failed: {exc}")
         else:
             self._consecutive_stale_count = 0
         self._last_capture_hash = current_hash
+        self._last_capture_params = current_params
 
         sim_prepared = self._prepare_eval_image(sim_img)
         t_prepare = time.perf_counter() - t0 - t_capture

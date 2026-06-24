@@ -440,7 +440,7 @@ class OrchestrationMixin:
             in_progress=in_progress,
         )
         with open(self.output_dir / "result.json", "w", encoding="utf-8") as f:
-            json.dump(_round_floats(result, skip_keys={"values", "best_values", "start_values", "final_values"}), f, ensure_ascii=False, indent=2, separators=(",", ":"))
+            json.dump(_round_floats(result, skip_keys={"values", "best_values", "start_values", "final_values"}), f, ensure_ascii=False, separators=(",", ":"))
         if bool(getattr(self, "print_progress_json", False)):
             summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
             _emit_cli_progress_json(

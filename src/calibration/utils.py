@@ -141,10 +141,20 @@ def _quantize_float(value: float, decimals: int) -> float:
     return float(f"{float(value):.{decimals}f}")
 
 
+def _round_floats(obj, decimals: int = 2):
+    if isinstance(obj, float):
+        return round(obj, decimals)
+    if isinstance(obj, dict):
+        return {k: _round_floats(v, decimals) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_round_floats(v, decimals) for v in obj]
+    return obj
+
+
 def _format_scalar_value_map(values: Dict[str, float]) -> str:
     ordered = []
     for name in sorted(values.keys()):
-        ordered.append(f"{name}={values[name]}")
+        ordered.append(f"{name}={values[name]:.2f}")
     return ", ".join(ordered)
 
 

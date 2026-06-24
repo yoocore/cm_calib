@@ -75,13 +75,15 @@ class ScoreCurveWindow(QWidget):
             self._refresh_static()
 
     def _refresh(self) -> None:
-        data = self._read_curve(self._result_json_path)
+        paths = self._discover_campaign_result_jsons(self._result_json_path)
+        data = self._read_campaign_curve(paths)
         if data:
             x, y = zip(*data)
             self._curve.setData(x=x, y=y)
 
     def _refresh_static(self) -> None:
-        data = self._read_curve(self._result_json_path)
+        paths = self._discover_campaign_result_jsons(self._result_json_path)
+        data = self._read_campaign_curve(paths)
         if not data:
             return
         x, y = zip(*data)
@@ -101,7 +103,7 @@ class ScoreCurveWindow(QWidget):
             return
 
         runs = [r for r in (summary.get("runs") or []) if isinstance(r, dict)]
-        same_config_scores = []
+        
         for run in runs:
             hist_path_raw = run.get("result_json")
             if not hist_path_raw:
@@ -110,21 +112,43 @@ class ScoreCurveWindow(QWidget):
             if not hist_path.exists():
                 continue
             hist_sig = _board_sig_from_json(hist_path)
-            if hist_sig == current_sig:
-                final = run.get("final_score")
-                if final is not None:
-                    same_config_scores.append(float(final))
-
-        if same_config_scores:
+            if hist_sig != current_sig:
+                continue
+            hist_paths = self._discover_campaign_result_jsons(hist_path)
+            hist_data = self._read_campaign_curve(hist_paths)
+            if not hist_data:
+                continue
+            hx, hy = zip(*hist_data)
             self._plot_widget.plot(
-                list(range(len(same_config_scores))),
-                same_config_scores,
-                pen=None,
-                symbol="o",
-                symbolSize=8,
-                symbolBrush=(31, 111, 235, 120),
-                name=f"Historical ({len(same_config_scores)} runs)",
+                hx, hy,
+                pen=pg.mkPen(color=(31, 111, 235, 50), width=1),
+                name=None,
             )
+
+
+    def _discover_campaign_result_jsons(self, seed_path: Path) -> list[Path]:
+        seed = seed_path.resolve()
+        for depth in range(3):
+            candidate = seed
+            for _ in range(depth):
+                candidate = candidate.parent
+            explore_dir = candidate / "explore"
+            refine_dir = candidate / "refine"
+            if explore_dir.is_dir() or refine_dir.is_dir():
+                results: list[Path] = []
+                if explore_dir.is_dir():
+                    for run_dir in sorted(explore_dir.iterdir()):
+                        if run_dir.is_dir() and run_dir.name.startswith("start_"):
+                            rj = run_dir / "result.json"
+                            if rj.exists():
+                                results.append(rj)
+                if refine_dir.is_dir():
+                    rj = refine_dir / "result.json"
+                    if rj.exists():
+                        results.append(rj)
+                if results:
+                    return results
+        return [seed_path]
 
     def _read_curve(self, path: Path) -> list[tuple[int, float]]:
         try:
@@ -146,12 +170,32 @@ class ScoreCurveWindow(QWidget):
         points.sort(key=lambda p: p[0])
         return points
 
+    def _read_campaign_curve(self, paths: list[Path]) -> list[tuple[int, float]]:
+        all_points: list[tuple[int, float]] = []
+        cumulative_iter = 0
+        for path in paths:
+            points = self._read_curve(path)
+            if not points:
+                continue
+            for it, score in points:
+                all_points.append((cumulative_iter + it, score))
+            cumulative_iter += max(p[0] for p in points) + 1 if points else 0
+        return all_points
+
     def _summary_path(self) -> Path | None:
         try:
-            camera_dir = self._result_json_path.parent.parent
+            current = self._result_json_path.resolve()
         except Exception:
             return None
-        return camera_dir / "camera_summary.json"
+        for _ in range(10):
+            candidate = current / "camera_summary.json"
+            if candidate.exists():
+                return candidate
+            parent = current.parent
+            if not parent or parent == current:
+                break
+            current = parent
+        return None
 
     def closeEvent(self, event) -> None:
         if self._timer is not None:

@@ -20,6 +20,7 @@ from src.calibration.utils import (
     _default_sim_output_root,
     _derive_camera_name_from_image_path,
     _format_scalar_value_map,
+    _round_floats,
     _is_apriltag_board_type,
     _is_aruco_family_board_type,
     _is_aruco_grid_board_type,
@@ -81,7 +82,7 @@ from src.health.dde_health_check import (
 
 def _emit_cli_progress_json(payload: dict) -> None:
     """Emit progress JSON line for CLI consumers."""
-    print("CALIBRATION_PROGRESS_JSON:", json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    print("CALIBRATION_PROGRESS_JSON:", json.dumps(_round_floats(payload), ensure_ascii=False, sort_keys=True))
 
 class OrchestrationMixin:
 
@@ -293,9 +294,9 @@ class OrchestrationMixin:
         print(
             "Calibration summary: "
             f"camera={summary['camera']} "
-            f"start_score={float(summary['start_score']):.6f} "
-            f"final_score={float(summary['final_score']):.6f} "
-            f"improvement={float(summary['score_improvement']):.6f} "
+            f"start_score={float(summary['start_score']):.2f} "
+            f"final_score={float(summary['final_score']):.2f} "
+            f"improvement={float(summary['score_improvement']):.2f} "
             f"rounds={int(summary['iteration_round_count'])} "
             f"elapsed={summary['total_elapsed_text']} "
             f"stop_reason={summary['stop_reason']} "
@@ -439,7 +440,7 @@ class OrchestrationMixin:
             in_progress=in_progress,
         )
         with open(self.output_dir / "result.json", "w", encoding="utf-8") as f:
-            json.dump(result, f, ensure_ascii=False, indent=2, separators=(",", ":"))
+            json.dump(_round_floats(result), f, ensure_ascii=False, indent=2, separators=(",", ":"))
         if bool(getattr(self, "print_progress_json", False)):
             summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
             _emit_cli_progress_json(
@@ -1219,7 +1220,7 @@ def _save_params_pool(camera_name: str, pool: dict) -> None:
     pool["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
     path = _params_pool_path(camera_name)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(pool, indent=2, ensure_ascii=False), encoding="utf-8")
+    path.write_text(json.dumps(_round_floats(pool), indent=2, ensure_ascii=False), encoding="utf-8")
 
 def _pool_entry_for_current_config(pool: dict, cfg: dict) -> Optional[dict]:
     """Look up pool entry matching the board config from cfg."""
@@ -3541,7 +3542,7 @@ def _run_multi_start_campaign(
         "runs": run_summaries,
     }
     summary_path = root_output_dir / "multistart_summary.json"
-    summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    summary_path.write_text(json.dumps(_round_floats(summary), ensure_ascii=False, indent=2), encoding="utf-8")
 
     if best_run is None:
         raise RuntimeError(f"All multi-start runs failed. See {summary_path}")
@@ -3786,7 +3787,7 @@ def _run_explore_then_refine_campaign(
         summary["best_run"] = dict(best_run)
         summary["best_run"]["stage"] = "explore"
         summary_path = campaign_root / "campaign_summary.json"
-        summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+        summary_path.write_text(json.dumps(_round_floats(summary), ensure_ascii=False, indent=2), encoding="utf-8")
         print(
             "Refine skipped: "
             f"explore_best_score={skip_refine_payload['explore_best_score']:.6f} "
@@ -3854,7 +3855,7 @@ def _run_explore_then_refine_campaign(
     }
     summary["best_run"] = _select_campaign_best_run(best_run, summary["refine"])
     summary_path = campaign_root / "campaign_summary.json"
-    summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    summary_path.write_text(json.dumps(_round_floats(summary), ensure_ascii=False, indent=2), encoding="utf-8")
 
     best_run_overall = summary["best_run"]
     print("Campaign summary:", summary_path)

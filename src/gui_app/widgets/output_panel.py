@@ -328,13 +328,20 @@ class CameraResultCard(QGroupBox):
         from PySide6.QtGui import QImage
 
         for i, label in enumerate([self.iter_preview, self.score_preview, self.overlay_preview]):
-            stretch = 1
+            group = label.parentWidget()
+            if group is None:
+                continue
             path = label._artifact_path
             if path:
                 img = QImage(path)
                 if not img.isNull() and img.height() > 0:
-                    stretch = max(1, int(round(img.width() / img.height() * 10)))
-            self._previews_layout.setStretch(i, stretch)
+                    # Group width = image width + borders/padding (~12px)
+                    group.setMaximumWidth(img.width() + 12)
+                else:
+                    group.setMaximumWidth(16777215)  # QWIDGETSIZE_MAX
+            else:
+                group.setMaximumWidth(16777215)
+            self._previews_layout.setStretch(i, 0)
 
     def mousePressEvent(self, event) -> None:
         self.selected.emit(self.camera_name)

@@ -4222,7 +4222,7 @@ def _run_explore_then_refine_rounds(
     if round_count <= 0:
         raise ValueError("round_count must be positive")
 
-    _refine_max_iters = refine_max_iters or int(cfg.get("max_iters", 0))
+    _refine_max_iters = refine_max_iters if refine_max_iters is not None else int(cfg.get("max_iters", 0))
     overall_total_iters = round_count * (start_count * explore_max_iters + _refine_max_iters)
     rounds_root = _build_isolated_output_dir("rounds", camera_parent=camera_name)
     active_cfg = copy.deepcopy(cfg)

@@ -440,6 +440,11 @@ def _reuse_existing_runtime_for_camera(
     )
     # --- Install re-entrant guard on CheckViewPort + delete-trace for persistence ---
     cmctrl.wrap_checkviewport()
+    # --- Resize Movie view before ABRAXAS to match real_image dimensions ---
+    if movie_view_size is not None:
+        cmctrl.disable_movie_updateview_timer(timeout_sec=5.0)
+        cmctrl.ensure_movie_view_size(movie_view_size[0], movie_view_size[1])
+        cmctrl.enable_movie_updateview_timer(timeout_sec=5.0)
     abraxas = cmctrl.ensure_movie_abraxas_enabled(timeout_sec=float(args.health_check_timeout_sec))
     camera_selection = cmctrl.ensure_movie_camera_selected(
         f"CAMERA_RSI-SENSOR Vhcl.{camera_name}",

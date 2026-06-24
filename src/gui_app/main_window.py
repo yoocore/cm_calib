@@ -533,6 +533,8 @@ class MainWindow(QMainWindow):
     def _on_process_finished(self, exit_code: int) -> None:
         if self.state.status == AppStatus.STOPPED:
             return
+        # Clear calibration snapshot so progress reflects current UI selection
+        self.state.selected_cameras = []
         if exit_code != 0:
             self._finalize_active_camera("failed")
             self.calibration_panel.set_failure_summary(self._build_failure_summary("Calibration failed", self._calibration_recent_lines))

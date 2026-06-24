@@ -97,6 +97,7 @@ class CmSettingsPanel(QGroupBox):
 
         self._camera_check_widgets: dict[str, tuple] = {}
         self._has_precheck_results: bool = False
+        self._prechecked_camera_names: set[str] = set()
 
         self.browse_button.clicked.connect(self._browse_project_root)
         self.testrun_browse_button.clicked.connect(self._browse_testrun)
@@ -312,7 +313,7 @@ class CmSettingsPanel(QGroupBox):
         self._update_row_status(camera_name)
 
     def _update_row_status(self, camera_name: str) -> None:
-        if self._has_precheck_results:
+        if self._has_precheck_results and camera_name in self._prechecked_camera_names:
             return  # don't override precheck results with mapping status
         widgets = self._camera_check_widgets.get(camera_name)
         if not widgets:
@@ -350,6 +351,7 @@ class CmSettingsPanel(QGroupBox):
         self._has_precheck_results = True
         for result in results:
             camera_name = str(result.get("camera") or "")
+            self._prechecked_camera_names.add(camera_name)
             ok = bool(result.get("ok"))
             msg = str(result.get("message") or "")
             widgets = self._camera_check_widgets.get(camera_name)
@@ -365,6 +367,7 @@ class CmSettingsPanel(QGroupBox):
 
     def clear_precheck_results(self) -> None:
         self._has_precheck_results = False
+        self._prechecked_camera_names.clear()
         for camera_name, (check_label, _) in self._camera_check_widgets.items():
             check_label.setText("")
             check_label.setToolTip("")

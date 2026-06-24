@@ -188,8 +188,16 @@ class CmSettingsPanel(QGroupBox):
         item.setCheckState(Qt.Unchecked if current == Qt.Checked else Qt.Checked)
         self.camera_list.blockSignals(False)
         camera_name = item.data(Qt.UserRole)
+        is_checked = item.checkState() == Qt.Checked
         if camera_name:
-            self._update_row_status(str(camera_name))
+            cn = str(camera_name)
+            if is_checked:
+                self._update_row_status(cn)
+            else:
+                widgets = self._camera_check_widgets.get(cn)
+                if widgets:
+                    check_label, _ = widgets
+                    check_label.setText("")
         self.camera_selection_changed.emit()
 
     def selected_cameras(self) -> list[str]:
@@ -202,6 +210,14 @@ class CmSettingsPanel(QGroupBox):
         return selected
 
     def set_cameras(self, cameras: list[str]) -> None:
+        # Preserve check states before clearing
+        checked_names: set[str] = set()
+        for index in range(self.camera_list.count()):
+            item = self.camera_list.item(index)
+            if item and item.checkState() == Qt.Checked:
+                data = item.data(Qt.UserRole)
+                if data is not None:
+                    checked_names.add(str(data))
         self.camera_list.clear()
         self._camera_check_widgets.clear()
         self._has_precheck_results = False
@@ -210,7 +226,7 @@ class CmSettingsPanel(QGroupBox):
             item = QListWidgetItem()
             item.setData(Qt.UserRole, camera_name)
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(Qt.Unchecked)
+            item.setCheckState(Qt.Checked if camera_name in checked_names else Qt.Unchecked)
             self.camera_list.addItem(item)
 
             row_widget = QWidget()
@@ -313,8 +329,6 @@ class CmSettingsPanel(QGroupBox):
         self._update_row_status(camera_name)
 
     def _update_row_status(self, camera_name: str) -> None:
-        if self._has_precheck_results and camera_name in self._prechecked_camera_names:
-            return  # don't override precheck results with mapping status
         widgets = self._camera_check_widgets.get(camera_name)
         if not widgets:
             return
@@ -369,7 +383,6 @@ class CmSettingsPanel(QGroupBox):
         self._has_precheck_results = False
         self._prechecked_camera_names.clear()
         for camera_name, (check_label, _) in self._camera_check_widgets.items():
-            check_label.setText("")
             check_label.setToolTip("")
 
     def update_sensor_list(self, sensors: list[dict]) -> None:

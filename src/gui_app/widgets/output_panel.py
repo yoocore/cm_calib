@@ -393,6 +393,7 @@ class OutputPanel(QGroupBox):
 
         self._task_log_path: str | None = None
         self._result_cards: dict[str, CameraResultCard] = {}
+        self._score_windows: list = []
 
         self.results_container = QWidget(self)
         self.results_layout = QVBoxLayout(self.results_container)
@@ -490,7 +491,7 @@ class OutputPanel(QGroupBox):
 
         card = self._ensure_result_card(result.camera)
         card.update_result(result)
-        card.open_score_plot_button.setEnabled(result.status == "completed")
+        card.open_score_plot_button.setEnabled(result.status in {"finished", "completed"})
 
         if self.result_tree.currentItem() is None:
             self._select_camera(result.camera)

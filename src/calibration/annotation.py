@@ -351,6 +351,6 @@ class AnnotationMixin:
             0.0,
         )
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        cv2.imwrite(str(output_path), overlay)
+        cv2.imwrite(str(output_path), overlay, [cv2.IMWRITE_PNG_COMPRESSION, 9])
         self._best_overlay_image_cache[cache_key] = output_path
         return output_path

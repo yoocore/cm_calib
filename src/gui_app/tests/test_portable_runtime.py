@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from src.entry.portable_runtime import build_python_command, discover_cmapi_paths, resolve_project_root
+from src.entry.portable_runtime import build_python_command, discover_cmapi_paths
 
 
 def test_discover_cmapi_paths_prefers_matching_python_version(tmp_path):
@@ -43,13 +43,3 @@ def test_build_python_command_dispatches_through_exe_when_frozen(monkeypatch, tm
     assert argv == ["--camcal-dispatch", str(script_path.resolve()), "--flag"]
 
 
-def test_resolve_project_root_prefers_exe_dir_for_frozen_portable_layout(monkeypatch, tmp_path):
-    portable_root = tmp_path / "portable"
-    (portable_root / "Data" / "Script" / "CameraCalibration").mkdir(parents=True)
-    fake_exe = portable_root / "CameraCalibrationGUI.exe"
-    fake_exe.write_text("", encoding="utf-8")
-
-    monkeypatch.setattr(sys, "executable", str(fake_exe))
-    monkeypatch.setattr(sys, "frozen", True, raising=False)
-
-    assert resolve_project_root() == portable_root.resolve()

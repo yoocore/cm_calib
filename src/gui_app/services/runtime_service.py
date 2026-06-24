@@ -7,6 +7,7 @@ from PySide6.QtCore import QObject, Signal
 from src.gui_app.services.process_service import ProcessService
 
 
+from src.entry.portable_runtime import resolve_tool_root
 class RuntimeService(QObject):
     line_received = Signal(str)
     runtime_summary = Signal(dict)
@@ -17,7 +18,7 @@ class RuntimeService(QObject):
     def __init__(self, project_root: Path, parent: QObject | None = None):
         super().__init__(parent)
         self.project_root = project_root.resolve()
-        self.calibration_root = self.project_root / "Data" / "Script" / "CameraCalibration"
+        self.calibration_root = resolve_tool_root()
         self.process_service = ProcessService(self)
         self.process_service.line_received.connect(self.line_received.emit)
         self.process_service.runtime_summary.connect(self.runtime_summary.emit)

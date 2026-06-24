@@ -4,7 +4,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QProcessEnvironment, Signal
 
-from portable_runtime import build_cmapi_pythonpath
+from src.entry.portable_runtime import resolve_tool_root, build_cmapi_pythonpath
 from src.gui_app.models.state import CalibrationLaunchConfig
 from src.gui_app.services.process_service import ProcessService
 
@@ -20,7 +20,7 @@ class CalibrationService(QObject):
     def __init__(self, project_root: Path, parent: QObject | None = None):
         super().__init__(parent)
         self.project_root = project_root.resolve()
-        self.calibration_root = self.project_root / "Data" / "Script" / "CameraCalibration"
+        self.calibration_root = resolve_tool_root()
         self.process_service = ProcessService(self)
         self.process_service.line_received.connect(self.line_received.emit)
         self.process_service.orchestration_event.connect(self.orchestration_event.emit)
@@ -38,7 +38,7 @@ class CalibrationService(QObject):
 
     @staticmethod
     def _resolve_calibration_root(project_root: Path) -> Path:
-        return project_root / "Data" / "Script" / "CameraCalibration"
+        return resolve_tool_root()
 
     def start(self, launch: CalibrationLaunchConfig) -> None:
         if self.is_running:

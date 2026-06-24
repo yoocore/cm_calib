@@ -5,14 +5,14 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from src.entry.portable_runtime import build_python_subprocess_command
+from src.entry.portable_runtime import resolve_tool_root, build_python_subprocess_command
 from scripts.runtime_config_bootstrap import bootstrap_runtime_configs_for_cameras
 
 
 class PrecheckService:
     def __init__(self, project_root: Path):
         self.project_root = project_root.resolve()
-        self.calibration_root = self.project_root / "Data" / "Script" / "CameraCalibration"
+        self.calibration_root = resolve_tool_root()
         self.bootstrap_template_path = self.calibration_root / "configs" / "bootstrap.template.json"
         self.config_dir = self.calibration_root / "configs"
         self.movie_dir = self.project_root / "Movie"

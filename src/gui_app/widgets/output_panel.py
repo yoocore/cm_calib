@@ -210,7 +210,6 @@ class CameraResultCard(QGroupBox):
         self.overlay_preview = ArtifactPreviewLabel("")
         self.open_log_button = QPushButton("Log")
         self.open_result_button = QPushButton("Result")
-        self.open_current_button = QPushButton("Current")
         self.open_score_live_button = QPushButton("Score Live")
         self.open_score_plot_button = QPushButton("Score Plot")
 
@@ -241,14 +240,12 @@ class CameraResultCard(QGroupBox):
         actions_layout.setContentsMargins(0, 0, 0, 0)
         actions_layout.addWidget(self.open_log_button)
         actions_layout.addWidget(self.open_result_button)
-        actions_layout.addWidget(self.open_current_button)
         actions_layout.addWidget(self.open_score_live_button)
         actions_layout.addWidget(self.open_score_plot_button)
 
         for button in (
             self.open_log_button,
             self.open_result_button,
-            self.open_current_button,
             self.open_score_live_button,
             self.open_score_plot_button,
         ):
@@ -319,7 +316,6 @@ class CameraResultCard(QGroupBox):
 
         self.open_log_button.setEnabled(bool(result.live_log))
         self.open_result_button.setEnabled(bool(result.result_json))
-        self.open_current_button.setEnabled(bool(result.current_iter_image))
         self.open_score_live_button.setEnabled(bool(result.best_image or result.current_iter_image))
 
     def _update_preview_stretch(self) -> None:
@@ -530,7 +526,6 @@ class OutputPanel(QGroupBox):
         card.activated.connect(self._open_camera_default_artifact)
         card.open_log_button.clicked.connect(lambda _checked=False, name=camera_name: self._open_camera_artifact(name, LIVE_LOG_ROLE))
         card.open_result_button.clicked.connect(lambda _checked=False, name=camera_name: self._open_camera_artifact(name, RESULT_JSON_ROLE))
-        card.open_current_button.clicked.connect(lambda _checked=False, name=camera_name: self._open_camera_artifact(name, CURRENT_ITER_IMAGE_ROLE))
         card.open_score_live_button.clicked.connect(lambda _checked=False, name=camera_name: self._open_score_curve(name, "live"))
         card.open_score_plot_button.clicked.connect(lambda _checked=False, name=camera_name: self._open_score_curve(name, "plot"))
         card.iter_preview.clicked.connect(lambda name=camera_name: self._open_camera_artifact(name, CURRENT_ITER_IMAGE_ROLE))

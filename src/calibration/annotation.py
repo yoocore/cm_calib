@@ -260,7 +260,7 @@ class AnnotationMixin:
 
         final_output = output_path or image_path.with_name(f"{image_path.stem}_annotated.png")
         final_output.parent.mkdir(parents=True, exist_ok=True)
-        cv2.imwrite(str(final_output), annotated_canvas)
+        cv2.imwrite(str(final_output), annotated_canvas, [cv2.IMWRITE_PNG_COMPRESSION, 9])
         return final_output, total_detail.board_scores
 
     @staticmethod

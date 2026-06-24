@@ -43,7 +43,7 @@ def parse_args() -> argparse.Namespace:
 
 def default_output_dir() -> Path:
     timestamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
-    return Path(__file__).resolve().parents[3] / "SimOutput" / "dde_health_check" / timestamp
+    return Path(__file__).resolve().parents[2] / "SimOutput" / "dde_health_check" / timestamp
 
 
 def summarize_text(value: object, limit: int = 240) -> str:

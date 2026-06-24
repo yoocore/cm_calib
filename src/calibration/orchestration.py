@@ -1466,7 +1466,7 @@ def _parse_runtime_vehicle_probe_detail(detail: str) -> Dict[str, str]:
         parsed[key] = value
     return parsed
 
-def _probe_runtime_vehicle_context() -> Optional[dict]:
+def _probe_runtime_vehicle_context(project_root: Optional[Path] = None) -> Optional[dict]:
     output_dir = _dde_default_output_dir()
     output_dir.mkdir(parents=True, exist_ok=True)
     probe_name = f"camera_calibration_vehicle_writeback_{uuid.uuid4().hex}"
@@ -1501,10 +1501,10 @@ def _probe_runtime_vehicle_context() -> Optional[dict]:
         print("Skipped vehicle writeback runtime probe: vehicle path was empty")
         return None
 
-    project_root = Path(__file__).resolve().parents[5]
-    vehicle_path = project_root / "Data" / "Vehicle" / Path(vehicle_key.replace("\\", "/"))
+    resolved = Path(project_root).resolve() if project_root is not None else Path(__file__).resolve().parents[2]
+    vehicle_path = resolved / "Data" / "Vehicle" / Path(vehicle_key.replace("\\", "/"))
     return {
-        "project_root": project_root,
+        "project_root": resolved,
         "testrun": parsed.get("testrun", "").strip() or None,
         "vehicle_key": vehicle_key,
         "vehicle_path": vehicle_path,
@@ -1522,7 +1522,7 @@ def _resolve_vehicle_writeback_context(config_path: Path, cfg: dict) -> Optional
         print(f"[writeback] SKIPPED: vehicle_writeback.enabled is False")
         return None
 
-    project_root = Path(payload.get("project_root", Path(__file__).resolve().parents[5]))
+    project_root = Path(payload.get("project_root", None) or Path(__file__).resolve().parents[2])
     vehicle_key = str(payload.get("vehicle", payload.get("vehicle_key", ""))).strip()
     vehicle_path: Optional[Path] = None
     testrun_name = str(payload.get("testrun", "")).strip() or None

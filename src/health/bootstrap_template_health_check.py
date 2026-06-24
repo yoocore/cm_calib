@@ -65,7 +65,7 @@ def _camera_name_from_config_path(config_path: Path) -> str:
 
 def _default_output_dir(config_path: Path) -> Path:
     timestamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
-    return config_path.resolve().parents[3] / "SimOutput" / "bootstrap_template_health" / timestamp
+    return Path(__file__).resolve().parents[2] / "SimOutput" / "bootstrap_template_health" / timestamp
 
 
 def _load_json(path: Path) -> dict:

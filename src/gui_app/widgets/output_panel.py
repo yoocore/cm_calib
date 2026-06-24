@@ -138,7 +138,7 @@ class ArtifactPreviewLabel(QLabel):
         self.setWordWrap(True)
         self.setMinimumSize(180, 120)
         self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
-        self.setStyleSheet("border: 1px solid #666; padding: 4px;")
+        self.setStyleSheet("border: 1px solid #666; padding: 0;")
 
     def set_artifact(self, artifact_path: str | None) -> None:
         self._artifact_path = artifact_path.strip() if artifact_path else None

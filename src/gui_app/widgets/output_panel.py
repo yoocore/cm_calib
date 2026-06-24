@@ -170,10 +170,14 @@ class ArtifactPreviewLabel(QLabel):
         if not path.exists():
             self.setPixmap(QPixmap())
             self.setText("")
-            self.hide()
+            parent_group = self.parentWidget()
+            if parent_group is not None:
+                parent_group.hide()
             return
 
-        self.show()
+        parent_group = self.parentWidget()
+        if parent_group is not None:
+            parent_group.show()
         QPixmapCache.clear()
         img = QImage(str(path))
         if img.isNull():
@@ -279,7 +283,7 @@ class CameraResultCard(QGroupBox):
         group = QGroupBox(title, self)
         group.setStyleSheet(_PREVIEW_GROUP_STYLE)
         inner = QVBoxLayout(group)
-        inner.setContentsMargins(0, 0, 0, 0)
+        inner.setContentsMargins(4, 4, 4, 4)
         label.setParent(group)
         inner.addWidget(label)
         return group

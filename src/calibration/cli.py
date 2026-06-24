@@ -172,6 +172,12 @@ def parse_args() -> argparse.Namespace:
         help="Optional max_iters override for the refinement phase of --explore-then-refine",
     )
     parser.add_argument(
+        "--explore-iters",
+        type=int,
+        default=None,
+        help="Optional max_iters override for the exploration phase of --explore-then-refine",
+    )
+    parser.add_argument(
         "--resume-from-result",
         action="store_true",
         help="Optional legacy mode: resume parameter values from the last result before optimize",
@@ -369,7 +375,10 @@ def main() -> None:
         if args.resume_from_result:
             print("Explore-then-refine mode ignores --resume-from-result and always starts from config initial values.")
         campaign_start_count = args.explore_start_count
-        campaign_explore_iters = min(int(cfg.get("max_iters", 100)), 24)
+        if args.explore_iters is not None:
+            campaign_explore_iters = min(int(args.explore_iters), 24)
+        else:
+            campaign_explore_iters = min(int(cfg.get("max_iters", 100)), 24)
         rounds_payload = _run_explore_then_refine_rounds(
             config_path=config_path,
             cfg=cfg,

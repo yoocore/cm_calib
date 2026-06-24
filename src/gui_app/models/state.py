@@ -45,6 +45,8 @@ class CalibrationLaunchConfig:
     resume_from_result: bool = False
     output_dir: Optional[Path] = None
     skip_prepare_for_first_camera: bool = False
+    explore_start_count: int = 4
+    explore_iters: Optional[int] = None
 
 
 @dataclass(slots=True)

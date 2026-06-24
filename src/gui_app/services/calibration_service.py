@@ -54,6 +54,9 @@ class CalibrationService(QObject):
             str(launch.campaign_rounds),
             "--explore-then-refine",
         ]
+        arguments.extend(["--explore-start-count", str(launch.explore_start_count)])
+        if launch.explore_iters is not None:
+            arguments.extend(["--explore-iters", str(launch.explore_iters)])
         if launch.refine_iters is not None:
             arguments.extend(["--refine-iters", str(launch.refine_iters)])
         if launch.resume_from_result:

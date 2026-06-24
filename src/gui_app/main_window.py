@@ -382,6 +382,8 @@ class MainWindow(QMainWindow):
         self.state.selected_cameras = selected_cameras
         project_root = Path(self.cm_settings_panel.project_root_edit.text().strip() or self.project_root)
         ref_iters = self._spin_value_or_none(self.calibration_panel._er_refine_iters_spin)
+        explore_iters = self._spin_value_or_none(self.calibration_panel._er_iters_spin)
+        explore_start_count = self.calibration_panel._er_count_spin.value()
         return CalibrationLaunchConfig(
             project_root=project_root,
             testrun=testrun,
@@ -389,6 +391,8 @@ class MainWindow(QMainWindow):
             campaign_rounds=self.calibration_panel.campaign_rounds_spin.value(),
             refine_iters=ref_iters,
             explore_then_refine=True,
+            explore_start_count=explore_start_count,
+            explore_iters=explore_iters,
             skip_prepare_for_first_camera=True,
         )
 

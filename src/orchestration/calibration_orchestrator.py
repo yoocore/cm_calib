@@ -154,6 +154,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--health-check-timeout-sec", type=float, default=2.5)
     parser.add_argument("--health-check-settle-sec", type=float, default=0.3)
     parser.add_argument("--campaign-rounds", type=int, default=1)
+    parser.add_argument("--explore-start-count", type=int, default=4, help="Number of perturbed explore runs per camera")
+    parser.add_argument("--explore-iters", type=int, default=None, help="Optional max_iters override for the exploration phase")
     parser.add_argument("--skip-prepare-for-first-camera", action="store_true")
     parser.add_argument("--explore-then-refine", action="store_true")
     parser.add_argument("--refine-iters", type=int, default=None)
@@ -209,12 +211,15 @@ def _build_camera_command(args: argparse.Namespace, config_path: Path) -> list[s
         [
         "--config",
         str(config_path),
+        "--explore-start-count",
+        str(args.explore_start_count),
         "--campaign-rounds",
         str(args.campaign_rounds),
         "--print-summary-json",
         "--print-progress-json",
         ],
     )
+    _append_optional_arg(command, "--explore-iters", args.explore_iters)
     _append_optional_arg(command, "--refine-iters", args.refine_iters)
     if args.explore_then_refine:
         command.append("--explore-then-refine")

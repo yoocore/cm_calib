@@ -355,7 +355,7 @@ def main() -> None:
                 cfg["parameters"][name]["initial"] = value
             else:
                 print(f"  WARNING: {name} from vehicle file not in config parameters")
-        runtime_context = _probe_runtime_vehicle_context()
+        runtime_context = _probe_runtime_vehicle_context(project_root=root)
         if runtime_context and runtime_context.get("vehicle_path"):
             cfg.setdefault("vehicle_writeback", {}).setdefault("vehicle", str(runtime_context["vehicle_path"]))
             print(f"[writeback] Vehicle path cached from probe: {runtime_context['vehicle_path']}")

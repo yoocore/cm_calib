@@ -68,6 +68,7 @@ class MainWindow(QMainWindow):
         left_mid_splitter.setCollapsible(1, False)
 
         left_mid_container = QWidget(self)
+        left_mid_container.setMinimumWidth(700)
         left_mid_layout = QVBoxLayout(left_mid_container)
         left_mid_layout.setContentsMargins(0, 0, 0, 0)
         left_mid_layout.setSpacing(10)
@@ -81,6 +82,8 @@ class MainWindow(QMainWindow):
         outer_splitter.setHandleWidth(8)
         outer_splitter.setCollapsible(0, False)
         outer_splitter.setCollapsible(1, False)
+        outer_splitter.setStretchFactor(0, 0)
+        outer_splitter.setStretchFactor(1, 1)
 
         central_container = QWidget(self)
         central_layout = QVBoxLayout(central_container)
@@ -363,6 +366,7 @@ class MainWindow(QMainWindow):
         new_root = Path(path_text.strip()).resolve() if path_text.strip() else None
         if new_root and new_root != self.config_service.project_root:
             self.output_panel.append_log(f"Project root: {new_root}", source="system")
+            self.project_root = new_root
             self.config_service = ConfigService(new_root)
             self.precheck_service = PrecheckService(new_root)
         self._refresh_camera_list()

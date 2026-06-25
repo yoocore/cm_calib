@@ -141,7 +141,8 @@ _CM_ROOTS = [
 
 
 def detect_cm_versions() -> dict[str, Path]:
-    versions: dict[str, Path] = {}
+    # Intermediate map: version -> (has_cmapi, entry_path), deduplicating by version number
+    version_map: dict[str, tuple[bool, Path]] = {}
     for root in _CM_ROOTS:
         root_path = Path(root)
         if not root_path.is_dir():
@@ -154,12 +155,24 @@ def detect_cm_versions() -> dict[str, Path]:
                 for exe in ("CM_Office.exe", "CM.exe"):
                     if (entry / sub / exe).is_file():
                         version = entry.name[len("win64-"):]
-                        versions[version] = entry
+                        has_cmapi = (
+                            any(entry.glob("Python/cmapi-*.whl"))
+                            or any(entry.glob("Python/cmapi/__init__.py"))
+                            or any(entry.glob("Python/python3.*/cmapi/__init__.py"))
+                        )
+                        # Deduplicate by version: prefer cmapi over no-cmapi
+                        existing = version_map.get(version)
+                        if existing is None or (has_cmapi and not existing[0]):
+                            version_map[version] = (has_cmapi, entry)
                         found = True
                         break
                 if found:
                     break
-    return dict(sorted(versions.items(), key=lambda x: x[0], reverse=True))
+    return dict(sorted(
+        {f"{v} (cmapi)" if h else f"{v} (no cmapi)": p for v, (h, p) in version_map.items()}.items(),
+        key=lambda x: x[0],
+        reverse=True,
+    ))
 
 
 class _SubGroup(QGroupBox):
@@ -229,11 +242,8 @@ class CalibrationPanel(QGroupBox):
         if not cm_versions:
             self.cm_version_combo.setItemText(0, "No CM versions detected")
         else:
-            for ver in cm_versions:
-                install_path = cm_versions[ver]
-                has_cmapi = (install_path / "Python" / "Lib" / "site-packages" / "cmapi" / "__init__.py").exists()
-                suffix = "(cmapi)" if has_cmapi else "(no cmapi)"
-                self.cm_version_combo.addItem(f"{ver}{suffix}", install_path)
+            for ver, install_path in cm_versions.items():
+                self.cm_version_combo.addItem(ver, install_path)
             self.cm_version_combo.setCurrentIndex(0)
         self.cm_version_combo.setFixedHeight(36)
 

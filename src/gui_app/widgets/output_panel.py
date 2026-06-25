@@ -334,7 +334,7 @@ class CameraResultCard(QGroupBox):
             if path:
                 img = QImage(path)
                 if not img.isNull() and img.height() > 0:
-                    preview_width = min(img.width(), 360)
+                    preview_width = min(img.width(), 240)
                     group.setMaximumWidth(preview_width + 12)
                 else:
                     group.setMaximumWidth(16777215)

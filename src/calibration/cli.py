@@ -376,9 +376,9 @@ def main() -> None:
             print("Explore-then-refine mode ignores --resume-from-result and always starts from config initial values.")
         campaign_start_count = args.explore_start_count
         if args.explore_iters is not None:
-            campaign_explore_iters = min(int(args.explore_iters), 24)
+            campaign_explore_iters = int(args.explore_iters)
         else:
-            campaign_explore_iters = min(int(cfg.get("max_iters", 100)), 24)
+            campaign_explore_iters = int(cfg.get("max_iters", 100))
         rounds_payload = _run_explore_then_refine_rounds(
             config_path=config_path,
             cfg=cfg,

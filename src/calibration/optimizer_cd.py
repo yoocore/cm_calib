@@ -841,7 +841,8 @@ class CoordinateDescentMixin:
             )
 
             if best_score <= self.target_score:
-                print("Target score reached.")
+                stop_reason = "target_score"
+                print(f"Target score reached: {best_score:.6f} <= {self.target_score:.6f}.")
                 break
 
             if not improved_in_iter and all(p.step <= p.min_step + 1e-12 for p in self.params):

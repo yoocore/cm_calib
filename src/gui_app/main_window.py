@@ -642,8 +642,18 @@ class MainWindow(QMainWindow):
             calib_round_index = self._as_int(progress.get("calib_round_index"))
             calib_round_count = self._as_int(progress.get("calib_round_count"))
             calib_overall_total_iters = self._as_int(progress.get("calib_overall_total_iters"))
+            # Compute cumulative iteration across phases/dirs/rounds
+            cumulative_iter = iter_index
+            if calib_overall_total_iters and calib_round_count:
+                per_round = calib_overall_total_iters // calib_round_count
+                round_offset = (calib_round_index - 1) * per_round
+                if calib_phase == "explore":
+                    cumulative_iter = round_offset + (calib_dir_index or 0) * (calib_max_iters or 0) + (iter_index or 0)
+                elif calib_phase == "refine":
+                    explore_part = per_round - (calib_max_iters or 0)
+                    cumulative_iter = round_offset + explore_part + (iter_index or 0)
             round_prefix = f"Rd:{calib_round_index} " if calib_round_index and calib_round_index > 0 else ""
-            print(f"[PROGRESS_DIAG] {camera_name}: phase={calib_phase} iter={iter_index} tot_iters={calib_overall_total_iters} dir={calib_dir_index}/{calib_total_dirs} round={calib_round_index}/{calib_round_count}")
+            print(f"[PROGRESS_DIAG] {camera_name}: iter={cumulative_iter}/{calib_overall_total_iters} phase={calib_phase} dir={calib_dir_index}/{calib_total_dirs} round={calib_round_index}/{calib_round_count}")
 
             last_phase = self._camera_last_phase.get(camera_name)
             if calib_overall_total_iters and calib_round_count:

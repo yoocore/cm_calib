@@ -713,8 +713,8 @@ def _configure_live_log_for_output_dir(output_dir: Path, resume_from_result: boo
     sys.stderr = _TeeStream(primary_stderr, log_stream)
     return log_path
 
-def _configure_live_log(cfg: dict, resume_from_result: bool) -> Path:
-    output_dir = _resolve_config_output_dir(cfg)
+def _configure_live_log(cfg: dict, resume_from_result: bool, project_root: Optional[Path] = None) -> Path:
+    output_dir = _resolve_config_output_dir(cfg, project_root=project_root)
     cfg["output_dir"] = str(output_dir)
     return _configure_live_log_for_output_dir(output_dir, resume_from_result)
 
@@ -730,13 +730,15 @@ def _default_output_name_from_config(config_path: Optional[Path]) -> str:
             return name
     return "camera_calibration_run"
 
-def _resolve_config_output_dir(cfg: dict, config_path: Optional[Path] = None) -> Path:
+def _resolve_config_output_dir(cfg: dict, config_path: Optional[Path] = None, project_root: Optional[Path] = None) -> Path:
     raw_output_dir = str(cfg.get("output_dir", "")).strip()
     if raw_output_dir:
         return Path(raw_output_dir)
+    if project_root is not None:
+        return _default_sim_output_root(project_root) / _default_output_name_from_config(config_path)
     return _default_sim_output_root() / _default_output_name_from_config(config_path)
 
-def _build_isolated_output_dir(prefix: str, camera_parent: Optional[str] = None) -> Path:
+def _build_isolated_output_dir(prefix: str, camera_parent: Optional[str] = None, project_root: Optional[Path] = None) -> Path:
     """Build an isolated output directory under SimOutput.
 
     If `camera_parent` is provided, the returned path will be
@@ -744,23 +746,24 @@ def _build_isolated_output_dir(prefix: str, camera_parent: Optional[str] = None)
     same camera are grouped under the same parent directory.
     """
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    sim_root = _default_sim_output_root(project_root) if project_root is not None else _default_sim_output_root()
     if camera_parent:
-        return _default_sim_output_root() / camera_parent / f"{prefix}_{ts}"
-    return _default_sim_output_root() / f"{prefix}_{ts}"
+        return sim_root / camera_parent / f"{prefix}_{ts}"
+    return sim_root / f"{prefix}_{ts}"
 
 def _camera_name_from_config_path(config_path: Optional[Path]) -> str:
     return _default_output_name_from_config(config_path)
 
-def _camera_history_summary_path(camera_name: str) -> Path:
-    return _default_sim_output_root() / _canonical_camera_group_name(camera_name) / "camera_summary.json"
+def _camera_history_summary_path(camera_name: str, project_root: Path) -> Path:
+    return _default_sim_output_root(project_root) / _canonical_camera_group_name(camera_name) / "camera_summary.json"
 
-def _camera_history_summary_compact_path(camera_name: str) -> Path:
-    return _default_sim_output_root() / _canonical_camera_group_name(camera_name) / "camera_summary_compact.json"
+def _camera_history_summary_compact_path(camera_name: str, project_root: Path) -> Path:
+    return _default_sim_output_root(project_root) / _canonical_camera_group_name(camera_name) / "camera_summary_compact.json"
 
-def _iter_camera_history_dirs(camera_name: str) -> List[Path]:
+def _iter_camera_history_dirs(camera_name: str, project_root: Path) -> List[Path]:
     camera_group = _canonical_camera_group_name(camera_name)
     dirs: list[Path] = []
-    for root in (_default_sim_output_root(), _sim_output_root_legacy()):
+    for root in (_default_sim_output_root(project_root), _sim_output_root_legacy()):
         candidate = root / camera_group
         if candidate.exists() and candidate.is_dir():
             dirs.append(candidate)
@@ -925,8 +928,8 @@ def _build_camera_history_overview(summary: dict) -> Optional[dict]:
         "net_score_improvement_to_best": first_start_score - best_final_score,
     }
 
-def _build_camera_history_summary(camera_name: str) -> dict:
-    history_dirs = _iter_camera_history_dirs(camera_name)
+def _build_camera_history_summary(camera_name: str, project_root: Path) -> dict:
+    history_dirs = _iter_camera_history_dirs(camera_name, project_root)
     run_digests: List[dict] = []
     campaign_digests: List[dict] = []
 
@@ -978,9 +981,9 @@ def _build_camera_history_summary(camera_name: str) -> dict:
         "runs": run_digests,
     }
 
-def _write_camera_history_summary(camera_name: str) -> Tuple[Path, dict]:
-    summary = _build_camera_history_summary(camera_name)
-    summary_path = _camera_history_summary_path(camera_name)
+def _write_camera_history_summary(camera_name: str, project_root: Path) -> Tuple[Path, dict]:
+    summary = _build_camera_history_summary(camera_name, project_root)
+    summary_path = _camera_history_summary_path(camera_name, project_root)
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     summary_path.write_text(
         json.dumps(summary, ensure_ascii=False, indent=2),
@@ -1001,9 +1004,9 @@ def _build_camera_history_summary_compact(summary: dict) -> dict:
     }
 
 
-def _build_camera_trend_data(camera_name: str) -> list[dict]:
+def _build_camera_trend_data(camera_name: str, project_root: Path) -> list[dict]:
     """Return time-series trend data for charting: per-run score, board sig, timestamp."""
-    summary = _build_camera_history_summary(camera_name)
+    summary = _build_camera_history_summary(camera_name, project_root)
     runs = [r for r in (summary.get("runs") or []) if isinstance(r, dict)]
     trend = []
     for r in runs:
@@ -1018,9 +1021,9 @@ def _build_camera_trend_data(camera_name: str) -> list[dict]:
     return trend
 
 
-def _write_camera_history_summary_compact(camera_name: str, summary: dict) -> Path:
+def _write_camera_history_summary_compact(camera_name: str, summary: dict, project_root: Path) -> Path:
     compact_summary = _build_camera_history_summary_compact(summary)
-    compact_summary_path = _camera_history_summary_compact_path(camera_name)
+    compact_summary_path = _camera_history_summary_compact_path(camera_name, project_root)
     compact_summary_path.parent.mkdir(parents=True, exist_ok=True)
     compact_summary_path.write_text(
         json.dumps(compact_summary, ensure_ascii=False, indent=2),
@@ -1069,9 +1072,10 @@ def _print_camera_history_summary_compact(compact_summary_path: Path) -> None:
 def _marker_name_for_output_dir(output_dir: Path) -> str:
     return f"{output_dir.name}_last.json"
 
-def _camera_scope_output_dir(output_dir: Path) -> Path:
+def _camera_scope_output_dir(output_dir: Path, project_root: Optional[Path] = None) -> Path:
     """Return the camera-scoped root directory under SimOutput for an output path."""
-    for root in (_default_sim_output_root(), _sim_output_root_legacy()):
+    sim_root = _default_sim_output_root(project_root) if project_root is not None else _default_sim_output_root()
+    for root in (sim_root, _sim_output_root_legacy()):
         try:
             relative = output_dir.relative_to(root)
             if relative.parts:
@@ -1080,13 +1084,13 @@ def _camera_scope_output_dir(output_dir: Path) -> Path:
             continue
     return output_dir
 
-def _marker_path_for_output_dir(output_dir: Path) -> Path:
+def _marker_path_for_output_dir(output_dir: Path, project_root: Optional[Path] = None) -> Path:
     """Return marker path for an output_dir.
 
     Prefer placing the marker inside the camera-scoped directory under
     SimOutput, otherwise fall back to the output_dir itself.
     """
-    camera_scope_dir = _camera_scope_output_dir(output_dir)
+    camera_scope_dir = _camera_scope_output_dir(output_dir, project_root)
     return camera_scope_dir / _marker_name_for_output_dir(output_dir)
 
 def _write_run_marker(marker_path: Path, payload: dict) -> None:
@@ -1161,17 +1165,17 @@ def _compute_board_signature_hash(signature: frozenset) -> str:
     raw = ",".join(f"{bid}:{btype}" for bid, btype in sorted_entries)
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
-def _params_pool_path(camera_name: str) -> Path:
+def _params_pool_path(camera_name: str, project_root: Path) -> Path:
     """Path to historical params pool JSON for a camera."""
-    root = _default_sim_output_root()
+    root = _default_sim_output_root(project_root)
     return root / _canonical_camera_group_name(camera_name) / "historical_params_pool.json"
 
-def _load_params_pool(camera_name: str) -> dict:
+def _load_params_pool(camera_name: str, project_root: Path) -> dict:
     """Load params pool from disk, creating empty if missing.
 
     On first call (pool file absent), migrates from old result.jsons.
     """
-    path = _params_pool_path(camera_name)
+    path = _params_pool_path(camera_name, project_root)
     if path.exists():
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -1182,7 +1186,7 @@ def _load_params_pool(camera_name: str) -> dict:
 
     # Pool doesn't exist or is corrupt - migrate from old result.jsons
     pool = {"version": 2, "camera_name": camera_name, "entries": {}}
-    history_dirs = _iter_camera_history_dirs(camera_name)
+    history_dirs = _iter_camera_history_dirs(camera_name, project_root)
     for history_dir in history_dirs:
         for result_path in sorted(history_dir.rglob("result.json")):
             try:
@@ -1211,14 +1215,14 @@ def _load_params_pool(camera_name: str) -> dict:
             except Exception:
                 continue
     if pool["entries"]:
-        _save_params_pool(camera_name, pool)
+        _save_params_pool(camera_name, pool, project_root=project_root)
         print(f"[pool_migrate] Built pool from old runs: {len(pool['entries'])} signature(s)")
     return pool
 
-def _save_params_pool(camera_name: str, pool: dict) -> None:
+def _save_params_pool(camera_name: str, pool: dict, project_root: Optional[Path] = None) -> None:
     """Save params pool to disk."""
     pool["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
-    path = _params_pool_path(camera_name)
+    path = _params_pool_path(camera_name, project_root=project_root)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(_round_floats(pool, skip_keys={"best_params"}), indent=2, ensure_ascii=False), encoding="utf-8")
 
@@ -1616,6 +1620,7 @@ def _write_best_values_to_vehicle_config(
     camera_name: str,
     best_score: float,
     values: Dict[str, float],
+    project_root: Optional[Path] = None,
 ) -> Optional[dict]:
     print(f"[writeback] Called: config={config_path}, camera={camera_name}, best_score={float(best_score):.4f}, values_count={len(values)}")
     for k, v in sorted(values.items()):
@@ -1634,7 +1639,7 @@ def _write_best_values_to_vehicle_config(
     # fair comparison is to test each pool entry's params on CURRENT boards.
     best_re_eval_score: Optional[float] = None
     best_re_eval_params: Dict[str, float] = {}
-    pool = _load_params_pool(camera_name)
+    pool = _load_params_pool(camera_name, project_root=project_root)
     pool_entries = pool.get("entries", {})
     if pool_entries:
         print(f"[write_protect] Re-evaluating {len(pool_entries)} pool entries on current boards...")
@@ -1658,7 +1663,7 @@ def _write_best_values_to_vehicle_config(
             else:
                 print(f"  entry {sig_hash[:8]}: re-eval FAILED, original={original_score}")
         # Persist corrected pool scores (self-healing)
-        _save_params_pool(camera_name, pool)
+        _save_params_pool(camera_name, pool, project_root=project_root)
         if best_re_eval_score is not None:
             if float(best_score) > best_re_eval_score + 1e-6:
                 print(
@@ -1880,7 +1885,7 @@ def _write_best_values_to_vehicle_config(
     # Update params pool after successful write
     if boards:
         _update_params_pool_with_result(pool, boards, float(best_score), values)
-        _save_params_pool(camera_name, pool)
+        _save_params_pool(camera_name, pool, project_root=project_root)
 
     return {
         "vehicle_path": str(vehicle_path),
@@ -3218,9 +3223,10 @@ def _next_escape_stagnation_rounds(
 
 
 
-def _compute_auto_jitter(camera_name: str) -> float:
+def _compute_auto_jitter(camera_name: str, project_root: Optional[Path] = None) -> float:
     """Compute adaptive multi-start jitter from history or fallback 2.0."""
-    summary_path = _camera_history_summary_path(camera_name)
+    _prj = project_root or Path.cwd()
+    summary_path = _camera_history_summary_path(camera_name, _prj)
     if summary_path.exists():
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
         scores = [float(r.get("final_score", 0)) for r in summary.get("runs", [])]
@@ -3228,7 +3234,7 @@ def _compute_auto_jitter(camera_name: str) -> float:
             sigma = np.std(scores)
             if sigma > 0:
                 return max(0.3, min(6.0, sigma * 0.05))
-    pool = _load_params_pool(camera_name)
+    pool = _load_params_pool(camera_name, _prj)
     pool_entries = pool.get("entries", {})
     if len(pool_entries) >= 3:
         pool_scores = [float(e.get("best_score", 0)) for e in pool_entries.values()]
@@ -3246,17 +3252,18 @@ def _build_multi_start_run_configs(
     seed: int,
     max_iters_override: Optional[int],
     output_root_dir: Optional[Path] = None,
+    project_root: Optional[Path] = None,
 ) -> Tuple[Path, List[dict]]:
     if start_count <= 0:
         raise ValueError("multi-start count must be positive")
 
-    js = _compute_auto_jitter(camera_name) if str(jitter_steps).lower() == "auto" else float(jitter_steps)
+    js = _compute_auto_jitter(camera_name, project_root=project_root) if str(jitter_steps).lower() == "auto" else float(jitter_steps)
     base_parameters = cfg.get("parameters")
     if not isinstance(base_parameters, dict) or not base_parameters:
         raise ValueError("parameters must be a non-empty object for multi-start mode")
 
     root_output_dir = output_root_dir or _build_isolated_output_dir(
-        "multistart", camera_parent=camera_name
+        "multistart", camera_parent=camera_name, project_root=project_root
     )
     rng = random.Random(seed)
     run_cfgs: List[dict] = []
@@ -3430,6 +3437,7 @@ def _run_multi_start_campaign(
     seed: int,
     max_iters_override: Optional[int],
     output_root_dir: Optional[Path] = None,
+    project_root: Optional[Path] = None,
     *,
     round_index: int = 0,
     round_count: int = 0,
@@ -3446,6 +3454,7 @@ def _run_multi_start_campaign(
         seed=seed,
         max_iters_override=max_iters_override,
         output_root_dir=output_root_dir,
+        project_root=project_root,
     )
     root_output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -3463,7 +3472,7 @@ def _run_multi_start_campaign(
         multi_cfg = run_cfg.get("multi_start", {})
         start_index = int(multi_cfg.get("index", 0))
         output_dir = Path(run_cfg["output_dir"])
-        live_log_path = _configure_live_log(run_cfg, False)
+        live_log_path = _configure_live_log(run_cfg, False, project_root=project_root)
         initial_values = multi_cfg.get("initial_values", {})
         strategy_label = str(multi_cfg.get("strategy", "baseline")).strip()
         focus_boards = multi_cfg.get("focus_boards") or []
@@ -3712,6 +3721,7 @@ def _run_explore_then_refine_campaign(
     previous_escape_stagnation_rounds: int = 0,
     anchor_score: Optional[float] = None,
     output_root_dir: Optional[Path] = None,
+    project_root: Optional[Path] = None,
     *,
     round_index: int = 0,
     round_count: int = 0,
@@ -3725,7 +3735,7 @@ def _run_explore_then_refine_campaign(
         raise ValueError("explore-then-refine mode requires positive explore iterations")
 
     campaign_root = output_root_dir or _build_isolated_output_dir(
-        "campaign", camera_parent=camera_name
+        "campaign", camera_parent=camera_name, project_root=project_root
     )
     campaign_root.mkdir(parents=True, exist_ok=True)
 
@@ -3752,6 +3762,7 @@ def _run_explore_then_refine_campaign(
         round_index=round_index,
         round_count=round_count,
         overall_total_iters=overall_total_iters,
+        project_root=project_root,
     )
     best_run = explore_summary["best_run"]
     best_values = dict(best_run["best_values"])
@@ -3809,7 +3820,7 @@ def _run_explore_then_refine_campaign(
     if refine_max_iters is not None:
         refine_cfg["max_iters"] = int(refine_max_iters)
 
-    live_log_path = _configure_live_log(refine_cfg, False)
+    live_log_path = _configure_live_log(refine_cfg, False, project_root=project_root)
     print(
         "Refine run: "
         f"source_start_index={best_run['start_index']}, "
@@ -3988,6 +3999,7 @@ def _run_single_optimize(
     cfg: dict,
     base_output_dir: Path,
     camera_name: str,
+    project_root: Optional[Path] = None,
     *,
     resume_from_result: bool,
     output_dir_override: Optional[Path] = None,
@@ -3996,7 +4008,7 @@ def _run_single_optimize(
     from src.calibration.camera_calibration import CameraCalibrator  # noqa: E402
     run_cfg = copy.deepcopy(cfg)
 
-    marker_path = _marker_path_for_output_dir(base_output_dir)
+    marker_path = _marker_path_for_output_dir(base_output_dir, project_root=project_root)
     resume_result_path: Optional[Path] = None
     if resume_from_result:
         resume_result_path = _read_latest_result_path(marker_path, base_output_dir)
@@ -4005,7 +4017,7 @@ def _run_single_optimize(
         run_cfg["output_dir"] = str(output_dir_override)
     else:
         run_cfg["output_dir"] = str(
-            _build_isolated_output_dir("run", camera_parent=camera_name)
+            _build_isolated_output_dir("run", camera_parent=camera_name, project_root=project_root)
         )
 
     marker_payload = {
@@ -4044,6 +4056,7 @@ def _run_single_optimize(
             camera_name,
             float(result["best_score"]),
             result["best_values"],
+            project_root=project_root,
         )
         marker_payload.update(
             {
@@ -4080,13 +4093,13 @@ def _run_plain_optimize_rounds(
     base_output_dir: Path,
     camera_name: str,
     round_count: int,
-    *,
     resume_from_result: bool,
+    project_root: Optional[Path] = None,
 ) -> dict:
     if round_count <= 0:
         raise ValueError("round_count must be positive")
 
-    rounds_root = _build_isolated_output_dir("rounds", camera_parent=camera_name)
+    rounds_root = _build_isolated_output_dir("rounds", camera_parent=camera_name, project_root=project_root)
     active_cfg = copy.deepcopy(cfg)
     target_score = float(cfg.get("target_score", 5.0))
     round_seed_policy = _resolve_round_seed_policy(cfg)
@@ -4135,6 +4148,7 @@ def _run_plain_optimize_rounds(
             resume_from_result=resume_from_result and round_index == 0,
             output_dir_override=round_output_dir,
             round_index=round_no,
+            project_root=project_root,
         )
         result = dict(run_payload["result"])
         strategy_payload = result.get("strategy_adaptation")
@@ -4220,13 +4234,14 @@ def _run_explore_then_refine_rounds(
     seed: int,
     explore_max_iters: int,
     refine_max_iters: Optional[int],
+    project_root: Optional[Path] = None,
 ) -> dict:
     if round_count <= 0:
         raise ValueError("round_count must be positive")
 
     _refine_max_iters = refine_max_iters if refine_max_iters is not None else int(cfg.get("max_iters", 0))
     overall_total_iters = round_count * (start_count * explore_max_iters + _refine_max_iters)
-    rounds_root = _build_isolated_output_dir("rounds", camera_parent=camera_name)
+    rounds_root = _build_isolated_output_dir("rounds", camera_parent=camera_name, project_root=project_root)
     active_cfg = copy.deepcopy(cfg)
     target_score = float(cfg.get("target_score", 5.0))
     round_seed_policy = _resolve_round_seed_policy(cfg)
@@ -4288,6 +4303,7 @@ def _run_explore_then_refine_rounds(
                 round_index=round_index + 1,
                 round_count=round_count,
                 overall_total_iters=overall_total_iters,
+                project_root=project_root,
             )
         except Exception as exc:
             timeout_like_failure = _is_timeout_like_round_failure(exc)
@@ -4384,6 +4400,7 @@ def _run_explore_then_refine_rounds(
             camera_name,
             float(best_round["best_run"]["best_score"]),
             best_round["best_run"]["best_values"],
+            project_root=project_root,
         )
 
     payload = {

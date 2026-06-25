@@ -23,7 +23,9 @@ def _unlink_if_exists(path: Path) -> None:
             time.sleep(0.05)
 
 
-def _default_sim_output_root() -> Path:
+def _default_sim_output_root(project_root: Optional[Path] = None) -> Path:
+    if project_root:
+        return project_root / "SimOutput" / "calibration"
     return Path("C:/CM_Projects/CMO141_Calibration/SimOutput") / "calibration"
 
 
@@ -126,8 +128,11 @@ def _canonical_camera_group_name(name: str) -> str:
     return raw_name
 
 
-def _camera_name_from_output_dir(output_dir: Path) -> str:
-    for root in (_default_sim_output_root(), _sim_output_root_legacy()):
+def _camera_name_from_output_dir(output_dir: Path, project_root: Optional[Path] = None) -> str:
+    roots = [_sim_output_root_legacy()]
+    if project_root is not None:
+        roots.insert(0, _default_sim_output_root(project_root))
+    for root in roots:
         try:
             relative_parts = output_dir.resolve().relative_to(root.resolve()).parts
             if relative_parts:

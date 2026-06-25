@@ -328,7 +328,7 @@ def main() -> None:
     if args.verbose_dde_diag:
         cfg["verbose_dde_diag"] = True
 
-    base_output_dir = _resolve_config_output_dir(cfg, config_path)
+    base_output_dir = _resolve_config_output_dir(cfg, config_path, project_root=root)
     cfg["output_dir"] = str(base_output_dir)
     should_optimize = not any(
         [
@@ -390,6 +390,7 @@ def main() -> None:
             seed=int(args.explore_start_seed),
             explore_max_iters=int(campaign_explore_iters),
             refine_max_iters=args.refine_iters,
+            project_root=root,
         )
         best_round = rounds_payload["best_round"] or {}
         best_run = best_round.get("best_run") or {}
@@ -401,10 +402,11 @@ def main() -> None:
         print("Campaign best score:", best_run["best_score"])
         print("Campaign best image:", best_run["best_image"])
         print("Campaign best result JSON:", best_run["result_json"])
-        camera_history_summary_path, camera_history_summary = _write_camera_history_summary(camera_name)
+        camera_history_summary_path, camera_history_summary = _write_camera_history_summary(camera_name, project_root=root)
         camera_history_summary_compact_path = _write_camera_history_summary_compact(
             camera_name,
             camera_history_summary,
+            project_root=root,
         )
         _print_camera_history_summary(camera_history_summary, camera_history_summary_path)
         _print_camera_history_summary_compact(camera_history_summary_compact_path)
@@ -427,6 +429,7 @@ def main() -> None:
                 config_path, cfg, camera_name,
                 float(best_run.get("best_score", 999)),
                 best_run.get("best_values", {}),
+                project_root=root,
             )
         return
 
@@ -442,6 +445,7 @@ def main() -> None:
             camera_name=camera_name,
             round_count=int(args.campaign_rounds),
             resume_from_result=bool(args.resume_from_result),
+            project_root=root,
         )
         best_round = rounds_payload["best_round"] or {}
         print("Rounds summary JSON:", rounds_payload["summary_json"])
@@ -451,10 +455,11 @@ def main() -> None:
         print("Best score:", best_round.get("best_score"))
         print("Best image:", best_round.get("best_image"))
         print("Best result JSON:", best_round.get("result_json"))
-        camera_history_summary_path, camera_history_summary = _write_camera_history_summary(camera_name)
+        camera_history_summary_path, camera_history_summary = _write_camera_history_summary(camera_name, project_root=root)
         camera_history_summary_compact_path = _write_camera_history_summary_compact(
             camera_name,
             camera_history_summary,
+            project_root=root,
         )
         _print_camera_history_summary(camera_history_summary, camera_history_summary_path)
         _print_camera_history_summary_compact(camera_history_summary_compact_path)
@@ -474,10 +479,10 @@ def main() -> None:
         return
 
     if should_optimize:
-        marker_path = _marker_path_for_output_dir(base_output_dir)
+        marker_path = _marker_path_for_output_dir(base_output_dir, project_root=root)
         if args.resume_from_result:
             resume_result_path = _read_latest_result_path(marker_path, base_output_dir)
-        cfg["output_dir"] = str(_build_isolated_output_dir("run", camera_parent=camera_name))
+        cfg["output_dir"] = str(_build_isolated_output_dir("run", camera_parent=camera_name, project_root=root))
         marker_payload = {
             "started_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "config": str(config_path),
@@ -491,7 +496,7 @@ def main() -> None:
     else:
         cfg["output_dir"] = str(base_output_dir)
 
-    live_log_path = _configure_live_log(cfg, args.resume_from_result)
+    live_log_path = _configure_live_log(cfg, args.resume_from_result, project_root=root)
     print("Live log:", str(live_log_path))
     if should_optimize:
         print("Isolated output dir:", str(cfg["output_dir"]))
@@ -562,6 +567,7 @@ def main() -> None:
             camera_name,
             float(result["best_score"]),
             result["best_values"],
+            project_root=root,
         )
         if marker_path is not None and marker_payload is not None:
             marker_payload.update(
@@ -592,10 +598,11 @@ def main() -> None:
                 f"average_elapsed={run_stats.get('average_elapsed_text')}"
             )
         print("Result JSON:", str(Path(cfg["output_dir"]) / "result.json"))
-        camera_history_summary_path, camera_history_summary = _write_camera_history_summary(camera_name)
+        camera_history_summary_path, camera_history_summary = _write_camera_history_summary(camera_name, project_root=root)
         camera_history_summary_compact_path = _write_camera_history_summary_compact(
             camera_name,
             camera_history_summary,
+            project_root=root,
         )
         _print_camera_history_summary(camera_history_summary, camera_history_summary_path)
         _print_camera_history_summary_compact(camera_history_summary_compact_path)

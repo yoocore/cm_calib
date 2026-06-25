@@ -429,8 +429,7 @@ class CalibrationPanel(QGroupBox):
         return QSize(min(hint.width(), 380), hint.height())
 
     def minimumSizeHint(self) -> QSize:
-        hint = super().minimumSizeHint()
-        return QSize(min(hint.width(), 360), hint.height())
+        return QSize(250, 0)
 
     @staticmethod
     def _format_duration(total_seconds: int) -> str:

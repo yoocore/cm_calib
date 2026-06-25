@@ -66,6 +66,8 @@ class MainWindow(QMainWindow):
         left_mid_splitter.setHandleWidth(8)
         left_mid_splitter.setCollapsible(0, False)
         left_mid_splitter.setCollapsible(1, False)
+        left_mid_splitter.setStretchFactor(0, 0)
+        left_mid_splitter.setStretchFactor(1, 0)
 
         left_mid_container = QWidget(self)
         left_mid_container.setMinimumWidth(700)

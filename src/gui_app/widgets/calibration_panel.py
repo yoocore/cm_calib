@@ -155,6 +155,12 @@ def detect_cm_versions() -> dict[str, Path]:
                 for exe in ("CM_Office.exe", "CM.exe"):
                     if (entry / sub / exe).is_file():
                         version = entry.name[len("win64-"):]
+                        try:
+                            major = int(version.split(".")[0])
+                        except (ValueError, IndexError):
+                            continue
+                        if major < 14:
+                            continue
                         has_cmapi = (
                             any(entry.glob("Python/cmapi-*.whl"))
                             or any(entry.glob("Python/cmapi/__init__.py"))

@@ -86,6 +86,7 @@ class MainWindow(QMainWindow):
         outer_splitter.setCollapsible(1, False)
         outer_splitter.setStretchFactor(0, 0)
         outer_splitter.setStretchFactor(1, 0)
+        self.output_panel.setMinimumWidth(400)
 
         central_container = QWidget(self)
         central_layout = QVBoxLayout(central_container)

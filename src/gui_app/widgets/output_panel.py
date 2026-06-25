@@ -332,16 +332,18 @@ class CameraResultCard(QGroupBox):
             if group is None:
                 continue
             path = label._artifact_path
+            stretch = 0
             if path:
                 img = QImage(path)
                 if not img.isNull() and img.height() > 0:
                     # Group width = image width + borders/padding (~12px)
                     group.setMaximumWidth(img.width() + 12)
+                    stretch = img.width()
                 else:
                     group.setMaximumWidth(16777215)  # QWIDGETSIZE_MAX
             else:
                 group.setMaximumWidth(16777215)
-            self._previews_layout.setStretch(i, 0)
+            self._previews_layout.setStretch(i, stretch)
 
     def mousePressEvent(self, event) -> None:
         self.selected.emit(self.camera_name)

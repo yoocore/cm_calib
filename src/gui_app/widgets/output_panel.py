@@ -136,6 +136,8 @@ class ArtifactPreviewLabel(QLabel):
         self._artifact_path: str | None = None
         self.setAlignment(Qt.AlignCenter)
         self.setWordWrap(True)
+        self.setMinimumSize(180, 120)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         self.setStyleSheet("border: 1px solid #666; padding: 4px;")
 
     def set_artifact(self, artifact_path: str | None) -> None:
@@ -184,8 +186,7 @@ class ArtifactPreviewLabel(QLabel):
             return
 
         pixmap = QPixmap.fromImage(img)
-        target_size = self.size() if self.size().width() >= 180 and self.size().height() >= 120 else pixmap.size()
-        scaled = pixmap.scaled(target_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        scaled = pixmap.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
         self.setPixmap(scaled)
         self.setText("")
 
@@ -334,10 +335,10 @@ class CameraResultCard(QGroupBox):
             if path:
                 img = QImage(path)
                 if not img.isNull() and img.height() > 0:
-                    preview_width = min(img.width(), 240)
-                    group.setMaximumWidth(preview_width + 12)
+                    # Group width = image width + borders/padding (~12px)
+                    group.setMaximumWidth(img.width() + 12)
                 else:
-                    group.setMaximumWidth(16777215)
+                    group.setMaximumWidth(16777215)  # QWIDGETSIZE_MAX
             else:
                 group.setMaximumWidth(16777215)
             self._previews_layout.setStretch(i, 0)

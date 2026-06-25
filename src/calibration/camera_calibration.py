@@ -352,7 +352,7 @@ class CameraCalibrator(DetectorMixin, ScoringMixin, AnnotationMixin, ScriptContr
         )
         self.no_signal_penalty = float(cfg.get("no_signal_penalty", 1e5))
         self.progress_flush_every = max(1, int(cfg.get("progress_flush_every", 1)))
-        self.max_history_entries = max(0, int(cfg.get("max_history_entries", 500)))
+        self.max_history_entries = max(0, int(cfg.get("max_history_entries", 10000)))
         self.optimizer_mode = str(cfg.get("optimizer_mode", "auto")).lower()
         if self.optimizer_mode not in {"coordinate_descent", "bayesian", "auto", "hybrid"}:
             raise ValueError(

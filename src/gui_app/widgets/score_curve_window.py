@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 import pyqtgraph as pg
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 
@@ -80,6 +80,9 @@ class ScoreCurveWindow(QWidget):
         if data:
             x, y = zip(*data)
             self._curve.setData(x=x, y=y)
+        markers = self._read_stop_markers(paths)
+        if markers and data:
+            self._draw_stop_markers(markers, max(y))
 
     def _refresh_static(self) -> None:
         paths = self._discover_campaign_result_jsons(self._result_json_path)
@@ -88,6 +91,10 @@ class ScoreCurveWindow(QWidget):
             return
         x, y = zip(*data)
         self._curve.setData(x=x, y=y)
+
+        markers = self._read_stop_markers(paths)
+        if markers:
+            self._draw_stop_markers(markers, max(y))
 
         current_sig = _board_sig_from_json(self._result_json_path)
         if current_sig is None:
@@ -139,16 +146,20 @@ class ScoreCurveWindow(QWidget):
                 if explore_dir.is_dir():
                     for run_dir in sorted(explore_dir.iterdir()):
                         if run_dir.is_dir() and run_dir.name.startswith("start_"):
-                            rj = run_dir / "result.json"
-                            if rj.exists():
-                                results.append(rj)
+                            self._add_result_jsons(run_dir, results)
                 if refine_dir.is_dir():
-                    rj = refine_dir / "result.json"
-                    if rj.exists():
-                        results.append(rj)
+                    self._add_result_jsons(refine_dir, results)
                 if results:
                     return results
         return [seed_path]
+
+    def _add_result_jsons(self, directory: Path, results: list[Path]) -> None:
+        main = directory / "result.json"
+        if main.exists():
+            results.append(main)
+        for archive in sorted(directory.glob("result_*.json")):
+            if archive != main:
+                results.append(archive)
 
     def _read_curve(self, path: Path) -> list[tuple[int, float]]:
         try:
@@ -181,6 +192,51 @@ class ScoreCurveWindow(QWidget):
                 all_points.append((cumulative_iter + it, score))
             cumulative_iter += max(p[0] for p in points) + 1 if points else 0
         return all_points
+
+    def _read_stop_markers(self, paths: list[Path]) -> list[tuple[int, str]]:
+        markers: list[tuple[int, str]] = []
+        cumulative_iter = 0
+        for path in paths:
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError, ValueError):
+                continue
+            stop_reason = payload.get("stop_reason", "")
+            if stop_reason and stop_reason not in ("running", ""):
+                history = payload.get("history")
+                if isinstance(history, list) and history:
+                    last_iter = max(int(e.get("iter", 0)) for e in history if isinstance(e, dict))
+                    markers.append((cumulative_iter + last_iter, stop_reason))
+            history = payload.get("history")
+            if isinstance(history, list) and history:
+                max_iter = max(int(e.get("iter", 0)) for e in history if isinstance(e, dict))
+                cumulative_iter += max_iter + 1
+        return markers
+
+    def _draw_stop_markers(self, markers: list[tuple[int, str]], max_y: float) -> None:
+        stop_colors = {
+            "target_score": (76, 175, 80),        # green
+            "direction_accepted": (33, 150, 243),  # blue
+            "all_steps_minimum": (244, 67, 54),    # red
+            "bayesian_converged": (244, 67, 54),   # red
+            "max_iters_reached": (158, 158, 158),  # gray
+        }
+        stop_labels = {
+            "target_score": "target",
+            "direction_accepted": "accepted",
+            "all_steps_minimum": "converged",
+            "bayesian_converged": "converged",
+            "max_iters_reached": "max_iters",
+        }
+        for x, reason in markers:
+            color = stop_colors.get(reason, (158, 158, 158))
+            label = stop_labels.get(reason, reason)
+            self._plot_widget.addLine(
+                x=x,
+                pen=pg.mkPen(color=color, width=1.5, style=Qt.PenStyle.DashLine),
+                label=f"{label}",
+                labelOpts={"color": color, "position": 0.95},
+            )
 
     def _summary_path(self) -> Path | None:
         try:

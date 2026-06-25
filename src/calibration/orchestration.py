@@ -439,8 +439,14 @@ class OrchestrationMixin:
             history=history,
             in_progress=in_progress,
         )
-        with open(self.output_dir / "result.json", "w", encoding="utf-8") as f:
-            json.dump(_round_floats(result, skip_keys={"values", "best_values", "start_values", "final_values"}), f, ensure_ascii=False, separators=(",", ":"))
+        result_path = self.output_dir / "result.json"
+        payload = _round_floats(result, skip_keys={"values", "best_values", "start_values", "final_values"})
+        payload_bytes = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        if len(payload_bytes) > 10 * 1024 * 1024 and result_path.exists():
+            archive_name = f"result_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            result_path.rename(self.output_dir / archive_name)
+        with open(result_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
         if bool(getattr(self, "print_progress_json", False)):
             summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
             _emit_cli_progress_json(

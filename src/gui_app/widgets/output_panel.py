@@ -324,23 +324,8 @@ class CameraResultCard(QGroupBox):
         self.open_score_live_button.setEnabled(bool(result.best_image or result.current_iter_image))
 
     def _update_preview_stretch(self) -> None:
-        from PySide6.QtGui import QImage
-
         for i, label in enumerate([self.iter_preview, self.score_preview, self.overlay_preview]):
-            group = label.parentWidget()
-            if group is None:
-                continue
-            path = label._artifact_path
-            if path:
-                img = QImage(path)
-                if not img.isNull() and img.height() > 0:
-                    preview_width = min(img.width(), 240)
-                    group.setMaximumWidth(preview_width + 12)
-                else:
-                    group.setMaximumWidth(16777215)
-            else:
-                group.setMaximumWidth(16777215)
-            self._previews_layout.setStretch(i, 0)
+            self._previews_layout.setStretch(i, 1)
 
     def mousePressEvent(self, event) -> None:
         self.selected.emit(self.camera_name)

@@ -6,7 +6,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QSize, Signal
 from PySide6.QtGui import QImage, QPixmap, QPixmapCache, QTextCursor
 from PySide6.QtWidgets import (
     QGridLayout,
@@ -134,6 +134,7 @@ class ArtifactPreviewLabel(QLabel):
         super().__init__(empty_text, parent)
         self._empty_text = empty_text
         self._artifact_path: str | None = None
+        self._last_render_size = QSize()
         self.setAlignment(Qt.AlignCenter)
         self.setWordWrap(True)
         self.setMinimumSize(180, 120)
@@ -154,7 +155,9 @@ class ArtifactPreviewLabel(QLabel):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        self._render()
+        if self._artifact_path and self.size() != self._last_render_size:
+            self._last_render_size = self.size()
+            self._render()
 
     def _render(self) -> None:
         if not self._artifact_path:

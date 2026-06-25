@@ -142,6 +142,7 @@ class ArtifactPreviewLabel(QLabel):
 
     def set_artifact(self, artifact_path: str | None) -> None:
         self._artifact_path = artifact_path.strip() if artifact_path else None
+        QPixmapCache.clear()
         self._render()
 
     def mouseDoubleClickEvent(self, event) -> None:
@@ -178,7 +179,6 @@ class ArtifactPreviewLabel(QLabel):
         parent_group = self.parentWidget()
         if parent_group is not None:
             parent_group.show()
-        QPixmapCache.clear()
         img = QImage(str(path))
         if img.isNull():
             self.setPixmap(QPixmap())

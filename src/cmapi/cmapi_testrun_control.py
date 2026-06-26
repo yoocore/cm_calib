@@ -1700,6 +1700,7 @@ def restore_checkviewport(*, timeout_sec: float = 10.0) -> None:
         print(f"[INFO] restore CheckViewPort failed (non-fatal): {exc}")
 
 
+
 def install_view_sync_trace(*, timeout_sec: float = 10.0) -> None:
     """Install a Tcl execution trace on View::SetSize that auto-syncs the View()
     dict after every View::SetSize call.

@@ -1341,10 +1341,8 @@ class CameraCalibrator(DetectorMixin, ScoringMixin, AnnotationMixin, ScriptContr
 
         body_lines.extend(
             [
-                'update',
                 'if {![winfo exists .camera.btn.set]} {error "missing widget .camera.btn.set"}',
                 '.camera.btn.set invoke',
-                'update',
                 'set result {}',
             ]
         )

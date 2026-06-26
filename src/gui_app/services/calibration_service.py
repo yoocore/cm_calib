@@ -72,12 +72,10 @@ class CalibrationService(QObject):
         if cm_install is not None:
             pythonpath, _paths = build_cmapi_pythonpath(
                 cm_install,
-                existing_pythonpath="",
+                existing_pythonpath=env.value("PYTHONPATH", ""),
             )
             if pythonpath:
                 env.insert("PYTHONPATH", pythonpath)
-            else:
-                env.insert("PYTHONPATH", "")
         self.process_service._process.setProcessEnvironment(env)
         self.process_service.start_python(script_path, arguments, calibration_root)
 
@@ -100,12 +98,10 @@ class CalibrationService(QObject):
         if cm_install is not None:
             pythonpath, _paths = build_cmapi_pythonpath(
                 cm_install,
-                existing_pythonpath="",
+                existing_pythonpath=env.value("PYTHONPATH", ""),
             )
             if pythonpath:
                 env.insert("PYTHONPATH", pythonpath)
-            else:
-                env.insert("PYTHONPATH", "")
         self.process_service._process.setProcessEnvironment(env)
         self.process_service.start_python(script_path, arguments, calibration_root)
     def stop(self) -> None:

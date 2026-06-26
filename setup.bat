@@ -103,7 +103,7 @@ echo   1. 访问 https://www.python.org/downloads/
 echo   2. 下载 Python 3.10 或 3.11
 echo   3. 安装时勾选 "Add Python to PATH"
 echo.
-echo 或设置 CARMAKER_DIR 环境变量指向 CarMaker 安装目录，使用自带的 Python。
+echo 或通过 CARMAKER_DIR 环境变量指定 CarMaker 安装目录，setup 会尝试使用自带的 Python。
 echo 例如: set CARMAKER_DIR=C:\IPG\carmaker\win64-14.1
 
 echo %ERR%!%NC% 未找到 CarMaker 安装路径，请确认已安装 CarMaker。

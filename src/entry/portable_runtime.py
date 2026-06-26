@@ -47,6 +47,8 @@ def _has_cmapi_marker(path: Path) -> bool:
     for marker in _CMAPI_MARKERS:
         if (path / marker).exists():
             return True
+    if any(path.glob("cmapi-*.whl")):
+        return True
     return any(path.glob("apoc*.pyd")) or any(path.glob("infofiles*.pyd"))
 
 
@@ -139,6 +141,8 @@ def apply_cmapi_to_current_process(
     *,
     version_info: tuple[int, int] | None = None,
 ) -> list[Path]:
+    if cm_install is None:
+        cm_install = resolve_default_cm_install()
     if cm_install is None:
         return []
     paths = discover_cmapi_paths(cm_install, version_info=version_info)

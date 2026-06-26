@@ -137,7 +137,7 @@ if exist "%VENV_DIR%" (
     echo %WARN%~%NC% 虚拟环境已存在，跳过创建
     echo   如需重建请删除 .venv 目录后重试
 ) else (
-    "%CM_PYTHON%" -m venv "%VENV_DIR%"
+    "%CM_PYTHON%" -m venv --system-site-packages "%VENV_DIR%"
     if !ERRORLEVEL! neq 0 (
         echo %ERR%!%NC% 虚拟环境创建失败
         pause

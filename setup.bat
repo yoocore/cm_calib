@@ -236,17 +236,16 @@ echo.
 :: ========================================
 echo %INFO%*%NC% 正在安装 CarMaker cmapi 模块...
 set "CMAPI_DONE="
-if not "%CM_PYTHON%"=="" (
-    for %%i in ("%CM_PYTHON%") do set "CM_DIR=%%~dpi"
-    for /f "delims=" %%w in ('dir "%CM_DIR%..\Python\cmapi-*.whl" /b /o-n 2^>nul') do (
-        if not defined CMAPI_DONE "%PIP%" install "%CM_DIR%..\Python\%%w" >nul 2>&1
+if not "%CM_INSTALL%"=="" (
+    for /f "delims=" %%w in ('dir "%CM_INSTALL%\Python\cmapi-*.whl" /b /o-n 2^>nul') do (
+        if not defined CMAPI_DONE "%PIP%" install "%CM_INSTALL%\Python\%%w" >nul 2>&1
         if not defined CMAPI_DONE if !ERRORLEVEL! equ 0 (
             echo %OK%^|%NC% cmapi (whl) 已安装 && set "CMAPI_DONE=1"
         )
     )
-    for /f "delims=" %%v in ('dir "%CM_DIR%..\Python\python*" /b /ad /o-n 2^>nul') do (
-        if not defined CMAPI_DONE if exist "%CM_DIR%..\Python\%%v\cmapi" (
-            >"%VENV_DIR%\Lib\site-packages\cmapi_path.pth" echo %CM_DIR%..\Python\%%v
+    for /f "delims=" %%v in ('dir "%CM_INSTALL%\Python\python*" /b /ad /o-n 2^>nul') do (
+        if not defined CMAPI_DONE if exist "%CM_INSTALL%\Python\%%v\cmapi" (
+            >"%VENV_DIR%\Lib\site-packages\cmapi_path.pth" echo "%CM_INSTALL%\Python\%%v"
             echo %OK%^|%NC% cmapi (directory) 已配置 && set "CMAPI_DONE=1"
         )
     )

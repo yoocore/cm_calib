@@ -147,6 +147,12 @@ class SensorProgressPanel(QGroupBox):
         progress_bar = QProgressBar(self.sensor_progress_tree)
         progress_bar.setRange(0, 100)
         progress_bar.setValue(0)
+        progress_bar.setTextVisible(True)
+        progress_bar.setStyleSheet(
+            "QProgressBar { text-align: center; border: 1px solid #cbd5e1; "
+            "border-radius: 4px; background: #f1f5f9; min-height: 18px; }"
+            "QProgressBar::chunk { background: #0f62fe; border-radius: 3px; }"
+        )
         self.sensor_progress_tree.setItemWidget(item, 4, progress_bar)
         self._sensor_progress_items[camera_name] = item
         self._sensor_progress_bars[camera_name] = progress_bar

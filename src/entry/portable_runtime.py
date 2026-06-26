@@ -150,6 +150,23 @@ def apply_cmapi_to_current_process(
         as_text = str(path)
         if as_text not in sys.path:
             sys.path.insert(0, as_text)
+    if not paths:
+        return paths
+    try:
+        import cmapi  # noqa: F401
+    except ImportError:
+        whls = list(Path(paths[0]).glob("cmapi-*.whl"))
+        if whls:
+            import subprocess
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "install", str(whls[0])],
+                capture_output=True, text=True,
+            )
+            if result.returncode == 0:
+                import importlib
+                importlib.invalidate_caches()
+                if str(paths[0]) not in sys.path:
+                    sys.path.insert(0, str(paths[0]))
     return paths
 
 

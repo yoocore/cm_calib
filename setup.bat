@@ -188,6 +188,23 @@ echo %OK%^|%NC% 依赖安装完成
 echo.
 
 :: ========================================
+:: 安装 cmapi（从 CarMaker Python 的 wheel）
+:: ========================================
+echo %INFO%*%NC% 正在安装 CarMaker cmapi 模块...
+if not "%CM_PYTHON%"=="" (
+    for %%i in ("%CM_PYTHON%") do set "CM_DIR=%%~dpi"
+    for /f "delims=" %%w in ('dir "%CM_DIR%..\Python\cmapi-*.whl" /b /o-n 2^>nul') do (
+        "%PIP%" install "%CM_DIR%..\Python\%%w" >nul 2>&1
+        if !ERRORLEVEL! equ 0 (
+            echo %OK%^|%NC% cmapi 已安装
+        ) else (
+            echo %WARN%~%NC% cmapi 安装失败（不影响核心功能）
+        )
+    )
+)
+echo.
+
+:: ========================================
 :: Step 4: 生成 run.bat
 :: ========================================
 echo %INFO%*%NC% 步骤 4/4: 生成启动脚本...

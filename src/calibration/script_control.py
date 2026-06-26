@@ -159,7 +159,6 @@ class ScriptControlMixin:
                 'set vno $View(ev.view)',
                 f'set wi {_wi}',
                 f'set he {_he}',
-                'UpdateView $vno',
                 'catch {gl bindframebuffer_read 0}',
                 'catch {FBO end}',
                 'set captureFBO [FBO new $wi $he -tex rgb -noclear]',

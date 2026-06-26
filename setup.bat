@@ -95,20 +95,61 @@ if not "%CM_PYTHON%"=="" (
     goto :found_python
 )
 
-:: 1.5 未找到可用 Python
-echo %ERR%!%NC% 未找到可用的 Python 解释器
+:: 1.5 未找到 Python → 自动下载 uv 来安装
+echo %WARN%~%NC% 未找到 Python，正在通过 uv 自动安装...
 echo.
-if defined _FOUND_CM_NO_PY (
-    for %%i in ("%_FOUND_CM_NO_PY%") do echo   CarMaker %%~nxi 已找到，但无 Python 解释器
-    echo   ^(需系统安装 Python 3.9+^)
-    echo.
-) else (
-    echo   CarMaker 未安装或不在标准路径中
-    echo.
+set "UV_DIR=%TEMP%\uv_%RANDOM%"
+set "UV_EXE=%UV_DIR%\uv.exe"
+mkdir "%UV_DIR%" 2>nul
+
+:: 下载 uv
+echo %INFO%*%NC% 下载 uv（Python 包管理器）...
+curl -sL https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip -o "%UV_DIR%\uv.zip"
+if !ERRORLEVEL! neq 0 (
+    echo %ERR%!%NC% uv 下载失败
+    if defined _FOUND_CM_NO_PY (
+        for %%i in ("%_FOUND_CM_NO_PY%") do echo   CarMaker %%~nxi 已找到，但无 Python 解释器
+    )
+    echo 请手动安装 Python 3.10/3.11: https://www.python.org/downloads/
+    pause
+    exit /b 1
 )
-echo 安装 Python 3.10/3.11: https://www.python.org/downloads/
-echo ^(勾选 "Add Python to PATH"^)
+powershell -Command "Expand-Archive '%UV_DIR%\uv.zip' -DestinationPath '%UV_DIR%'" >nul 2>&1
+for /r "%UV_DIR%" %%f in (uv.exe) do set "UV_EXE=%%f" & goto :uv_found
+:uv_found
+if not exist "!UV_EXE!" (
+    echo %ERR%!%NC% uv 解压失败
+    pause
+    exit /b 1
+)
+
+:: 用 uv 安装 Python 3.10
+echo %INFO%*%NC% 正在安装 Python 3.10...
+"!UV_EXE!" python install 3.10 >nul 2>&1
+if !ERRORLEVEL! neq 0 (
+    echo %ERR%!%NC% Python 安装失败
+    pause
+    exit /b 1
+)
+echo %OK%^|%NC% Python 3.10 已安装
+
+:: 用 uv 创建虚拟环境
+echo %INFO%*%NC% 正在创建虚拟环境...
+"!UV_EXE!" venv "%VENV_DIR%" >nul 2>&1
+if !ERRORLEVEL! neq 0 (
+    echo %ERR%!%NC% 虚拟环境创建失败
+    pause
+    exit /b 1
+)
+echo %OK%^|%NC% 虚拟环境已创建
+
+:: 保存 uv 路径供后续使用
+set "_UV_EXE=!UV_EXE!"
+set "CM_PYTHON=%VENV_DIR%\Scripts\python.exe"
+echo %OK%^|%NC% 使用 Python: !CM_PYTHON!
+"%CM_PYTHON%" --version
 echo.
+goto :install_deps
 pause
 exit /b 1
 
@@ -186,6 +227,7 @@ if exist "%VENV_DIR%" (
 )
 echo.
 
+:install_deps
 :: ========================================
 :: Step 3: 安装依赖
 :: ========================================
@@ -303,6 +345,12 @@ if /i "!CREATE_SHORTCUT!"=="Y" (
     )
 ) else (
     echo %INFO%-%NC% 跳过桌面快捷方式
+)
+
+:: 清理临时文件
+if defined _UV_EXE (
+    rmdir /s /q "%UV_DIR%" 2>nul
+    echo %OK%^|%NC% 临时文件已清理
 )
 
 echo.

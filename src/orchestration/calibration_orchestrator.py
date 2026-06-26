@@ -250,17 +250,20 @@ def _prepare_runtime_for_camera(
     movie_view_size: tuple[int, int] | None = None,
     skip_bootstrap: bool = False,
 ) -> dict[str, Any]:
-    # --- Step 0: Kill all existing processes for clean environment ---
-    cmctrl.kill_all_processes()
-    # --- Step 1: Start CarMaker fresh ---
-    executable = cmctrl.resolve_carmaker_executable(args.cm_install.resolve())
-    print(f"Starting CarMaker: {executable} -projectdir {project_root}")
-    subprocess.Popen(
-        [str(executable), "-projectdir", str(project_root)],
-        cwd=str(executable.parent),
-    )
-    cmctrl.wait_for_carmaker_tcleval_ready(timeout_sec=60.0)
-    print("CarMaker started and TclEval ready.")
+    # --- Step 0: Check for existing CarMaker processes before starting ---
+    existing_pids = cmctrl.list_carmaker_processes()
+    if not existing_pids:
+        # --- Step 1: Start CarMaker fresh ---
+        executable = cmctrl.resolve_carmaker_executable(args.cm_install.resolve())
+        print(f"Starting CarMaker: {executable} -projectdir {project_root}")
+        subprocess.Popen(
+            [str(executable), "-projectdir", str(project_root)],
+            cwd=str(executable.parent),
+        )
+        cmctrl.wait_for_carmaker_tcleval_ready(timeout_sec=60.0)
+        print("CarMaker started and TclEval ready.")
+    else:
+        print(f"CarMaker already running (PID {existing_pids[0]}), reusing existing instance.")
     # --- Step 2: Resolve vehicle path ---
     vehicle_path, vehicle_key = cmctrl.resolve_vehicle_path(project_root, testrun_rel_path)
     # --- Step 3: Activate sensor & sync TestRun in CarMaker GUI (before bootstrap) ---
@@ -677,8 +680,13 @@ def main() -> None:
                                 args, project_root, testrun_rel_path, camera_name, config_path,
                                 movie_view_size=movie_view_size,
                             )
-                        else:
+                        elif camera_name == cameras[0] and args.skip_prepare_for_first_camera:
                             runtime_state = _reuse_existing_runtime_for_camera(
+                                args, project_root, testrun_rel_path, camera_name, config_path,
+                                movie_view_size=movie_view_size,
+                            )
+                        else:
+                            runtime_state = _prepare_runtime_for_camera(
                                 args, project_root, testrun_rel_path, camera_name, config_path,
                                 movie_view_size=movie_view_size,
                             )

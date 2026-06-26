@@ -448,6 +448,14 @@ class DetectorMixin:
         return mae * 100.0
 
     def _prepare_eval_image(self, image: np.ndarray) -> np.ndarray:
+        # When eval_size is set, everything operates at sim-native resolution
+        eval_size = getattr(self, '_eval_size', None)
+        if eval_size is not None:
+            target_h, target_w = eval_size
+            if image.shape[:2] == (target_h, target_w):
+                return image
+            return cv2.resize(image, (target_w, target_h), interpolation=cv2.INTER_AREA)
+
         source_h, source_w = image.shape[:2]
         target_h, target_w = self.real_img.shape[:2]
         if source_h <= 0 or source_w <= 0:

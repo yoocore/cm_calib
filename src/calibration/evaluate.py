@@ -21,9 +21,6 @@ class EvaluateMixin:
         self, tag: str, baseline_metrics: Optional[Dict[str, Dict[str, float]]] = None,
         skip_boards: Optional[Set[str]] = None,
     ) -> Tuple[TotalScoreDetail, Path]:
-        if self.real_detections is None:
-            self.real_detections = self._detect_reference_boards()
-
         t0 = time.perf_counter()
         sim_path = self.capture_movie(tag)
         t_capture = time.perf_counter() - t0
@@ -31,6 +28,15 @@ class EvaluateMixin:
         sim_img = cv2.imread(str(sim_path), cv2.IMREAD_GRAYSCALE)
         if sim_img is None:
             raise RuntimeError(f"Failed reading screenshot: {sim_path}")
+
+        # First capture determines the pipeline resolution — downsample
+        # real image + ROIs to match sim capture instead of upsampling sim.
+        if getattr(self, '_eval_size', None) is None:
+            self._set_eval_size(sim_img.shape[0], sim_img.shape[1])
+
+        # Reference detection on downsampled real image with scaled ROIs
+        if self.real_detections is None:
+            self.real_detections = self._detect_reference_boards()
 
         mean_brightness = float(sim_img.mean())
         if mean_brightness < 5.0:

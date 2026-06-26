@@ -15,7 +15,7 @@ import time
 import warnings
 import uuid
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, TextIO, Tuple
@@ -539,6 +539,7 @@ class CameraCalibrator(DetectorMixin, ScoringMixin, AnnotationMixin, ScriptContr
         self.run_started_perf = time.perf_counter()
         self._best_score_image_cache: Dict[str, Path] = {}
         self._best_overlay_image_cache: Dict[str, Path] = {}
+        self._eval_size: Optional[Tuple[int, int]] = None
         self._total_trial_count: int = 0
         self._total_iteration_count: int = 0
         self._calib_phase: str = ""
@@ -560,6 +561,56 @@ class CameraCalibrator(DetectorMixin, ScoringMixin, AnnotationMixin, ScriptContr
         self.real_detections: Optional[Dict[str, DetectionResult]] = None
         self._sim_templates_generated: bool = False
         self._sim_sourced_board_ids: Set[str] = set()
+
+    def _set_eval_size(self, target_h: int, target_w: int) -> None:
+        """Downsample the pipeline to match sim capture resolution.
+
+        Called once after the first sim capture.  Replaces the previous
+        approach of upsampling the sim image to the real image size.
+        """
+        real_h, real_w = self.real_img.shape[:2]
+        if real_h == target_h and real_w == target_w:
+            self._eval_size = (target_h, target_w)
+            return
+        sw = target_w / real_w
+        sh = target_h / real_h
+
+        self.real_img = cv2.resize(
+            self.real_img, (target_w, target_h), interpolation=cv2.INTER_AREA,
+        )
+        self.real_img_color = cv2.resize(
+            self.real_img_color, (target_w, target_h), interpolation=cv2.INTER_AREA,
+        )
+
+        def _scale_roi(roi):
+            if roi is None:
+                return None
+            x, y, w, h = roi
+            return (
+                int(round(x * sw)), int(round(y * sh)),
+                max(1, int(round(w * sw))), max(1, int(round(h * sh))),
+            )
+
+        new_boards: List[BoardProfile] = []
+        for board in self.boards:
+            new_boards.append(replace(
+                board,
+                roi=_scale_roi(board.roi),
+                template_source_roi=_scale_roi(board.template_source_roi),
+                template_source_crop=_scale_roi(board.template_source_crop),
+                template_image=None,  # force regeneration below
+            ))
+        self.boards = new_boards
+
+        # Regenerate auto templates from downsampled real image
+        self._materialize_custom_maker_templates()
+        self.custom_templates = self._load_custom_templates(self.boards)
+
+        # Clear stale caches — everything is at the new scale
+        self.real_detections = None
+        self._best_score_image_cache.clear()
+        self._best_overlay_image_cache.clear()
+        self._eval_size = (target_h, target_w)
 
     def _materialize_custom_maker_templates(self) -> None:
         template_dir = _bootstrap_partial_template_dir(self.real_image_path, self.camera_name)

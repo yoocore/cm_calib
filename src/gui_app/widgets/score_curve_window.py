@@ -92,10 +92,6 @@ class ScoreCurveWindow(QWidget):
         x, y = zip(*data)
         self._curve.setData(x=x, y=y)
 
-        markers = self._read_stop_markers(paths)
-        if markers:
-            self._draw_stop_markers(markers, max(y))
-
         current_sig = _board_sig_from_json(self._result_json_path)
         if current_sig is None:
             return

@@ -252,7 +252,7 @@ class CalibrationPanel(QGroupBox):
                 self.cm_version_combo.addItem(ver, install_path)
             self.cm_version_combo.setCurrentIndex(0)
         idx = self.cm_version_combo.count()
-        self.cm_version_combo.addItem("CM14 以下版本不支持")
+        self.cm_version_combo.addItem("not support CM14-")
         self.cm_version_combo.model().item(idx).setEnabled(False)
         self.cm_version_combo.setFixedHeight(36)
 

@@ -679,13 +679,8 @@ def main() -> None:
                                 args, project_root, testrun_rel_path, camera_name, config_path,
                                 movie_view_size=movie_view_size,
                             )
-                        elif camera_name == cameras[0] and args.skip_prepare_for_first_camera:
-                            runtime_state = _reuse_existing_runtime_for_camera(
-                                args, project_root, testrun_rel_path, camera_name, config_path,
-                                movie_view_size=movie_view_size,
-                            )
                         else:
-                            runtime_state = _prepare_runtime_for_camera(
+                            runtime_state = _reuse_existing_runtime_for_camera(
                                 args, project_root, testrun_rel_path, camera_name, config_path,
                                 movie_view_size=movie_view_size,
                             )

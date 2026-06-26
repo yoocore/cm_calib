@@ -267,7 +267,7 @@ class MainWindow(QMainWindow):
         camera_key = self._as_text(camera_name)
         if not camera_key:
             return
-        if status in {"preparing", "ready", "running"} and camera_key not in self._camera_started_at:
+        if status == "running" and camera_key not in self._camera_started_at:
             self._camera_started_at[camera_key] = time.monotonic()
         self._camera_progress_status[camera_key] = status
         if detail:

@@ -148,6 +148,9 @@ if "!PY_EXE!"=="" exit /b 0
 if !ERRORLEVEL!==0 (
     set "CM_PYTHON=!PY_EXE!"
     echo %OK%+%NC% CarMaker Python: !PY_EXE! (cmapi 可用)
+) else (
+    set "CM_PYTHON=!PY_EXE!"
+    echo %OK%+%NC% CarMaker Python: !PY_EXE! (cmapi 不可用，后续将自动安装)
 )
 exit /b 0
 

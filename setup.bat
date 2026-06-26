@@ -95,6 +95,17 @@ if not "%CM_PYTHON%"=="" (
     goto :found_python
 )
 
+:: 1.5 未找到 Python
+echo %ERR%!%NC% 系统中未找到可用的 Python（需 3.9+，支持 venv 模块）。
+echo.
+echo 请先安装 Python:
+echo   1. 访问 https://www.python.org/downloads/
+echo   2. 下载 Python 3.10 或 3.11
+echo   3. 安装时勾选 "Add Python to PATH"
+echo.
+echo 或设置 CARMAKER_DIR 环境变量指向 CarMaker 安装目录，使用自带的 Python。
+echo 例如: set CARMAKER_DIR=C:\IPG\carmaker\win64-14.1
+
 echo %ERR%!%NC% 未找到 CarMaker 安装路径，请确认已安装 CarMaker。
 echo.
 echo 你也可以设置 CARMAKER_DIR 环境变量指向 CarMaker 安装目录后重试。

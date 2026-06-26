@@ -263,7 +263,12 @@ def _prepare_runtime_for_camera(
     print("CarMaker started and TclEval ready.")
     # --- Step 2: Resolve vehicle path ---
     vehicle_path, vehicle_key = cmctrl.resolve_vehicle_path(project_root, testrun_rel_path)
-    # --- Step 2: StartSim / StopSim (bootstrap the TestRun for Movie) ---
+    # --- Step 3: Activate sensor & sync TestRun in CarMaker GUI (before bootstrap) ---
+    activation = cmctrl.activate_single_vehicle_sensor(vehicle_path, camera_name)
+    selected_testrun = cmctrl.sync_gui_testrun_selection(project_root, testrun_rel_path)
+    # --- sync_gui re-initializes IPG-MOVIE (re-registers CheckViewPort), so re-guard ---
+    cmctrl.disable_checkviewport_recursion()
+    # --- Step 4: StartSim / StopSim (bootstrap the TestRun for Movie) ---
     carmaker_pid, bootstrap_testrun = cmctrl.bootstrap_testrun_for_movie_via_cmapi_sync(
         project_root=project_root,
         testrun_rel_path=testrun_rel_path,
@@ -312,12 +317,12 @@ def _prepare_runtime_for_camera(
         movie_scene["mode"] = str(applied_view.get("mode") or movie_scene.get("mode") or "")
     abraxas = cmctrl.ensure_movie_abraxas_enabled(timeout_sec=float(args.health_check_timeout_sec))
     camera_widgets = cmctrl.ensure_movie_camera_widgets(timeout_sec=float(args.health_check_timeout_sec))
-    # --- Activate sensor and select camera in IPG-MOVIE ---
-    cmctrl.activate_single_vehicle_sensor(vehicle_path, camera_name)
+    # --- Select camera in IPG-MOVIE (sensor already activated before bootstrap) ---
     camera_selection = cmctrl.ensure_movie_camera_selected(
-        f"CAMERA_RSI-SENSOR Vhcl.{camera_name}",
+        activation["ipgmovie_sensor_label"],
         timeout_sec=float(args.health_check_timeout_sec),
     )
+    movie_scene["camera_name"] = str(camera_selection.get("current") or movie_scene.get("camera_name") or "")
     # Restore render timer after View::SetSize + ABRAXAS are done
 
     # --- Step 9: Health check ---
@@ -352,15 +357,9 @@ def _prepare_runtime_for_camera(
     return {
         "vehicle_path": str(vehicle_path),
         "vehicle_key": vehicle_key,
-        "selected_testrun": bootstrap_testrun,
+        "selected_testrun": selected_testrun,
         "bootstrap_testrun": bootstrap_testrun,
-        "activation": {
-            "vehicle_path": str(vehicle_path),
-            "selected_sensor_name": camera_name,
-            "selected_sensor_index": None,
-            "ipgmovie_sensor_label": f"CAMERA_RSI-SENSOR Vhcl.{camera_name}",
-            "changed": True,
-        },
+        "activation": activation,
         "carmaker_pid": carmaker_pid,
         "movie_scene": movie_scene,
         "abraxas": abraxas,

@@ -156,8 +156,13 @@ echo.
 set "PIP=%VENV_DIR%\Scripts\pip.exe"
 set "REQUIREMENTS=%SCRIPT_DIR%\docs\requirements.txt"
 
+:: 配置国内 pip 镜像（加速下载）
+"%PIP%" config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple >nul 2>&1
+echo %OK%^|%NC% pip 镜像已配置（清华源）
+
 :: 先升级 pip
-"%PIP%" install --upgrade pip -q
+echo %INFO%*%NC% 正在升级 pip...
+"%PIP%" install --upgrade pip
 if !ERRORLEVEL! equ 0 (
     echo %OK%^|%NC% pip 已升级
 ) else (

@@ -251,6 +251,9 @@ class CalibrationPanel(QGroupBox):
             for ver, install_path in cm_versions.items():
                 self.cm_version_combo.addItem(ver, install_path)
             self.cm_version_combo.setCurrentIndex(0)
+        idx = self.cm_version_combo.count()
+        self.cm_version_combo.addItem("CM14 以下版本不支持")
+        self.cm_version_combo.model().item(idx).setEnabled(False)
         self.cm_version_combo.setFixedHeight(36)
 
         self.start_button = QPushButton("Calib Start")

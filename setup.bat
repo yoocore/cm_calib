@@ -137,7 +137,7 @@ if exist "%VENV_DIR%" (
     echo %WARN%~%NC% 虚拟环境已存在，跳过创建
     echo   如需重建请删除 .venv 目录后重试
 ) else (
-    "%CM_PYTHON%" -m venv --system-site-packages "%VENV_DIR%"
+    "%CM_PYTHON%" -m venv "%VENV_DIR%"
     if !ERRORLEVEL! neq 0 (
         echo %ERR%!%NC% 虚拟环境创建失败
         pause
@@ -188,25 +188,26 @@ echo %OK%^|%NC% 依赖安装完成
 echo.
 
 :: ========================================
-:: 配置 cmapi（从 CarMaker Python 目录链接）
+:: 安装 cmapi（从 CarMaker Python 目录）
 :: ========================================
-echo %INFO%*%NC% 正在配置 CarMaker cmapi 模块...
+echo %INFO%*%NC% 正在安装 CarMaker cmapi 模块...
+set "CMAPI_DONE="
 if not "%CM_PYTHON%"=="" (
     for %%i in ("%CM_PYTHON%") do set "CM_DIR=%%~dpi"
-    set "CMAPI_DONE="
-    for /f "delims=" %%w in ('dir "%CM_DIR%..\Python\cmapi-*.whl" /b /o-n 2^>nul') do if not defined CMAPI_DONE (
-        "%PIP%" install "%CM_DIR%..\Python\%%w" >nul 2>&1 && (
+    for /f "delims=" %%w in ('dir "%CM_DIR%..\Python\cmapi-*.whl" /b /o-n 2^>nul') do (
+        if not defined CMAPI_DONE "%PIP%" install "%CM_DIR%..\Python\%%w" >nul 2>&1
+        if not defined CMAPI_DONE if !ERRORLEVEL! equ 0 (
             echo %OK%^|%NC% cmapi (whl) 已安装 && set "CMAPI_DONE=1"
         )
     )
-    for /f "delims=" %%v in ('dir "%CM_DIR%..\Python\python*" /b /ad /o-n 2^>nul') do if not defined CMAPI_DONE (
-        if exist "%CM_DIR%..\Python\%%v\cmapi" (
+    for /f "delims=" %%v in ('dir "%CM_DIR%..\Python\python*" /b /ad /o-n 2^>nul') do (
+        if not defined CMAPI_DONE if exist "%CM_DIR%..\Python\%%v\cmapi" (
             >"%VENV_DIR%\Lib\site-packages\cmapi_path.pth" echo %CM_DIR%..\Python\%%v
-            echo %OK%^|%NC% cmapi (directory) 已配置: %CM_DIR%..\Python\%%v && set "CMAPI_DONE=1"
+            echo %OK%^|%NC% cmapi (directory) 已配置 && set "CMAPI_DONE=1"
         )
     )
-    if not defined CMAPI_DONE echo %WARN%~%NC% 未找到 cmapi 模块（不影响核心功能，但 CarMaker 联调不可用）
 )
+if not defined CMAPI_DONE echo %WARN%~%NC% 未找到 cmapi 模块（不影响核心功能，但 CarMaker 联调不可用）
 echo.
 
 :: ========================================

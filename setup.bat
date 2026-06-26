@@ -64,9 +64,32 @@ for /f "skip=2 tokens=2,*" %%a in ('reg query "HKLM\SOFTWARE\IPG\CarMaker" /s /v
 )
 
 :: 1.4 尝试系统 Python（兜底）
+set "CM_PYTHON="
+where py >nul 2>nul
+if !ERRORLEVEL! equ 0 (
+    for %%v in (3.11 3.10 3.12 3.9 3) do (
+        for /f "delims=" %%p in ('py -%%v -c "import sys; print(sys.executable)" 2^>nul') do (
+            "%%p" -c "import venv; print('ok')" >nul 2>&1
+            if !ERRORLEVEL! equ 0 (
+                set "CM_PYTHON=%%p"
+                goto :found_system_python
+            )
+        )
+    )
+)
 where python >nul 2>nul
-if %ERRORLEVEL%==0 (
-    set "CM_PYTHON=python"
+if !ERRORLEVEL! equ 0 (
+    for /f "delims=" %%p in ('where python') do (
+        "%%p" -c "import venv; print('ok')" >nul 2>&1
+        if !ERRORLEVEL! equ 0 (
+            set "CM_PYTHON=%%p"
+            goto :found_system_python
+        )
+    )
+)
+
+:found_system_python
+if not "%CM_PYTHON%"=="" (
     echo %WARN%~%NC% 未找到 CarMaker 安装，使用系统 Python（可能需要手动配置 CMAPI 路径）
     echo.
     goto :found_python

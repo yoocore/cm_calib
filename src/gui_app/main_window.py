@@ -296,6 +296,7 @@ class MainWindow(QMainWindow):
         total_iter_current = 0
         total_iter_max = 0
         completed_count = 0
+        total_progress = 0.0
         running_camera: str | None = None
         preparing_camera: str | None = None
         ready_camera: str | None = None
@@ -351,12 +352,13 @@ class MainWindow(QMainWindow):
                 current_score_text=self._camera_progress_current_score.get(camera_name),
                 best_score_text=self._camera_progress_best_score.get(camera_name),
             )
+            total_progress += progress_percent / 100
 
         if self._calibration_task_started_at is not None:
             elapsed_total_seconds = int(round(max(0.0, now - self._calibration_task_started_at)))
         else:
             elapsed_total_seconds = int(round(sum(self._camera_elapsed_final.values())))
-        overall_percent = int(round((completed_count / len(cameras)) * 100)) if cameras else 0
+        overall_percent = int(round((total_progress / len(cameras)) * 100)) if cameras else 0
         if overall_percent < 100 and any(self._camera_progress_status.get(c) not in {"finished"} for c in cameras):
             overall_percent = min(99, overall_percent)
         self.sensor_progress_panel.set_overall_progress(

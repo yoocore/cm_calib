@@ -327,6 +327,7 @@ def _prepare_runtime_for_camera(
     )
     movie_scene["camera_name"] = str(camera_selection.get("current") or movie_scene.get("camera_name") or "")
     # Restore render timer after View::SetSize + ABRAXAS are done
+    cmctrl.enable_movie_updateview_timer(timeout_sec=5.0)
 
     # --- Step 9: Health check ---
     health_classification: Optional[dict[str, Any]] = None
@@ -453,6 +454,7 @@ def _reuse_existing_runtime_for_camera(
         timeout_sec=float(args.health_check_timeout_sec),
     )
     camera_widgets = cmctrl.ensure_movie_camera_widgets(timeout_sec=float(args.health_check_timeout_sec))
+    cmctrl.enable_movie_updateview_timer(timeout_sec=5.0)
     config_initial_capture = cmctrl.capture_initial_values_to_config(config_path)
 
     return {

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QGroupBox, QHBoxLayout, QLabel, QProgressBar, QTreeWidget, QTreeWidgetItem, QVBoxLayout
+from PySide6.QtWidgets import QGroupBox, QHBoxLayout, QHeaderView, QLabel, QProgressBar, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
 
 _PANEL_STYLE = (
     "QGroupBox {"
@@ -35,8 +35,8 @@ class SensorProgressPanel(QGroupBox):
         self.sensor_progress_tree.setHeaderLabels(
             ["Sensor", "Status", "Iteration", "Elapsed", "Progress", "Init", "Current", "Best"]
         )
-        self.sensor_progress_tree.header().setStretchLastSection(True)
-        self.sensor_progress_tree.header().setDefaultAlignment(Qt.AlignLeft)
+        header = self.sensor_progress_tree.header()
+        header.setDefaultAlignment(Qt.AlignLeft)
         self.sensor_progress_tree.setIndentation(0)
         self._sensor_progress_items: dict[str, QTreeWidgetItem] = {}
         self._sensor_progress_bars: dict[str, QProgressBar] = {}
@@ -49,6 +49,22 @@ class SensorProgressPanel(QGroupBox):
         layout.addLayout(sensor_row)
         layout.addWidget(self.overall_progress_bar)
         layout.addWidget(self.sensor_progress_tree, 1)
+
+    def _setup_column_sizes(self) -> None:
+        header = self.sensor_progress_tree.header()
+        modes = [
+            (0, QHeaderView.Stretch, 200),   # Sensor
+            (1, QHeaderView.Interactive, 70),   # Status
+            (2, QHeaderView.Interactive, 90),   # Iteration
+            (3, QHeaderView.Interactive, 75),   # Elapsed
+            (4, QHeaderView.Stretch, 120),      # Progress (bar)
+            (5, QHeaderView.Interactive, 65),   # Init
+            (6, QHeaderView.Interactive, 65),   # Current
+            (7, QHeaderView.Interactive, 65),   # Best
+        ]
+        for col, mode, default_width in modes:
+            header.setSectionResizeMode(col, mode)
+            header.resizeSection(col, default_width)
 
     def reset_sensor_progress(
         self,
@@ -134,6 +150,7 @@ class SensorProgressPanel(QGroupBox):
         self.sensor_progress_tree.setItemWidget(item, 4, progress_bar)
         self._sensor_progress_items[camera_name] = item
         self._sensor_progress_bars[camera_name] = progress_bar
+        self._setup_column_sizes()
         return item
 
     @staticmethod

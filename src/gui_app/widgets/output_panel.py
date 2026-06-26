@@ -96,11 +96,15 @@ def _classify_log_level(message: str) -> str:
         return "error"
     if stripped.startswith("[SUCCESS]"):
         return "success"
-    if any(token in text for token in ("traceback", " exception", "runtimeerror", "fatal")):
+    # ERROR — conditions that cause calibration to terminate
+    if any(token in text for token in ("traceback", " exception", "runtimeerror", "fatal", "not found", "error")):
+        return "error"
+    if " failed" in text or " failure" in text:
         return "error"
     if " critical " in text or text.startswith("critical ") or text.endswith(" critical"):
         return "error"
-    if any(token in text for token in ("error", "warn", "warning", "timeout", "timed out", "passive", "not ready", "mismatch", " fail")):
+    # WARNING — non-fatal issues
+    if any(token in text for token in ("warn", "warning", "timeout", "timed out", "passive", "not ready", "mismatch", " fail")):
         return "warning"
     if any(token in text for token in (" success", " succeeded", "completed", "ready", " all passed", " ok", " status=ok")):
         return "success"

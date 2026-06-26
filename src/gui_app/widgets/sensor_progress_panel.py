@@ -33,7 +33,7 @@ class SensorProgressPanel(QGroupBox):
         self.overall_progress_bar.setStyleSheet(
             "QProgressBar { text-align: center; border: 1px solid #cbd5e1; "
             "border-radius: 4px; background: #f1f5f9; min-height: 18px; }"
-            "QProgressBar::chunk { background: #0f62fe; border-radius: 3px; }"
+            "QProgressBar::chunk { background: #4fc3f7; border-radius: 3px; }"
         )
         self.overall_progress_detail_label = QLabel("0 / 0 | 0s / ~0s")
         self.sensor_progress_tree = QTreeWidget()
@@ -157,7 +157,7 @@ class SensorProgressPanel(QGroupBox):
         progress_bar.setStyleSheet(
             "QProgressBar { text-align: center; border: 1px solid #cbd5e1; "
             "border-radius: 4px; background: #f1f5f9; min-height: 18px; }"
-            "QProgressBar::chunk { background: #0f62fe; border-radius: 3px; }"
+            "QProgressBar::chunk { background: #4fc3f7; border-radius: 3px; }"
         )
         self.sensor_progress_tree.setItemWidget(item, 4, progress_bar)
         self._sensor_progress_items[camera_name] = item

@@ -244,16 +244,13 @@ class CalibrationPanel(QGroupBox):
 
         cm_versions = detect_cm_versions()
         self.cm_version_combo = QComboBox()
-        self.cm_version_combo.addItem("Select CM version", None)
+        self.cm_version_combo.addItem("not support ver.CM14-", None)
         if not cm_versions:
-            self.cm_version_combo.setItemText(0, "No CM versions detected")
+            self.cm_version_combo.setItemText(0, "not support ver.CM14-")
         else:
             for ver, install_path in cm_versions.items():
                 self.cm_version_combo.addItem(ver, install_path)
             self.cm_version_combo.setCurrentIndex(0)
-        idx = self.cm_version_combo.count()
-        self.cm_version_combo.addItem("not support CM14-")
-        self.cm_version_combo.model().item(idx).setEnabled(False)
         self.cm_version_combo.setFixedHeight(36)
 
         self.start_button = QPushButton("Calib Start")

@@ -29,7 +29,7 @@ else:
 
 import cmapi
 from src.health.dde_health_check import classify_health_summary, default_output_dir, render_dde_execute_script, render_result_script, run_check_attempt, run_read_only_health_suite
-from scripts.runtime_config_bootstrap import bootstrap_runtime_configs_for_cameras, capture_initial_values_to_config, load_movie_view_size_from_real_image
+from src.scripts.runtime_config_bootstrap import bootstrap_runtime_configs_for_cameras, capture_initial_values_to_config, load_movie_view_size_from_real_image
 
 
 if not hasattr(cmapi, "InvalidConfigurationException"):

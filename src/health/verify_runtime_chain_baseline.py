@@ -14,7 +14,7 @@ except Exception:
     ImageGrab = None
 
 from src.health.dde_health_check import default_output_dir, render_dde_execute_script, run_check_attempt
-from scripts.runtime_config_bootstrap import load_movie_view_size_from_real_image
+from src.scripts.runtime_config_bootstrap import load_movie_view_size_from_real_image
 
 from src.cmapi.cmapi_testrun_control import (
     DEFAULT_CM_INSTALL,

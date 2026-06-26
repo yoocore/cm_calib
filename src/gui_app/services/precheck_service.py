@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from src.entry.portable_runtime import resolve_tool_root, build_python_subprocess_command
-from scripts.runtime_config_bootstrap import bootstrap_runtime_configs_for_cameras
+from src.scripts.runtime_config_bootstrap import bootstrap_runtime_configs_for_cameras
 
 
 class PrecheckService:

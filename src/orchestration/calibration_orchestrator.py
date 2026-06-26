@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import argparse
 import json
 import signal
@@ -18,7 +17,7 @@ if str(_ROOT) not in sys.path:
 
 import src.cmapi.cmapi_testrun_control as cmctrl
 from src.entry.portable_runtime import build_python_subprocess_command
-from scripts.runtime_config_bootstrap import load_movie_view_size_from_real_image
+from src.scripts.runtime_config_bootstrap import load_movie_view_size_from_real_image
 from src.cmapi.cmapi_testrun_control import (
     start_simulation_via_tcl,
     stop_simulation_via_tcl,
@@ -32,9 +31,8 @@ CALIBRATION_PROGRESS_PREFIX = "CALIBRATION_PROGRESS_JSON:"
 ORCHESTRATION_EVENT_PREFIX = "ORCHESTRATION_EVENT_JSON:"
 ORCHESTRATION_SUMMARY_PREFIX = "ORCHESTRATION_SUMMARY_JSON:"
 
-DEFAULT_PROJECT_ROOT = Path(os.getcwd())
+DEFAULT_PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_DIR = Path(__file__).resolve().parents[2] / "configs"
-DEFAULT_OUTPUT_ROOT = DEFAULT_PROJECT_ROOT / "SimOutput" / "camera_orchestration"
 
 
 _STOP_REQUESTED = False
@@ -185,7 +183,7 @@ def _normalize_camera_names(raw_names: list[str]) -> list[str]:
 
 def _resolve_config_path(project_root: Path, camera_name: str) -> Path:
     """Resolve per-camera config path from mapping only (wizard-generated configs)."""
-    from scripts.runtime_config_bootstrap import _resolve_config_path_from_mapping
+    from src.scripts.runtime_config_bootstrap import _resolve_config_path_from_mapping
     config_path = _resolve_config_path_from_mapping(project_root, camera_name)
     if config_path is not None:
         return config_path
@@ -555,17 +553,18 @@ def _run_single_camera_process(
     return summary_payload
 
 
-def _task_output_dir(requested_output_dir: Optional[Path]) -> Path:
+def _task_output_dir(requested_output_dir: Optional[Path], project_root: Path) -> Path:
     if requested_output_dir is not None:
         return requested_output_dir.resolve()
     task_name = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
-    candidate = (DEFAULT_OUTPUT_ROOT / task_name).resolve()
+    output_root = project_root / "SimOutput" / "camera_orchestration"
+    candidate = (output_root / task_name).resolve()
     if not candidate.exists():
         return candidate
 
     suffix = 2
     while True:
-        candidate = (DEFAULT_OUTPUT_ROOT / f"{task_name}_{suffix}").resolve()
+        candidate = (output_root / f"{task_name}_{suffix}").resolve()
         if not candidate.exists():
             return candidate
         suffix += 1
@@ -588,7 +587,7 @@ def main() -> None:
             print(f"Killed {len(killed)} stale process(es): {cmctrl.summarize_processes(killed)}")
             import time as _time; _time.sleep(3.0)
 
-    output_dir = _task_output_dir(args.output_dir)
+    output_dir = _task_output_dir(args.output_dir, args.project_root)
     output_dir.mkdir(parents=True, exist_ok=True)
     _EVENT_LOG_PATH = output_dir / "events.jsonl"
 

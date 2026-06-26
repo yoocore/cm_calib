@@ -239,7 +239,10 @@ class DetectorMixin:
         rx, ry, rw, rh = board.roi
         ref_cx = rx + rw / 2.0
         ref_cy = ry + rh / 2.0
-        tolerance = max(float(padding), 0.75 * max(float(rw), float(rh)))
+        board_span = max(float(rw), float(rh))
+        # Cap tolerance so large padding doesn't let detection drift into
+        # neighboring boards. The board must be within 1.5× its own span.
+        tolerance = max(0.75 * board_span, min(float(padding), 1.5 * board_span))
         return abs(det_cx - ref_cx) <= tolerance and abs(det_cy - ref_cy) <= tolerance
 
     def _detect_roi_padding_attempts(self, board: BoardProfile) -> List[int]:
@@ -462,7 +465,7 @@ class DetectorMixin:
                 scale = min(target_w / max(1, w), target_h / max(1, h))
                 new_w = max(1, int(round(w * scale)))
                 new_h = max(1, int(round(h * scale)))
-                resized = cv2.resize(image, (new_w, new_h))
+                resized = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
                 if resized.ndim == 2:
                     canvas = np.zeros((target_h, target_w), dtype=resized.dtype)
                 else:

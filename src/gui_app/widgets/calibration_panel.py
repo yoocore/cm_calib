@@ -244,9 +244,9 @@ class CalibrationPanel(QGroupBox):
 
         cm_versions = detect_cm_versions()
         self.cm_version_combo = QComboBox()
-        self.cm_version_combo.addItem("not support ver.CM14-", None)
+        self.cm_version_combo.addItem("support CM14+", None)
         if not cm_versions:
-            self.cm_version_combo.setItemText(0, "not support ver.CM14-")
+            self.cm_version_combo.setItemText(0, "support CM14+")
         else:
             for ver, install_path in cm_versions.items():
                 self.cm_version_combo.addItem(ver, install_path)

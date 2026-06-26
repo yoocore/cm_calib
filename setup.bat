@@ -95,21 +95,19 @@ if not "%CM_PYTHON%"=="" (
     goto :found_python
 )
 
-:: 1.5 未找到 Python
-echo %ERR%!%NC% 系统中未找到可用的 Python（需 3.9+，支持 venv 模块）。
+:: 1.5 未找到可用 Python
+echo %ERR%!%NC% 未找到可用的 Python 解释器
 echo.
-echo 请先安装 Python:
-echo   1. 访问 https://www.python.org/downloads/
-echo   2. 下载 Python 3.10 或 3.11
-echo   3. 安装时勾选 "Add Python to PATH"
-echo.
-echo 或通过 CARMAKER_DIR 环境变量指定 CarMaker 安装目录，setup 会尝试使用自带的 Python。
-echo 例如: set CARMAKER_DIR=C:\IPG\carmaker\win64-14.1
-
-echo %ERR%!%NC% 未找到 CarMaker 安装路径，请确认已安装 CarMaker。
-echo.
-echo 你也可以设置 CARMAKER_DIR 环境变量指向 CarMaker 安装目录后重试。
-echo 例如: set CARMAKER_DIR=C:\IPG\carmaker\win64-14.1
+if defined _FOUND_CM_NO_PY (
+    for %%i in ("%_FOUND_CM_NO_PY%") do echo   CarMaker %%~nxi 已找到，但无 Python 解释器
+    echo   ^(需系统安装 Python 3.9+^)
+    echo.
+) else (
+    echo   CarMaker 未安装或不在标准路径中
+    echo.
+)
+echo 安装 Python 3.10/3.11: https://www.python.org/downloads/
+echo ^(勾选 "Add Python to PATH"^)
 echo.
 pause
 exit /b 1
@@ -118,6 +116,10 @@ exit /b 1
 :find_python
 set "CM_INSTALL=%~1"
 if not exist "%CM_INSTALL%" exit /b 0
+:: Record that CM was found, in case it has no Python
+for /f "delims=" %%v in ('dir "%CM_INSTALL%" /b /ad /o-n 2^>nul') do if not defined CM_PYTHON (
+    if "%%v"=="Python" set "_FOUND_CM_NO_PY=%CM_INSTALL%"
+)
 :check_next_python
 
 :: 查找版本化目录（python3.10、python310 ...）

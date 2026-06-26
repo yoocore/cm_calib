@@ -41,6 +41,8 @@ def _dispatch_embedded_command() -> bool:
 
 def main() -> int:
     os.environ["QT_LOGGING_RULES"] = "qt.qpa.screen=false"
+    import warnings
+    warnings.filterwarnings("ignore", message=".*compiled using NumPy 1.*")
     _patch_strenum()
     ensure_calibration_root_on_sys_path()
     apply_cmapi_to_current_process()

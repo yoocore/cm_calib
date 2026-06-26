@@ -12,7 +12,7 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("Camera Calibration Console")
     app.setOrganizationName("CMO141")
-    window = MainWindow(project_root=Path())
+    window = MainWindow(project_root=Path.cwd())
     window.show()
     return app.exec()
 

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from src.calibration.calib_types import TotalScoreDetail
-from src.calibration.sensitivity import build_geometric_sensitivity, get_skip_boards
+from src.calibration.sensitivity import build_geometric_sensitivity
 
 
 
@@ -155,8 +155,6 @@ class CoordinateDescentMixin:
         try:
             self._apply_value_map({p.name: trial_value})
             skip_boards = None
-            if hasattr(self, '_geometric_sensitivity'):
-                skip_boards = get_skip_boards(self._geometric_sensitivity, p.name)
             total_detail, img_path = self.evaluate(tag, baseline_metrics=best_baseline, skip_boards=skip_boards)
             score = total_detail.total_score
             accepted, accepted_reason = self._acceptance_decision(

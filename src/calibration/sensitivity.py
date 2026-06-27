@@ -5,7 +5,7 @@ influence, enabling evaluation to skip boards below a sensitivity threshold.
 """
 
 from __future__ import annotations
-from typing import Dict, List, Optional, Set, Tuple, TYPE_CHECKING
+from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 
 import numpy as np
 
@@ -56,11 +56,3 @@ def build_geometric_sensitivity(
     return sens
 
 
-def get_skip_boards(
-    sensitivity: Dict[str, Dict[str, float]],
-    param_name: str,
-    threshold: float = 0.3,
-) -> Set[str]:
-    """Return board IDs to skip for a given param when below sensitivity threshold."""
-    per_board = sensitivity.get(param_name, {})
-    return {bid for bid, s in per_board.items() if s < threshold}

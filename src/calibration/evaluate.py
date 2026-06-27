@@ -26,12 +26,7 @@ class EvaluateMixin:
         if sim_img is None:
             raise RuntimeError(f"Failed reading screenshot: {sim_path}")
 
-        # First capture determines the pipeline resolution — downsample
-        # real image + ROIs to match sim capture instead of upsampling sim.
-        if getattr(self, '_eval_size', None) is None:
-            self._set_eval_size(sim_img.shape[0], sim_img.shape[1])
-
-        # Reference detection on downsampled real image with scaled ROIs
+        # Reference detection on real image (sim will be upsampled for comparison)
         if self.real_detections is None:
             self.real_detections = self._detect_reference_boards()
 

@@ -188,7 +188,7 @@ if exist "%VENV_DIR%" (
     rmdir /s /q "%VENV_DIR%" 2>nul
 )
 echo %INFO%*%NC% 正在创建虚拟环境（Python !CM_PY_VER!）...
-"!UV_EXE!" venv --python !CM_PY_VER! "%VENV_DIR%" 2>&1
+"!UV_EXE!" venv --python !CM_PY_VER! --seed "%VENV_DIR%" 2>&1
 if !ERRORLEVEL! neq 0 (
     echo %ERR%!%NC% 虚拟环境创建失败
     call :log uv 虚拟环境创建失败

@@ -7,8 +7,12 @@ if not defined TEE_ACTIVE (
     set "TEE_ACTIVE=1"
     set "TEE_LOG_FILE=%~dp0setup.log"
     set "TEE_BAT_PATH=%~f0"
-    call "!TEE_BAT_PATH!" > "!TEE_LOG_FILE!" 2>&1
-    type "!TEE_LOG_FILE!"
+    cmd /c "!TEE_BAT_PATH!" > "!TEE_LOG_FILE!" 2>&1
+    if not exist "!TEE_LOG_FILE!" (
+        echo [ERROR] Log file was not created.
+    ) else (
+        for /f "delims=" %%L in ('type "!TEE_LOG_FILE!"') do echo %%L
+    )
     echo.
     echo Log saved to: !TEE_LOG_FILE!
     pause

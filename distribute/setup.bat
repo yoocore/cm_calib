@@ -358,7 +358,7 @@ call :log 首次安装依赖
 echo %OK%^|%NC% pip 镜像已配置（清华源）
 
 echo %INFO%*%NC% 正在升级 pip...
-"%PIP%" install --upgrade pip >nul 2>&1
+"%PIP%" install --upgrade pip
 if !ERRORLEVEL! equ 0 (
     echo %OK%^|%NC% pip 已升级
 ) else (
@@ -367,14 +367,14 @@ if !ERRORLEVEL! equ 0 (
 
 if exist "%REQUIREMENTS%" (
     echo %INFO%*%NC% 正在增量安装依赖...
-    "%PIP%" install -r "%REQUIREMENTS%" >nul 2>&1
+    "%PIP%" install -r "%REQUIREMENTS%"
     if !ERRORLEVEL! neq 0 (
         echo %WARN%~%NC% 部分依赖安装失败，尝试逐个安装...
         "%PIP%" install -r "%REQUIREMENTS%" --no-deps
     )
 ) else (
     echo %WARN%~%NC% 未找到 requirements.txt，安装核心依赖
-    "%PIP%" install numpy opencv-python pillow pywin32 pywinauto PySide6 pyqtgraph >nul 2>&1
+    "%PIP%" install numpy opencv-python pillow pywin32 pywinauto PySide6 pyqtgraph
 )
 
 copy /y "%REQUIREMENTS%" "!DEPS_MARKER!" >nul

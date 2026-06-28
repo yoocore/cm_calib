@@ -271,14 +271,55 @@ for %%r in (C:\IPG\carmaker D:\IPG\carmaker C:\IPG D:\IPG) do (
     )
 )
 
+:: 安装 CarMaker 其他 whl 模块（apoc、infofiles 等）
+for %%r in (C:\IPG\carmaker D:\IPG\carmaker C:\IPG D:\IPG) do (
+    if exist "%%r" for /f "delims=" %%d in ('dir "%%r\win64-*" /b /o-n 2^>nul') do (
+        for /f "delims=" %%w in ('dir "%%r\%%d\Python\*!PY_TAG!*.whl" /b /o-n 2^>nul') do (
+            set "WN=%%w"
+            if "!WN:cmapi=!"=="!WN!" (
+                "%PIP%" install "%%r\%%d\Python\%%w" >nul 2>&1
+                if !ERRORLEVEL! equ 0 (
+                    for /f "delims=- tokens=1" %%p in ("%%w") do echo %OK%^|%NC% %%p ^(whl^) 已安装
+                )
+            )
+        )
+    )
+)
+
+:: 查找版本匹配的 Python 子目录（python310 → cp310）
+set "CM_PY_MATCHED_DIR="
+set "PY_VER_SUFFIX=%CM_PY_VER:.=%"
+for %%r in (C:\IPG\carmaker D:\IPG\carmaker C:\IPG D:\IPG) do (
+    if exist "%%r" for /f "delims=" %%d in ('dir "%%r\win64-*" /b /o-n 2^>nul') do (
+        if not defined CM_PY_MATCHED_DIR (
+            for /f "delims=" %%v in ('dir "%%r\%%d\Python\python*" /b /ad /o-n 2^>nul') do (
+                set "DIRNAME=%%v"
+                set "DIRNAME=!DIRNAME:python=!"
+                set "DIRNAME=!DIRNAME:.=!"
+                if "!DIRNAME!"=="!PY_VER_SUFFIX!" (
+                    set "CM_PY_MATCHED_DIR=%%r\%%d\Python\%%v"
+                )
+            )
+        )
+    )
+)
+
 echo %INFO%*%NC% 配置 apoc 模块路径...
 if defined CM_PYTHON_DIR (
-    >"%VENV_DIR%\Lib\site-packages\zzz_apoc_path.pth" echo !CM_PYTHON_DIR!
-    echo !CM_PYTHON_DIR!\.. >>"%VENV_DIR%\Lib\site-packages\zzz_apoc_path.pth"
-    if exist "!CM_PYTHON_DIR!\Lib\site-packages" (
-        echo !CM_PYTHON_DIR!\Lib\site-packages >>"%VENV_DIR%\Lib\site-packages\zzz_apoc_path.pth"
-    )
+    (
+        echo !CM_PYTHON_DIR!
+        echo !CM_PYTHON_DIR!\..
+        if exist "!CM_PYTHON_DIR!\Lib\site-packages" (
+            echo !CM_PYTHON_DIR!\Lib\site-packages
+        )
+        if defined CM_PY_MATCHED_DIR (
+            echo !CM_PY_MATCHED_DIR!
+        )
+    ) > "%VENV_DIR%\Lib\site-packages\zzz_apoc_path.pth"
     echo %OK%^|%NC% CarMaker Python 路径已添加到 .pth
+) else (
+    echo %WARN%~%NC% 未找到 CarMaker Python 目录，跳过 apoc .pth 配置
+)
 ) else (
     echo %WARN%~%NC% 未找到 CarMaker Python 目录，跳过 apoc .pth 配置
 )

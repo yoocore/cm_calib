@@ -389,6 +389,7 @@ echo.
 :: ========================================
 echo %INFO%*%NC% 正在安装 CarMaker cmapi 模块...
 set "CMAPI_DONE="
+set "CM_PYTHON_DIR="
 if not "%_CM_INSTALL_FIRST%"=="" (
     for /f "delims=" %%w in ('dir "%_CM_INSTALL_FIRST%\Python\cmapi-*.whl" /b /o-n 2^>nul') do (
         if not defined CMAPI_DONE "%PIP%" install "%_CM_INSTALL_FIRST%\Python\%%w" >nul 2>&1
@@ -397,19 +398,11 @@ if not "%_CM_INSTALL_FIRST%"=="" (
         )
     )
     for /f "delims=" %%v in ('dir "%_CM_INSTALL_FIRST%\Python\python*" /b /ad /o-n 2^>nul') do (
-        if not defined CMAPI_DONE if exist "%_CM_INSTALL_FIRST%\Python\%%v\cmapi" (
-            >"%VENV_DIR%\Lib\site-packages\cmapi_path.pth" echo !_CM_INSTALL_FIRST!\Python\%%v
-            echo !_CM_INSTALL_FIRST!\Python >>"%VENV_DIR%\Lib\site-packages\cmapi_path.pth"
-            echo %OK%^|%NC% cmapi ^(directory^) 已配置 && set "CMAPI_DONE=1"
+        if not defined CM_PYTHON_DIR (
+            set "CM_PYTHON_DIR=!_CM_INSTALL_FIRST!\Python\%%v"
         )
-    )
-    rem Always add CarMaker Python path even when cmapi was installed via whl
-    if defined CMAPI_DONE (
-        for /f "delims=" %%v in ('dir "!_CM_INSTALL_FIRST!\Python\python*" /b /ad /o-n 2^>nul') do (
-            if not exist "%VENV_DIR%\Lib\site-packages\cmapi_path.pth" (
-                >"%VENV_DIR%\Lib\site-packages\cmapi_path.pth" echo !_CM_INSTALL_FIRST!\Python\%%v
-                echo !_CM_INSTALL_FIRST!\Python >>"%VENV_DIR%\Lib\site-packages\cmapi_path.pth"
-            )
+        if not defined CMAPI_DONE if exist "%_CM_INSTALL_FIRST%\Python\%%v\cmapi" (
+            echo %OK%^|%NC% cmapi ^(directory^) 已配置 && set "CMAPI_DONE=1"
         )
     )
 )
@@ -438,6 +431,9 @@ echo     echo [错误] 无法激活虚拟环境，请重新运行 setup.bat
 echo     pause
 echo     exit /b 1
 echo ^)
+echo.
+echo rem Add CarMaker Python path for cmapi/apoc
+if defined CM_PYTHON_DIR echo set "PYTHONPATH=!CM_PYTHON_DIR!;%%PYTHONPATH%%"
 echo.
 echo python "%%ROOT_DIR%%\src\entry\launch_gui.py" %%*
 echo if %%ERRORLEVEL%% neq 0 ^(

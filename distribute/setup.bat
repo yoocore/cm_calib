@@ -361,6 +361,9 @@ if exist "!DEPS_MARKER!" (
 echo %INFO%*%NC% 首次安装依赖
 call :log 首次安装依赖
 
+:: 强制 pip 显示进度条
+set "PIP_PROGRESS_BAR=on"
+
 "%PIP%" config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple >nul 2>&1
 echo %OK%^|%NC% pip 镜像已配置（清华源）
 

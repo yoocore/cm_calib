@@ -135,18 +135,33 @@ if !ERRORLEVEL! neq 0 (
 echo %OK%^|%NC% Python !CM_PY_VER! 已安装
 call :log 通过 uv 安装 Python !CM_PY_VER! 完成
 
-if exist "%VENV_DIR%" (
-    echo %WARN%~%NC% 移除旧的虚拟环境...
-    rmdir /s /q "%VENV_DIR%" 2>nul
+if not exist "%VENV_DIR%" (
+    echo %INFO%*%NC% 虚拟环境不存在，需要创建
+    set "VENV_NEEDS_CREATE=1"
+) else (
+    if not exist "%VENV_DIR%\Scripts\python.exe" (
+        echo %WARN%~%NC% 虚拟环境损坏，需要重建
+        set "VENV_NEEDS_CREATE=1"
+    ) else (
+        "%VENV_DIR%\Scripts\python.exe" -c "import sys, venv, pip; ver=f'{sys.version_info.major}.{sys.version_info.minor}'; sys.exit(0 if ver=='%CM_PY_VER%' else 1)" >nul 2>&1
+        if !ERRORLEVEL! equ 0 (
+            echo %OK%^|%NC% 虚拟环境有效，跳过创建
+        ) else (
+            echo %WARN%~%NC% 虚拟环境版本不匹配，需要重建
+            set "VENV_NEEDS_CREATE=1"
+        )
+    )
 )
-echo %INFO%*%NC% 正在创建虚拟环境（Python !CM_PY_VER!）...
-"!UV_EXE!" venv --python !CM_PY_VER! --seed "%VENV_DIR%" 2>&1
-if !ERRORLEVEL! neq 0 (
-    echo %ERR%!%NC% 虚拟环境创建失败
-    call :log uv 虚拟环境创建失败
-    pause
-    exit /b 1
-)
+if "!VENV_NEEDS_CREATE!"=="1" (
+    if exist "%VENV_DIR%" rmdir /s /q "%VENV_DIR%" 2>nul
+    echo %INFO%*%NC% 正在创建虚拟环境（Python !CM_PY_VER!）...
+    "!UV_EXE!" venv --python !CM_PY_VER! --seed "%VENV_DIR%" 2>&1
+    if !ERRORLEVEL! neq 0 (
+        echo %ERR%!%NC% 虚拟环境创建失败
+        call :log uv 虚拟环境创建失败
+        pause
+        exit /b 1
+    )
 echo %OK%^|%NC% 虚拟环境已创建
 set "_UV_EXE=!UV_EXE!"
 set "PIP=%VENV_DIR%\Scripts\pip.exe"

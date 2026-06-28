@@ -399,7 +399,8 @@ if not "%_CM_INSTALL_FIRST%"=="" (
     )
     for /f "delims=" %%v in ('dir "%_CM_INSTALL_FIRST%\Python\python*" /b /ad /o-n 2^>nul') do (
         if not defined CMAPI_DONE if exist "%_CM_INSTALL_FIRST%\Python\%%v\cmapi" (
-            >"%VENV_DIR%\Lib\site-packages\cmapi_path.pth" echo "%_CM_INSTALL_FIRST%\Python\%%v"
+            >"%VENV_DIR%\Lib\site-packages\cmapi_path.pth" echo %_CM_INSTALL_FIRST%\Python\%%v
+            echo %_CM_INSTALL_FIRST%\Python >>"%VENV_DIR%\Lib\site-packages\cmapi_path.pth"
             echo %OK%^|%NC% cmapi ^(directory^) 已配置 && set "CMAPI_DONE=1"
         )
     )

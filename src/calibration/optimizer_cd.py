@@ -154,8 +154,7 @@ class CoordinateDescentMixin:
         tag = f"iter_{it:04d}_{p.name}_{'p' if direction > 0 else 'n'}"
         try:
             self._apply_value_map({p.name: trial_value})
-            skip_boards = None
-            total_detail, img_path = self.evaluate(tag, baseline_metrics=best_baseline, skip_boards=skip_boards)
+            total_detail, img_path = self.evaluate(tag, baseline_metrics=best_baseline)
             score = total_detail.total_score
             accepted, accepted_reason = self._acceptance_decision(
                 baseline_score=base_score,

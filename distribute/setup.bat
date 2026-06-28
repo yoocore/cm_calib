@@ -399,7 +399,6 @@ set "CM_PYTHON_DIR="
 :: 扫描所有 CarMaker 版本
 for %%r in (C:\IPG\carmaker D:\IPG\carmaker C:\IPG D:\IPG) do (
     if exist "%%r" for /f "delims=" %%d in ('dir "%%r\win64-*" /b /o-n 2^>nul') do (
-        set "CM_ROOT=%%r\%%d"
         for /f "delims=" %%w in ('dir "%%r\%%d\Python\cmapi-*.whl" /b /o-n 2^>nul') do (
             if not defined CMAPI_DONE "%PIP%" install "%%r\%%d\Python\%%w" >nul 2>&1
             if not defined CMAPI_DONE if !ERRORLEVEL! equ 0 (
@@ -409,9 +408,6 @@ for %%r in (C:\IPG\carmaker D:\IPG\carmaker C:\IPG D:\IPG) do (
         for /f "delims=" %%v in ('dir "%%r\%%d\Python\python*" /b /ad /o-n 2^>nul') do (
             if not defined CM_PYTHON_DIR (
                 set "CM_PYTHON_DIR=%%r\%%d\Python\%%v"
-                rem Add CarMaker Python path to .pth for apoc module
-                >"%VENV_DIR%\Lib\site-packages\cmapi_path.pth" echo %%r\%%d\Python\%%v
-                echo %%r\%%d\Python >>"%VENV_DIR%\Lib\site-packages\cmapi_path.pth"
             )
             if not defined CMAPI_DONE if exist "%%r\%%d\Python\%%v\cmapi" (
                 set "CM_PYTHON_DIR=%%r\%%d\Python\%%v"
@@ -420,9 +416,19 @@ for %%r in (C:\IPG\carmaker D:\IPG\carmaker C:\IPG D:\IPG) do (
         )
     )
 )
+:: 清理 whl 安装的自带 .pth 文件（可能指向 build 目录）
+if exist "%VENV_DIR%\Lib\site-packages" (
+    del /f /q "%VENV_DIR%\Lib\site-packages\cmapi*.pth" 2>nul
+    del /f /q "%VENV_DIR%\Lib\site-packages\__cmapi*.pth" 2>nul
+)
+:: 添加 CarMaker Python 路径到 .pth，让 Python 能找到 apoc
+if defined CM_PYTHON_DIR (
+    >"%VENV_DIR%\Lib\site-packages\zzz_apoc_path.pth" echo !CM_PYTHON_DIR!
+    echo !CM_PYTHON_DIR!\.. >>"%VENV_DIR%\Lib\site-packages\zzz_apoc_path.pth"
+    echo %OK%^|%NC% CarMaker Python 路径已添加到 .pth
+)
 if not defined CMAPI_DONE echo %WARN%~%NC% 未找到 cmapi 模块（不影响核心功能，但 CarMaker 联调不可用）
 call :log cmapi 模块安装状态: !CMAPI_DONE!
-echo.
 
 :: ========================================
 :: Step 4: 生成 run.bat

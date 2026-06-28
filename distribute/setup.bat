@@ -7,7 +7,7 @@ if not defined TEE_ACTIVE (
     set "TEE_ACTIVE=1"
     set "TEE_LOG_FILE=%~dp0setup.log"
     set "TEE_BAT_PATH=%~f0"
-    cmd /v:on /c ""!TEE_BAT_PATH!" > "!TEE_LOG_FILE!" 2>&1"
+    call "!TEE_BAT_PATH!" > "!TEE_LOG_FILE!" 2>&1
     type "!TEE_LOG_FILE!"
     echo.
     echo Log saved to: !TEE_LOG_FILE!

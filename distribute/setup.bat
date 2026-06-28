@@ -169,27 +169,10 @@ if not exist "!UV_EXE!" (
 )
 
 :uv_ready
-:: 用 uv 安装 Python（从 cmapi whl 或目录名解析版本）
-echo %INFO%*%NC% 正在检测 cmapi Python 版本...
-set "CM_PY_VER="
-set "CM_WHL_TAG="
-:: 方法1: 从 cmapi whl 文件名取 Python 版本（cmapi-1.0-cp39-*.whl -> 3.9）
-for %%r in (D:\IPG\carmaker C:\IPG\carmaker D:\IPG C:\IPG) do if exist "%%r" for /f "delims=" %%d in ('dir /b /ad /o-n "%%r\win64-*" 2^>nul') do for /f "delims=" %%w in ('dir /b /o-n "%%r\%%d\Python\cmapi-*.whl" 2^>nul') do for /f "tokens=3 delims=-" %%v in ("%%w") do set "CM_WHL_TAG=%%v"
-if defined CM_WHL_TAG (
-    set "CM_PY_VER=!CM_WHL_TAG:cp=!"
-    set "CM_PY_VER=!CM_PY_VER:~0,1!.!CM_PY_VER:~1!"
-    echo %OK%^|%NC% 从 whl 文件检测到 Python !CM_PY_VER!
-)
-:: 方法2: 从 CarMaker Python 目录名取版本（python3.9 -> 3.9）
-if not defined CM_PY_VER (
-    for %%r in (D:\IPG\carmaker C:\IPG\carmaker D:\IPG C:\IPG) do if exist "%%r" for /f "delims=" %%d in ('dir /b /ad /o-n "%%r\win64-*" 2^>nul') do for /f "delims=" %%p in ('dir /b /ad /o-n "%%r\%%d\Python\python*" 2^>nul') do set "TMP=%%p" & set "CM_PY_VER=!TMP:python=!"
-    if defined CM_PY_VER echo %OK%^|%NC% 从目录名检测到 Python !CM_PY_VER!
-)
-:: 默认
-if not defined CM_PY_VER set "CM_PY_VER=3.9"
-echo %OK%^|%NC% 使用 Python !CM_PY_VER!
-echo %INFO%*%NC% 正在安装 Python !CM_PY_VER!...
-"!UV_EXE!" python install --reinstall !CM_PY_VER! >nul 2>&1
+:: 用 uv 安装 Python 3.10（cmapi whl 支持 3.10）
+echo %INFO%*%NC% 正在安装 Python 3.10...
+set "CM_PY_VER=3.10"
+"!UV_EXE!" python install 3.10 >nul 2>&1
 if !ERRORLEVEL! neq 0 (
     echo %ERR%!%NC% Python 安装失败
     call :log uv 安装 Python !CM_PY_VER! 失败
@@ -424,7 +407,12 @@ for %%r in (C:\IPG\carmaker D:\IPG\carmaker C:\IPG D:\IPG) do (
             )
         )
         for /f "delims=" %%v in ('dir "%%r\%%d\Python\python*" /b /ad /o-n 2^>nul') do (
-            if not defined CM_PYTHON_DIR set "CM_PYTHON_DIR=%%r\%%d\Python\%%v"
+            if not defined CM_PYTHON_DIR (
+                set "CM_PYTHON_DIR=%%r\%%d\Python\%%v"
+                rem Add CarMaker Python path to .pth for apoc module
+                >"%VENV_DIR%\Lib\site-packages\cmapi_path.pth" echo %%r\%%d\Python\%%v
+                echo %%r\%%d\Python >>"%VENV_DIR%\Lib\site-packages\cmapi_path.pth"
+            )
             if not defined CMAPI_DONE if exist "%%r\%%d\Python\%%v\cmapi" (
                 set "CM_PYTHON_DIR=%%r\%%d\Python\%%v"
                 echo %OK%^|%NC% cmapi ^(directory^) 已配置 && set "CMAPI_DONE=1"
@@ -457,9 +445,6 @@ echo     echo [错误] 无法激活虚拟环境，请重新运行 setup.bat
 echo     pause
 echo     exit /b 1
 echo ^)
-echo.
-echo rem Add CarMaker Python path for cmapi/apoc
-if defined CM_PYTHON_DIR echo set "PYTHONPATH=!CM_PYTHON_DIR!;%%PYTHONPATH%%"
 echo.
 echo python "%%ROOT_DIR%%\src\entry\launch_gui.py" %%*
 echo if %%ERRORLEVEL%% neq 0 ^(

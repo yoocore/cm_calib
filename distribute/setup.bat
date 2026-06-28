@@ -194,6 +194,11 @@ if not exist "!PIP!" (
 )
 
 set "REQUIREMENTS=%SCRIPT_DIR%\docs\requirements.txt"
+if not exist "!REQUIREMENTS!" (
+    if exist "%SCRIPT_DIR%\..\docs\requirements.txt" (
+        set "REQUIREMENTS=%SCRIPT_DIR%\..\docs\requirements.txt"
+    )
+)
 set "DEPS_MARKER=%VENV_DIR%\.deps_installed"
 
 if exist "!DEPS_MARKER!" (

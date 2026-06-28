@@ -171,9 +171,9 @@ if not exist "!UV_EXE!" (
 :uv_ready
 :: 用 uv 安装 Python（扫描 CarMaker Python 版本）
 echo %INFO%*%NC% 正在检测 CarMaker Python 版本...
-set "CM_PY_VER=3.10"
 for %%r in (D:\IPG\carmaker C:\IPG\carmaker D:\IPG C:\IPG) do if exist "%%r" for /f "delims=" %%d in ('dir /b /ad /o-n "%%r\win64-*" 2^>nul') do for /f "delims=" %%p in ('dir /b /ad /o-n "%%r\%%d\Python\python*" 2^>nul') do set "TMP=%%p" & set "CM_PY_VER=!TMP:python=!" & goto :py_ver_found
 :py_ver_found
+if not defined CM_PY_VER set "CM_PY_VER=3.10"
 echo %OK%^|%NC% 使用 Python !CM_PY_VER!
 echo %INFO%*%NC% 正在安装 Python !CM_PY_VER!...
 "!UV_EXE!" python install --reinstall !CM_PY_VER! >nul 2>&1
@@ -238,9 +238,10 @@ for /f "delims=" %%v in ('dir "%CM_INSTALL%" /b /ad /o-n 2^>nul') do if not defi
 :: 查找版本化目录（python3.10、python310 ...）
 if exist "%CM_INSTALL%\Python\" (
     for /f "delims=" %%p in ('dir "%CM_INSTALL%\Python\python*" /b /ad 2^>nul') do (
+        set "TMP=%%p"
+        if not defined CM_PY_VER set "CM_PY_VER=!TMP:python=!"
+        if not defined CM_PY_DIR set "CM_PY_DIR=%CM_INSTALL%\Python\%%p"
         if exist "%CM_INSTALL%\Python\%%p\python.exe" (
-            set "TMP=%%p"
-            set "CM_PY_VER=!TMP:python=!"
             set "CM_PY=%CM_INSTALL%\Python\%%p\python.exe"
             call :verify_cmapi
             if defined CM_PYTHON exit /b 0

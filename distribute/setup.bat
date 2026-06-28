@@ -266,7 +266,7 @@ for %%r in (C:\IPG\carmaker D:\IPG\carmaker C:\IPG D:\IPG) do (
                 )
             )
         )
-        :: 记录 CM_PYTHON_DIR（用于 apoc .pth）
+        rem 记录 CM_PYTHON_DIR（用于 apoc .pth）
         if not defined CM_PYTHON_DIR (
             for /f "delims=" %%v in ('dir "%%r\%%d\Python\python*" /b /ad /o-n 2^>nul') do (
                 set "CM_PYTHON_DIR=%%r\%%d\Python\%%v"
@@ -371,7 +371,7 @@ if not defined CM_PYTHON_DIR (
             set "CM_PYTHON_DIR=%CM_INSTALL%\Python\%%p"
             exit /b 0
         )
-        :: Python 根目录（无版本子目录）
+        rem Python 根目录（无版本子目录）
         if exist "%CM_INSTALL%\Python" (
             set "CM_PYTHON_DIR=%CM_INSTALL%\Python"
         )
@@ -388,7 +388,7 @@ set "VERSIONS="
 for %%r in (C:\IPG\carmaker D:\IPG\carmaker C:\IPG D:\IPG) do (
     if exist "%%r" for /f "delims=" %%d in ('dir "%%r\win64-*" /b /o-n 2^>nul') do (
         if exist "%%r\%%d\Python" (
-            :: 从目录名提取版本（python3.9 → cp39, python310 → cp310）
+            rem 从目录名提取版本
             for /f "delims=" %%v in ('dir "%%r\%%d\Python\python*" /b /ad 2^>nul') do (
                 set "DIRVER=%%v"
                 set "DIRVER=!DIRVER:python=!"
@@ -396,7 +396,7 @@ for %%r in (C:\IPG\carmaker D:\IPG\carmaker C:\IPG D:\IPG) do (
                 if not defined VERSIONS (set "VERSIONS=%%v") else (set "VERSIONS=!VERSIONS! %%v")
                 if "!TAG!"=="cp!DIRVER!" set "COMPATIBLE=1"
             )
-            :: 从 whl 文件提取版本
+            rem 从 whl 文件提取版本
             for /f "delims=" %%w in ('dir "%%r\%%d\Python\cmapi-*.whl" /b /o-n 2^>nul') do (
                 for /f "delims=- tokens=3-5" %%a in ("%%~nw") do (
                     if not defined VERSIONS (set "VERSIONS=%%a") else (set "VERSIONS=!VERSIONS! %%a")

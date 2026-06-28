@@ -81,13 +81,27 @@ for /f "skip=2 tokens=2,*" %%a in ('reg query "HKLM\SOFTWARE\IPG\CarMaker" /s /v
     )
 )
 
-:: 未找到 CarMaker Python → 用 uv 安装独立 Python 3.10
+:: 从 CarMaker Python 目录提取版本号（如 python3.9 → 3.9）
+set "CM_PY_VER=3.10"
+if defined CM_PYTHON_DIR (
+    for %%v in (9 10 11 12) do (
+        echo !CM_PYTHON_DIR! | findstr /c:"python3.%%v" >nul 2>&1
+        if not errorlevel 1 set "CM_PY_VER=3.%%v"
+        echo !CM_PYTHON_DIR! | findstr /c:"python3%%v" >nul 2>&1
+        if not errorlevel 1 set "CM_PY_VER=3.%%v"
+    )
+)
+
+:: 未找到 CarMaker Python → 用 uv 安装独立 Python
 if defined _CM_ALL_VERSIONS (
     echo %WARN%~%NC% 找到 CarMaker 版本: !_CM_ALL_VERSIONS!，但均无独立 Python 解释器
     call :log 找到 CarMaker 版本: !_CM_ALL_VERSIONS!，均无 Python 解释器
 )
+if defined CM_PYTHON_DIR (
+    echo %OK%^|%NC% CarMaker Python 目录: !CM_PYTHON_DIR! (检测到版本 !CM_PY_VER!)
+)
 
-echo %INFO%*%NC% 正在通过 uv 安装独立 Python 3.10...
+echo %INFO%*%NC% 正在通过 uv 安装独立 Python !CM_PY_VER!...
 echo.
 set "UV_DIR=%TEMP%\uv_%RANDOM%"
 set "UV_EXE=%UV_DIR%\uv.exe"
@@ -169,10 +183,9 @@ if not exist "!UV_EXE!" (
 )
 
 :uv_ready
-:: 用 uv 安装 Python 3.10（cmapi whl 支持 3.10）
-echo %INFO%*%NC% 正在安装 Python 3.10...
-set "CM_PY_VER=3.10"
-"!UV_EXE!" python install 3.10 >nul 2>&1
+:: 用 uv 安装 Python（与 CarMaker 匹配的版本）
+echo %INFO%*%NC% 正在安装 Python !CM_PY_VER!...
+"!UV_EXE!" python install !CM_PY_VER! >nul 2>&1
 if !ERRORLEVEL! neq 0 (
     echo %ERR%!%NC% Python 安装失败
     call :log uv 安装 Python !CM_PY_VER! 失败
@@ -236,6 +249,7 @@ if exist "%CM_INSTALL%\Python\" (
     for /f "delims=" %%p in ('dir "%CM_INSTALL%\Python\python*" /b /ad 2^>nul') do (
         if exist "%CM_INSTALL%\Python\%%p\python.exe" (
             set "CM_PY=%CM_INSTALL%\Python\%%p\python.exe"
+            if not defined CM_PYTHON_DIR set "CM_PYTHON_DIR=%CM_INSTALL%\Python\%%p"
             call :verify_cmapi
             if defined CM_PYTHON exit /b 0
         )
@@ -244,6 +258,7 @@ if exist "%CM_INSTALL%\Python\" (
     if not defined CM_PYTHON (
         if exist "%CM_INSTALL%\Python\python.exe" (
             set "CM_PY=%CM_INSTALL%\Python\python.exe"
+            if not defined CM_PYTHON_DIR set "CM_PYTHON_DIR=%CM_INSTALL%\Python"
             call :verify_cmapi
         )
     )
@@ -273,7 +288,9 @@ if "%CM_PYTHON%"=="" (
 echo.
 echo %OK%^|%NC% 使用 Python: %CM_PYTHON%
 "%CM_PYTHON%" --version
-call :log 使用 Python: %CM_PYTHON%
+:: 提取版本号用于 whl 选择
+for /f "delims=" %%v in ('"%CM_PYTHON%" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"') do set "CM_PY_VER=%%v"
+call :log 使用 Python: %CM_PYTHON% (版本 !CM_PY_VER!)
 echo.
 
 :: ========================================
@@ -396,10 +413,16 @@ echo.
 echo %INFO%*%NC% 正在安装 CarMaker cmapi 模块...
 set "CMAPI_DONE="
 set "CM_PYTHON_DIR="
-:: 扫描所有 CarMaker 版本
+:: 获取 venv 的 Python 标签（如 cp39、cp310）用于 whl 过滤
+set "PY_TAG="
+if exist "%VENV_DIR%\Scripts\python.exe" (
+    for /f "delims=" %%t in ('"%VENV_DIR%\Scripts\python.exe" -c "import sys; print(f'cp{sys.version_info.major}{sys.version_info.minor}')"') do set "PY_TAG=%%t"
+)
+if defined PY_TAG echo %OK%^|%NC% Python 标签: !PY_TAG!
+:: 扫描所有 CarMaker 版本，安装匹配版本的 whl
 for %%r in (C:\IPG\carmaker D:\IPG\carmaker C:\IPG D:\IPG) do (
     if exist "%%r" for /f "delims=" %%d in ('dir "%%r\win64-*" /b /o-n 2^>nul') do (
-        for /f "delims=" %%w in ('dir "%%r\%%d\Python\cmapi-*.whl" /b /o-n 2^>nul') do (
+        for /f "delims=" %%w in ('dir "%%r\%%d\Python\cmapi-*!PY_TAG!*.whl" /b /o-n 2^>nul') do (
             if not defined CMAPI_DONE "%PIP%" install "%%r\%%d\Python\%%w" >nul 2>&1
             if not defined CMAPI_DONE if !ERRORLEVEL! equ 0 (
                 echo %OK%^|%NC% cmapi ^(whl^) 已安装 && set "CMAPI_DONE=1"
@@ -416,22 +439,18 @@ for %%r in (C:\IPG\carmaker D:\IPG\carmaker C:\IPG D:\IPG) do (
         )
     )
 )
-:: 找到并删除 cmapi whl 安装时带入的 .pth 文件（指向 build 目录而非 site-packages）
-echo %INFO%*%NC% 检查 cmapi .pth 文件...
-if exist "%VENV_DIR%\Lib\site-packages" (
-    for %%f in ("%VENV_DIR%\Lib\site-packages\*.pth") do (
-        findstr /m "out-cmapi" "%%f" >nul 2>&1
-        if !ERRORLEVEL! equ 0 (
-            del "%%f"
-            echo %WARN%~%NC% 已删除错误的 .pth: %%~nxf
-        )
-    )
-)
+:: 保留 cmapi whl 安装的 .pth（指向 build 目录，包含编译扩展）
 :: 添加 CarMaker Python 路径到 .pth，让 Python 能找到 apoc
+echo %INFO%*%NC% 配置 apoc 模块路径...
 if defined CM_PYTHON_DIR (
     >"%VENV_DIR%\Lib\site-packages\zzz_apoc_path.pth" echo !CM_PYTHON_DIR!
     echo !CM_PYTHON_DIR!\.. >>"%VENV_DIR%\Lib\site-packages\zzz_apoc_path.pth"
+    if exist "!CM_PYTHON_DIR!\Lib\site-packages" (
+        echo !CM_PYTHON_DIR!\Lib\site-packages >>"%VENV_DIR%\Lib\site-packages\zzz_apoc_path.pth"
+    )
     echo %OK%^|%NC% CarMaker Python 路径已添加到 .pth
+) else (
+    echo %WARN%~%NC% CM_PYTHON_DIR 为空，跳过 apoc .pth 配置
 )
 if not defined CMAPI_DONE echo %WARN%~%NC% 未找到 cmapi 模块（不影响核心功能，但 CarMaker 联调不可用）
 call :log cmapi 模块安装状态: !CMAPI_DONE!

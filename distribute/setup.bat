@@ -169,18 +169,10 @@ if not exist "!UV_EXE!" (
 )
 
 :uv_ready
-:: 用 uv 安装 Python（扫描所有 CarMaker 版本，匹配 cmapi 的 Python 版本）
+:: 用 uv 安装 Python（通过 PowerShell 扫描 CarMaker Python 版本）
 echo %INFO%*%NC% 正在检测 CarMaker Python 版本...
 set "CM_PY_VER=3.10"
-for %%r in (C:\IPG\carmaker D:\IPG\carmaker C:\IPG D:\IPG) do (
-    if exist "%%r" for /f "delims=" %%d in ('dir "%%r\win64-*" /b /o-n 2^>nul') do (
-        for /f "delims=" %%p in ('dir "%%r\%%d\Python\python*" /b /ad /o-n 2^>nul') do (
-            set "TMP=%%~nxp"
-            set "CM_PY_VER=!TMP:python=!"
-            set "CM_PY_VER_FOUND=1"
-        )
-    )
-)
+for /f %%v in ('powershell -NoProfile "Get-ChildItem 'D:\IPG\carmaker','C:\IPG\carmaker','D:\IPG','C:\IPG' -Filter win64-* -Directory 2>$null | Sort-Object Name -Desc | ForEach-Object { Get-ChildItem \"$_\Python\python*\" -Directory 2>$null | Sort-Object Name -Desc | ForEach-Object { $_.Name -replace 'python','' } } | Select-Object -First 1"') do set "CM_PY_VER=%%v"
 echo %OK%^|%NC% 使用 Python !CM_PY_VER!
 echo %INFO%*%NC% 正在安装 Python !CM_PY_VER!...
 "!UV_EXE!" python install !CM_PY_VER! >nul 2>&1
@@ -199,7 +191,7 @@ if exist "%VENV_DIR%" (
     rmdir /s /q "%VENV_DIR%" 2>nul
 )
 echo %INFO%*%NC% 正在创建虚拟环境（Python !CM_PY_VER!）...
-"!UV_EXE!" venv --python !CM_PY_VER! --seed "%VENV_DIR%" 2>&1
+"!UV_EXE!" venv --python !CM_PY_VER! --no-seed "%VENV_DIR%" 2>&1
 if !ERRORLEVEL! neq 0 (
     echo %ERR%!%NC% 虚拟环境创建失败
     call :log uv 虚拟环境创建失败

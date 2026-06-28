@@ -162,7 +162,8 @@ if "!VENV_NEEDS_CREATE!"=="1" (
         pause
         exit /b 1
     )
-echo %OK%^|%NC% 虚拟环境已创建
+	echo %OK%^|%NC% 虚拟环境已创建
+)
 set "_UV_EXE=!UV_EXE!"
 set "PIP=%VENV_DIR%\Scripts\pip.exe"
 set "CM_PYTHON=%VENV_DIR%\Scripts\python.exe"
@@ -283,6 +284,20 @@ echo %INFO%*%NC% 步骤 6: 生成启动脚本...
 call :log 步骤 6: 生成启动脚本
 
 set "RUN_BAT=%CD%\run.bat"
+
+:: 确定 launch_gui.py 的真实路径
+set "LAUNCH_PATH="
+if exist "%SCRIPT_DIR%\src\entry\launch_gui.py" (
+    set "LAUNCH_PATH=src\entry\launch_gui.py"
+) else if exist "%SCRIPT_DIR%\..\src\entry\launch_gui.py" (
+    set "LAUNCH_PATH=..\src\entry\launch_gui.py"
+) else (
+    echo %ERR%!%NC% 未找到 launch_gui.py，请检查文件完整性
+    pause
+    exit /b 1
+)
+echo %OK%^|%NC% launch_gui.py 路径: !LAUNCH_PATH!
+
 (
 echo @echo off
 echo chcp 65001 ^>nul
@@ -298,7 +313,7 @@ echo     pause
 echo     exit /b 1
 echo ^)
 echo.
-echo python "%%ROOT_DIR%%\src\entry\launch_gui.py" %%*
+echo "%%ROOT_DIR%%\.venv\Scripts\python.exe" "%%ROOT_DIR%%\!LAUNCH_PATH!" %%*
 echo if %%ERRORLEVEL%% neq 0 ^(
 echo     echo [错误] 程序异常退出，代码: %%ERRORLEVEL%%
 echo     pause

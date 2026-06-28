@@ -446,31 +446,6 @@ if not exist "!RUN_BAT!" (
 )
 echo.
 
-:: ========================================
-:: Step 5: 可选 - 创建桌面快捷方式
-:: ========================================
-:shortcut
-echo %INFO%*%NC% 是否创建桌面快捷方式？(Y/N)
-call :log 步骤 5/5: 桌面快捷方式
-set /p CREATE_SHORTCUT=
-
-if /i "!CREATE_SHORTCUT!"=="Y" (
-    set "DESKTOP=%USERPROFILE%\Desktop"
-    set "SHORTCUT=%DESKTOP%\Camera Calibration.lnk"
-    if not exist "!DESKTOP!" (
-        echo %WARN%~%NC% 桌面目录不存在: !DESKTOP!
-    ) else (
-        powershell -ExecutionPolicy Bypass -Command "$s=(New-Object -COM WScript.Shell).CreateShortcut('!SHORTCUT!'); $s.TargetPath='!RUN_BAT!'; $s.WorkingDirectory='!SCRIPT_DIR!'; $s.Description='Camera Calibration Tool'; $s.Save()" >nul 2>&1
-        if !ERRORLEVEL! equ 0 (
-            echo %OK%^|%NC% 桌面快捷方式已创建
-        ) else (
-            echo %WARN%~%NC% 快捷方式创建失败，可手动发送 run.bat 到桌面
-        )
-    )
-) else (
-    echo %INFO%-%NC% 跳过桌面快捷方式
-)
-
 :: 清理临时文件
 if defined _UV_EXE (
     rmdir /s /q "%UV_DIR%" 2>nul

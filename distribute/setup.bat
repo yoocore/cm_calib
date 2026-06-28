@@ -418,6 +418,9 @@ set "PY_TAG="
 if exist "%VENV_DIR%\Scripts\python.exe" (
     for /f "delims=" %%t in ('"%VENV_DIR%\Scripts\python.exe" -c "import sys; print(f'cp{sys.version_info.major}{sys.version_info.minor}')"') do set "PY_TAG=%%t"
 )
+if not defined PY_TAG (
+    for /f "delims=. tokens=1,2" %%a in ("!CM_PY_VER!") do set "PY_TAG=cp%%a%%b"
+)
 if defined PY_TAG echo %OK%^|%NC% Python 标签: !PY_TAG!
 :: 扫描所有 CarMaker 版本，安装匹配版本的 whl
 for %%r in (C:\IPG\carmaker D:\IPG\carmaker C:\IPG D:\IPG) do (

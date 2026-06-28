@@ -357,7 +357,7 @@ call :log 首次安装依赖
 echo %OK%^|%NC% pip 镜像已配置（清华源）
 
 echo %INFO%*%NC% 正在升级 pip...
-"%PIP%" install --upgrade pip
+"%PIP%" install --progress-bar on --upgrade pip
 if !ERRORLEVEL! equ 0 (
     echo %OK%^|%NC% pip 已升级
 ) else (
@@ -368,14 +368,14 @@ if exist "%REQUIREMENTS%" (
     echo %INFO%*%NC% 正在增量安装依赖...
     for /f "usebackq delims=" %%p in ("%REQUIREMENTS%") do (
         echo %INFO%^|%NC% 安装 %%p ...
-        "%PIP%" install %%p
+        "%PIP%" install --progress-bar on %%p
         if !ERRORLEVEL! neq 0 (
             echo %WARN%~%NC% %%p 安装失败，跳过
         )
     )
 ) else (
     echo %WARN%~%NC% 未找到 requirements.txt，安装核心依赖
-    "%PIP%" install numpy opencv-python pillow pywin32 pywinauto PySide6 pyqtgraph
+    "%PIP%" install --progress-bar on numpy opencv-python pillow pywin32 pywinauto PySide6 pyqtgraph
 )
 
 copy /y "%REQUIREMENTS%" "!DEPS_MARKER!" >nul

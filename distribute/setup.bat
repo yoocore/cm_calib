@@ -318,8 +318,6 @@ if "!VENV_NEEDS_CREATE!"=="1" (
     )
     echo %OK%^|%NC% 虚拟环境已创建: !VENV_DIR!
     call :log 虚拟环境已创建: !VENV_DIR!
-    :: 新创建的环境需要全量安装依赖
-    set "DEPS_NEEDS_INSTALL=1"
 )
 echo.
 
@@ -399,9 +397,18 @@ if not "%_CM_INSTALL_FIRST%"=="" (
     )
     for /f "delims=" %%v in ('dir "%_CM_INSTALL_FIRST%\Python\python*" /b /ad /o-n 2^>nul') do (
         if not defined CMAPI_DONE if exist "%_CM_INSTALL_FIRST%\Python\%%v\cmapi" (
-            >"%VENV_DIR%\Lib\site-packages\cmapi_path.pth" echo %_CM_INSTALL_FIRST%\Python\%%v
-            echo %_CM_INSTALL_FIRST%\Python >>"%VENV_DIR%\Lib\site-packages\cmapi_path.pth"
+            >"%VENV_DIR%\Lib\site-packages\cmapi_path.pth" echo !_CM_INSTALL_FIRST!\Python\%%v
+            echo !_CM_INSTALL_FIRST!\Python >>"%VENV_DIR%\Lib\site-packages\cmapi_path.pth"
             echo %OK%^|%NC% cmapi ^(directory^) 已配置 && set "CMAPI_DONE=1"
+        )
+    )
+    rem Always add CarMaker Python path even when cmapi was installed via whl
+    if defined CMAPI_DONE (
+        for /f "delims=" %%v in ('dir "!_CM_INSTALL_FIRST!\Python\python*" /b /ad /o-n 2^>nul') do (
+            if not exist "%VENV_DIR%\Lib\site-packages\cmapi_path.pth" (
+                >"%VENV_DIR%\Lib\site-packages\cmapi_path.pth" echo !_CM_INSTALL_FIRST!\Python\%%v
+                echo !_CM_INSTALL_FIRST!\Python >>"%VENV_DIR%\Lib\site-packages\cmapi_path.pth"
+            )
         )
     )
 )

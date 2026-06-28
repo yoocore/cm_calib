@@ -1,0 +1,63 @@
+========================================
+  Camera Calibration Tool - 环境搭建
+========================================
+
+[36m*[0m 正在检测 CarMaker 安装位置...
+[周日 2026/06/28 17:31:15.85] 步骤 1/4: 查找 Python
+
+[33m~[0m 找到 CarMaker 版本: win64-15.1 win64-14.1 win64-13.1 win64-12.0，但均无独立 Python 解释器
+'CarMaker' is not recognized as an internal or external command,
+operable program or batch file.
+[36m*[0m 正在通过 uv 安装独立 Python 3.10...
+
+[32m|[0m 使用本地 uv.exe
+[36m*[0m 正在安装 Python 3.10...
+[32m|[0m Python 3.10 已安装
+'�过' is not recognized as an internal or external command,
+operable program or batch file.
+[33m~[0m 移除旧的虚拟环境...
+[36m*[0m 正在创建虚拟环境（Python 3.10）...
+[32m|[0m 虚拟环境已创建
+[32m|[0m 使用 Python: E:\Coding\VibeCoding\cm_calib\distribute\.venv\Scripts\python.exe
+Python 3.10.20
+
+[36m*[0m 步骤 3/4: 检查 Python 依赖...
+[周日 2026/06/28 17:31:19.54] 步骤 3/4: 检查 Python 依赖
+
+[36m*[0m 首次安装依赖
+[周日 2026/06/28 17:31:19.55] 首次安装依赖
+[32m|[0m pip 镜像已配置（清华源）
+[36m*[0m 正在升级 pip...
+[32m|[0m pip 已升级
+[33m~[0m 未找到 requirements.txt，安装核心依赖
+[32m|[0m 依赖安装完成
+[周日 2026/06/28 17:32:06.67] Python 依赖安装完成
+
+[36m*[0m 正在安装 CarMaker cmapi 模块...
+[32m|[0m cmapi (directory) 已配置 
+[周日 2026/06/28 17:32:06.72] cmapi 模块安装状态: 1
+
+[36m*[0m 步骤 4/4: 生成启动脚本...
+[周日 2026/06/28 17:32:06.72] 步骤 4/4: 生成启动脚本
+[32m|[0m 启动脚本已生成: run.bat
+[周日 2026/06/28 17:32:06.73] 启动脚本已生成: run.bat
+
+[36m*[0m 是否创建桌面快捷方式？(Y/N)
+[周日 2026/06/28 17:32:06.73] 步骤 5/5: 桌面快捷方式
+[36m-[0m 跳过桌面快捷方式
+[32m|[0m 临时文件已清理
+
+========================================
+  [32m环境搭建完成[0m
+========================================
+
+启动方式:
+  1. 双击 run.bat 启动 GUI
+  2. 或直接发送 run.bat 快捷方式到桌面
+
+如需更新依赖，重新运行 setup.bat 即可。
+
+详细日志已保存至: E:\Coding\VibeCoding\cm_calib\distribute\setup.log
+
+[周日 2026/06/28 17:32:06.77] === 环境搭建完成 === (run.bat 已生成)
+Press any key to continue . . . 

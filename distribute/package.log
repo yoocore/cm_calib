@@ -1,0 +1,17 @@
+周日 2026/06/28 18:04:31.42 - Package complete 
+ Volume in drive E is E
+ Volume Serial Number is C671-3188
+
+ Directory of E:\Coding\VibeCoding\cm_calib\distribute\dist
+
+2026/06/28  18:04    <DIR>          .
+2026/06/28  18:03    <DIR>          ..
+2026/06/28  17:39             2,086 cleanup.bat
+2026/06/28  18:04    <DIR>          docs
+2026/06/28  18:04               495 README.txt
+2026/06/28  18:03            16,285 setup.bat
+2026/06/28  17:55            20,948 setup.log
+2026/06/28  18:04    <DIR>          src
+2026/06/26  22:47        69,444,608 uv.exe
+               5 File(s)     69,484,422 bytes
+               4 Dir(s)  104,287,477,760 bytes free

@@ -2,7 +2,7 @@
 chcp 65001 >nul
 setlocal enabledelayedexpansion
 
-set DIST_DIR=dist
+set "DIST_DIR=%SCRIPT_DIR%\dist"
 set "SCRIPT_DIR=%~dp0"
 set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
 set "LOG_FILE=%SCRIPT_DIR%\package.log"

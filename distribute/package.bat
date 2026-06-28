@@ -17,9 +17,11 @@ echo.
 :: Clean previous dist
 if exist "%DIST_DIR%" (
     echo [1/5] Cleaning previous dist...
-    rmdir /s /q "%DIST_DIR%"
+    del /f /q "%DIST_DIR%\*.log" "%DIST_DIR%\*.txt" 2>nul
+    rmdir /s /q "%DIST_DIR%" 2>nul
 )
-
+:: Ensure clean slate
+if exist "%DIST_DIR%" rmdir /s /q "%DIST_DIR%"
 echo [2/5] Creating dist structure...
 mkdir "%DIST_DIR%"
 mkdir "%DIST_DIR%\docs"

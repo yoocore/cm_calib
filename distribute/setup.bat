@@ -457,12 +457,15 @@ set /p CREATE_SHORTCUT=
 if /i "!CREATE_SHORTCUT!"=="Y" (
     set "DESKTOP=%USERPROFILE%\Desktop"
     set "SHORTCUT=%DESKTOP%\Camera Calibration.lnk"
-    set "PS_COMMAND=$s=(New-Object -COM WScript.Shell).CreateShortcut('%SHORTCUT%'); $s.TargetPath='%RUN_BAT%'; $s.WorkingDirectory='%SCRIPT_DIR%'; $s.Description='Camera Calibration Tool'; $s.Save()"
-    powershell -Command "!PS_COMMAND!" >nul 2>&1
-    if !ERRORLEVEL! equ 0 (
-        echo %OK%^|%NC% 桌面快捷方式已创建
+    if not exist "!DESKTOP!" (
+        echo %WARN%~%NC% 桌面目录不存在: !DESKTOP!
     ) else (
-        echo %WARN%~%NC% 快捷方式创建失败，可手动发送 run.bat 到桌面
+        powershell -ExecutionPolicy Bypass -Command "$s=(New-Object -COM WScript.Shell).CreateShortcut('!SHORTCUT!'); $s.TargetPath='!RUN_BAT!'; $s.WorkingDirectory='!SCRIPT_DIR!'; $s.Description='Camera Calibration Tool'; $s.Save()" >nul 2>&1
+        if !ERRORLEVEL! equ 0 (
+            echo %OK%^|%NC% 桌面快捷方式已创建
+        ) else (
+            echo %WARN%~%NC% 快捷方式创建失败，可手动发送 run.bat 到桌面
+        )
     )
 ) else (
     echo %INFO%-%NC% 跳过桌面快捷方式

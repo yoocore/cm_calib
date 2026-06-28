@@ -154,7 +154,7 @@ if !ERRORLEVEL! neq 0 (
     if defined _CM_ALL_VERSIONS (
         echo   CarMaker 版本 !_CM_ALL_VERSIONS! 已找到，但均无 Python 解释器
     )
-    echo 请手动安装 Python 3.10/3.11 后重试
+    echo 请手动安装 Python 3.9/3.10/3.11 后重试
     echo   下载地址: https://www.python.org/downloads/
     pause
     exit /b 1
@@ -169,25 +169,32 @@ if not exist "!UV_EXE!" (
 )
 
 :uv_ready
-:: 用 uv 安装 Python 3.10
-echo %INFO%*%NC% 正在安装 Python 3.10...
-"!UV_EXE!" python install 3.10 >nul 2>&1
+:: 用 uv 安装 Python（匹配 CarMaker cmapi 版本，默认 3.10）
+if not defined CM_PY_VER (
+    set "CM_PY_VER=3.10"
+    for %%v in ("!_CM_INSTALL_FIRST!\Python\python*") do if exist "%%v" (
+        set "TMP=%%~nxv"
+        set "CM_PY_VER=!TMP:python=!"
+    )
+)
+echo %INFO%*%NC% 正在安装 Python !CM_PY_VER!...
+"!UV_EXE!" python install !CM_PY_VER! >nul 2>&1
 if !ERRORLEVEL! neq 0 (
     echo %ERR%!%NC% Python 安装失败
-    call :log uv 安装 Python 3.10 失败
+    call :log uv 安装 Python !CM_PY_VER! 失败
     pause
     exit /b 1
 )
-echo %OK%^|%NC% Python 3.10 已安装
-call :log 通过 uv 安装 Python 3.10 完成
+echo %OK%^|%NC% Python !CM_PY_VER! 已安装
+call :log 通过 uv 安装 Python !CM_PY_VER! 完成
 
 :: 用 uv 创建虚拟环境（先清理旧目录）
 if exist "%VENV_DIR%" (
     echo %WARN%~%NC% 移除旧的虚拟环境...
     rmdir /s /q "%VENV_DIR%" 2>nul
 )
-echo %INFO%*%NC% 正在创建虚拟环境（Python 3.10）...
-"!UV_EXE!" venv --python 3.10 --seed "%VENV_DIR%" >nul 2>&1
+echo %INFO%*%NC% 正在创建虚拟环境（Python !CM_PY_VER!）...
+"!UV_EXE!" venv --python !CM_PY_VER! --seed "%VENV_DIR%" >nul 2>&1
 if !ERRORLEVEL! neq 0 (
     echo %ERR%!%NC% 虚拟环境创建失败
     call :log uv 虚拟环境创建失败

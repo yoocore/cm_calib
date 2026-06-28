@@ -7,8 +7,7 @@ if not defined TEE_ACTIVE (
     set "TEE_ACTIVE=1"
     set "TEE_LOG_FILE=%~dp0setup.log"
     set "TEE_BAT_PATH=%~f0"
-    powershell -NoProfile "& '!TEE_BAT_PATH!' 2>&1 | ForEach-Object { $_; $_ | Out-File '!TEE_LOG_FILE!' -Encoding UTF8 }"
-    type "!TEE_LOG_FILE!"
+    powershell -NoProfile "$env:TEE_ACTIVE='1'; cmd /c '!TEE_BAT_PATH!' 2>&1 | Tee-Object -FilePath '!TEE_LOG_FILE!'"
     echo.
     echo Log saved to: !TEE_LOG_FILE!
     pause

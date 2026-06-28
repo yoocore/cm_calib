@@ -7,6 +7,7 @@ from collections import deque
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QCoreApplication, QTimer, Slot
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QMainWindow, QMessageBox, QSplitter, QVBoxLayout, QWidget
 
 from src.gui_app.models.state import AppStatus, ApplicationState, CalibrationLaunchConfig, CameraResult
@@ -53,6 +54,10 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("Camera Calibration Console")
         self.resize(1500, 900)
+
+        icon_path = Path(__file__).parent / "icon.svg"
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path)))
 
         self.cm_settings_panel = CmSettingsPanel(self)
         self.calibration_panel = CalibrationPanel(self)

@@ -326,7 +326,7 @@ class MainWindow(QMainWindow):
                 else:
                     progress_percent = 0
                 total_iter_current += current_iter
-                total_iter_max += total_iters
+                total_iter_max += total_iters if total_iters > 0 else known_max_iters
                 if status == "running" and running_camera is None:
                     running_camera = camera_name
                 elif status == "preparing" and preparing_camera is None:
@@ -339,7 +339,7 @@ class MainWindow(QMainWindow):
                 else:
                     progress_percent = 0
                 total_iter_current += current_iter
-                total_iter_max += total_iters
+                total_iter_max += total_iters if total_iters > 0 else known_max_iters
             else:
                 progress_percent = 0
                 if known_max_iters > 0:

@@ -170,20 +170,18 @@ if not exist "!UV_EXE!" (
 
 :uv_ready
 :: 用 uv 安装 Python（扫描所有 CarMaker 版本，匹配 cmapi 的 Python 版本）
-if not defined CM_PY_VER (
-    set "CM_PY_VER=3.10"
-    for %%r in (C:\IPG\carmaker D:\IPG\carmaker C:\IPG D:\IPG) do (
-        if exist "%%r" for /f "delims=" %%d in ('dir "%%r\win64-*" /b /o-n 2^>nul') do (
-            if not defined CM_PY_VER_FOUND for /f "delims=" %%p in ('dir "%%r\%%d\Python\python*" /b /ad /o-n 2^>nul') do (
-                set "TMP=%%~nxp"
-                set "CM_PY_VER=!TMP:python=!"
-                rem Check if this version has cmapi
-                if exist "%%r\%%d\Python\%%p\cmapi" set "CM_PY_VER_FOUND=1"
-                if exist "%%r\%%d\Python\cmapi-*.whl" set "CM_PY_VER_FOUND=1"
-            )
+echo %INFO%*%NC% 正在检测 CarMaker Python 版本...
+set "CM_PY_VER=3.10"
+for %%r in (C:\IPG\carmaker D:\IPG\carmaker C:\IPG D:\IPG) do (
+    if exist "%%r" for /f "delims=" %%d in ('dir "%%r\win64-*" /b /o-n 2^>nul') do (
+        for /f "delims=" %%p in ('dir "%%r\%%d\Python\python*" /b /ad /o-n 2^>nul') do (
+            set "TMP=%%~nxp"
+            set "CM_PY_VER=!TMP:python=!"
+            set "CM_PY_VER_FOUND=1"
         )
     )
 )
+echo %OK%^|%NC% 使用 Python !CM_PY_VER!
 echo %INFO%*%NC% 正在安装 Python !CM_PY_VER!...
 "!UV_EXE!" python install !CM_PY_VER! >nul 2>&1
 if !ERRORLEVEL! neq 0 (
@@ -201,7 +199,7 @@ if exist "%VENV_DIR%" (
     rmdir /s /q "%VENV_DIR%" 2>nul
 )
 echo %INFO%*%NC% 正在创建虚拟环境（Python !CM_PY_VER!）...
-"!UV_EXE!" venv --python !CM_PY_VER! --seed "%VENV_DIR%" >nul 2>&1
+"!UV_EXE!" venv --python !CM_PY_VER! --seed "%VENV_DIR%" 2>&1
 if !ERRORLEVEL! neq 0 (
     echo %ERR%!%NC% 虚拟环境创建失败
     call :log uv 虚拟环境创建失败

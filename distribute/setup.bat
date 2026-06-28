@@ -239,6 +239,8 @@ for /f "delims=" %%v in ('dir "%CM_INSTALL%" /b /ad /o-n 2^>nul') do if not defi
 if exist "%CM_INSTALL%\Python\" (
     for /f "delims=" %%p in ('dir "%CM_INSTALL%\Python\python*" /b /ad 2^>nul') do (
         if exist "%CM_INSTALL%\Python\%%p\python.exe" (
+            set "TMP=%%p"
+            set "CM_PY_VER=!TMP:python=!"
             set "CM_PY=%CM_INSTALL%\Python\%%p\python.exe"
             call :verify_cmapi
             if defined CM_PYTHON exit /b 0

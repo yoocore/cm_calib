@@ -376,9 +376,6 @@ if exist "%REQUIREMENTS%" (
     "%PIP%" install --progress-bar on numpy opencv-python pillow pywin32 pywinauto PySide6 pyqtgraph
 )
 
-rem Lock numpy to 1.x (later deps may pull in 2.x)
-"%PIP%" install --progress-bar on "numpy<2,>=1.26"
-
 copy /y "%REQUIREMENTS%" "!DEPS_MARKER!" >nul
 echo %OK%^|%NC% 依赖安装完成
 call :log Python 依赖安装完成

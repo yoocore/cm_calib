@@ -367,10 +367,12 @@ if !ERRORLEVEL! equ 0 (
 
 if exist "%REQUIREMENTS%" (
     echo %INFO%*%NC% 正在增量安装依赖...
-    "%PIP%" install -r "%REQUIREMENTS%"
-    if !ERRORLEVEL! neq 0 (
-        echo %WARN%~%NC% 部分依赖安装失败，尝试逐个安装...
-        "%PIP%" install -r "%REQUIREMENTS%" --no-deps
+    for /f "usebackq delims=" %%p in ("%REQUIREMENTS%") do (
+        echo %INFO%^|%NC% 安装 %%p ...
+        "%PIP%" install %%p
+        if !ERRORLEVEL! neq 0 (
+            echo %WARN%~%NC% %%p 安装失败，跳过
+        )
     )
 ) else (
     echo %WARN%~%NC% 未找到 requirements.txt，安装核心依赖

@@ -5,7 +5,6 @@ setlocal enabledelayedexpansion
 :: 全量输出捕获（Tee-Object），时间戳避免文件锁
 if not defined TEE_ACTIVE (
     set "TEE_ACTIVE=1"
-    :: 清理旧日志
     del /f /q "%~dp0setup_*.log" >nul 2>&1
     for /f %%t in ('powershell -NoProfile "Get-Date -Format 'yyyyMMdd_HHmmss'"') do set "TS=%%t"
     set "TEE_LOG_FILE=%~dp0setup_!TS!.log"
@@ -34,27 +33,31 @@ set "INFO=%ESC%[36m"
 set "WARN=%ESC%[33m"
 set "NC=%ESC%[0m"
 
+:: ========================================
+:: 目标 Python 版本（可修改此行）
+:: ========================================
+set "CM_PY_VER=3.10"
+
 echo ========================================
 echo   Camera Calibration Tool - 环境搭建
 echo ========================================
 echo.
 
 :: ========================================
-:: Step 1: 查找 CarMaker Python
+:: Step 1: 查找 CarMaker 安装位置
 :: ========================================
 echo %INFO%*%NC% 正在检测 CarMaker 安装位置...
 call :log 步骤 1/4: 查找 Python
 echo.
 
-set "CM_PYTHON="
+set "CM_PYTHON_DIR="
 
 :: 1.1 尝试环境变量
 if not "%CARMAKER_DIR%"=="" (
     if exist "%CARMAKER_DIR%\*" (
         echo %OK%+%NC% 从环境变量 CARMAKER_DIR 找到: %CARMAKER_DIR%
         for /f "delims=" %%d in ('dir "%CARMAKER_DIR%\win64-*" /b /o-n 2^>nul') do (
-            call :find_python "%CARMAKER_DIR%\%%d"
-            if defined CM_PYTHON goto :found_python
+            call :find_python_dir "%CARMAKER_DIR%\%%d"
         )
     )
 )
@@ -65,8 +68,7 @@ set "SEARCH_ROOTS=C:\IPG\carmaker D:\IPG\carmaker C:\IPG D:\IPG C:\CarMaker D:\C
 for %%r in (%SEARCH_ROOTS%) do (
     if exist "%%r\*" (
         for /f "delims=" %%d in ('dir "%%r\win64-*" /b /o-n 2^>nul') do (
-            call :find_python "%%r\%%d"
-            if defined CM_PYTHON goto :found_python
+            call :find_python_dir "%%r\%%d"
         )
     )
 )
@@ -75,34 +77,24 @@ for %%r in (%SEARCH_ROOTS%) do (
 for /f "skip=2 tokens=2,*" %%a in ('reg query "HKLM\SOFTWARE\IPG\CarMaker" /s /v InstallPath 2^>nul') do (
     if exist "%%b\*" (
         for /f "delims=" %%d in ('dir "%%b\win64-*" /b /o-n 2^>nul') do (
-            call :find_python "%%b\%%d"
-            if defined CM_PYTHON goto :found_python
+            call :find_python_dir "%%b\%%d"
         )
     )
 )
 
-:: 从 CarMaker Python 目录提取版本号（如 python3.9 → 3.9）
-set "CM_PY_VER=3.10"
 if defined CM_PYTHON_DIR (
-    for %%v in (9 10 11 12) do (
-        echo !CM_PYTHON_DIR! | findstr /c:"python3.%%v" >nul 2>&1
-        if not errorlevel 1 set "CM_PY_VER=3.%%v"
-        echo !CM_PYTHON_DIR! | findstr /c:"python3%%v" >nul 2>&1
-        if not errorlevel 1 set "CM_PY_VER=3.%%v"
-    )
+    echo %OK%+%NC% CarMaker Python 目录: !CM_PYTHON_DIR!
+) else (
+    echo %WARN%~%NC% 未找到 CarMaker 安装
 )
 
-:: 未找到 CarMaker Python → 用 uv 安装独立 Python
-if defined _CM_ALL_VERSIONS (
-    echo %WARN%~%NC% 找到 CarMaker 版本: !_CM_ALL_VERSIONS!，但均无独立 Python 解释器
-    call :log 找到 CarMaker 版本: !_CM_ALL_VERSIONS!，均无 Python 解释器
-)
-if defined CM_PYTHON_DIR (
-    echo %OK%^|%NC% CarMaker Python 目录: !CM_PYTHON_DIR! (检测到版本 !CM_PY_VER!)
-)
-
-echo %INFO%*%NC% 正在通过 uv 安装独立 Python !CM_PY_VER!...
 echo.
+echo %INFO%*%NC% 目标 Python 版本: !CM_PY_VER!
+echo.
+
+:: ========================================
+:: Step 2: 安装 Python 并创建虚拟环境
+:: ========================================
 set "UV_DIR=%TEMP%\uv_%RANDOM%"
 set "UV_EXE=%UV_DIR%\uv.exe"
 mkdir "%UV_DIR%" 2>nul
@@ -129,47 +121,13 @@ if !ERRORLEVEL! neq 0 (
 if !ERRORLEVEL! neq 0 (
     echo %ERR%!%NC% uv 下载失败，尝试通过 pip 安装 uv...
     call :log 尝试通过 pip 安装 uv
-    pip install uv -i https://pypi.tuna.tsinghua.edu.cn/simple >nul 2>&1
+    pip install uv >nul 2>&1
     if !ERRORLEVEL! equ 0 (
         echo %OK%^|%NC% 通过 pip 安装 uv 成功
         set "UV_EXE=uv"
         goto :uv_ready
     )
     echo %ERR%!%NC% uv 安装失败
-    call :log uv 安装失败
-    echo %WARN%~%NC% 正在尝试直接从清华镜像下载 Python 3.10...
-    call :log 尝试从清华镜像下载 Python 3.10
-    set "PYTHON_DIR=%TEMP%\cm_python_%RANDOM%"
-    mkdir "!PYTHON_DIR!" 2>nul
-    curl -sL --connect-timeout 20 "https://mirrors.tuna.tsinghua.edu.cn/python/3.10.11/python-3.10.11-amd64.exe" -o "!PYTHON_DIR!\python-installer.exe"
-    if !ERRORLEVEL! equ 0 (
-        echo %INFO%*%NC% 正在静默安装 Python 3.10...
-        "!PYTHON_DIR!\python-installer.exe" /quiet InstallAllUsers=0 PrependPath=0 Include_pip=1 TargetDir="!PYTHON_DIR!\python" >nul 2>&1
-        if exist "!PYTHON_DIR!\python\python.exe" (
-            echo %OK%^|%NC% Python 3.10 已安装至临时目录
-            set "CM_PYTHON=!PYTHON_DIR!\python\python.exe"
-            goto :found_python
-        )
-    )
-    :: uv 全部失败 → 最后尝试系统 Python
-    echo %WARN%~%NC% 下载安装 Python 失败，尝试使用系统 Python...
-    call :log 尝试使用系统 Python
-    where python >nul 2>nul
-    if !ERRORLEVEL! equ 0 (
-        for /f "delims=" %%p in ('where python') do (
-            "%%p" -c "import venv; print('ok')" >nul 2>&1
-            if !ERRORLEVEL! equ 0 (
-                set "CM_PYTHON=%%p"
-                goto :found_python
-            )
-        )
-    )
-    call :log 所有 Python 安装方式均失败
-    if defined _CM_ALL_VERSIONS (
-        echo   CarMaker 版本 !_CM_ALL_VERSIONS! 已找到，但均无 Python 解释器
-    )
-    echo 请手动安装 Python 3.9/3.10/3.11 后重试
-    echo   下载地址: https://www.python.org/downloads/
     pause
     exit /b 1
 )
@@ -183,11 +141,10 @@ if not exist "!UV_EXE!" (
 )
 
 :uv_ready
-:: 用 uv 安装 Python（与 CarMaker 匹配的版本）
 echo %INFO%*%NC% 正在安装 Python !CM_PY_VER!...
 "!UV_EXE!" python install !CM_PY_VER! >nul 2>&1
 if !ERRORLEVEL! neq 0 (
-    echo %ERR%!%NC% Python 安装失败
+    echo %ERR%!%NC% Python !CM_PY_VER! 安装失败
     call :log uv 安装 Python !CM_PY_VER! 失败
     pause
     exit /b 1
@@ -209,148 +166,33 @@ if !ERRORLEVEL! neq 0 (
     exit /b 1
 )
 echo %OK%^|%NC% 虚拟环境已创建
-
-:: 保存 uv 路径供后续使用
 set "_UV_EXE=!UV_EXE!"
+set "PIP=%VENV_DIR%\Scripts\pip.exe"
 set "CM_PYTHON=%VENV_DIR%\Scripts\python.exe"
 echo %OK%^|%NC% 使用 Python: !CM_PYTHON!
 "%CM_PYTHON%" --version
 echo.
-goto :install_deps
-pause
-exit /b 1
-
 
 :: ========================================
-:: 日志记录函数
+:: Step 3: 检查 CarMaker 兼容性
 :: ========================================
-:log
-echo [%DATE% %TIME%] %*
-exit /b 0
-
-:find_python
-set "CM_INSTALL=%~1"
-if not exist "%CM_INSTALL%" exit /b 0
-:: 保存第一个找到的 CarMaker 路径（最新版本）
-if not defined _CM_INSTALL_FIRST set "_CM_INSTALL_FIRST=%CM_INSTALL%"
-:: 收集所有找到的 CarMaker 版本
-for %%v in ("%~1") do if not defined _CM_ALL_VERSIONS (set "_CM_ALL_VERSIONS=%%~nxv") else (set "_CM_ALL_VERSIONS=!_CM_ALL_VERSIONS! %%~nxv")
-:: Record that CM was found, in case it has no Python
-for /f "delims=" %%v in ('dir "%CM_INSTALL%" /b /ad /o-n 2^>nul') do if not defined CM_PYTHON (
-    if "%%v"=="Python" (
-        set "_FOUND_CM_NO_PY=%CM_INSTALL%"
-        set "_CM_INSTALL_FIRST=%CM_INSTALL%"
-    )
-)
-:check_next_python
-
-:: 查找版本化目录（python3.10、python310 ...）
-if exist "%CM_INSTALL%\Python\" (
-    for /f "delims=" %%p in ('dir "%CM_INSTALL%\Python\python*" /b /ad 2^>nul') do (
-        if exist "%CM_INSTALL%\Python\%%p\python.exe" (
-            set "CM_PY=%CM_INSTALL%\Python\%%p\python.exe"
-            if not defined CM_PYTHON_DIR set "CM_PYTHON_DIR=%CM_INSTALL%\Python\%%p"
-            call :verify_cmapi
-            if defined CM_PYTHON exit /b 0
-        )
-    )
-    :: 尝试 Python 根目录
-    if not defined CM_PYTHON (
-        if exist "%CM_INSTALL%\Python\python.exe" (
-            set "CM_PY=%CM_INSTALL%\Python\python.exe"
-            if not defined CM_PYTHON_DIR set "CM_PYTHON_DIR=%CM_INSTALL%\Python"
-            call :verify_cmapi
-        )
-    )
-)
-exit /b 0
-
-:verify_cmapi
-set "PY_EXE=!CM_PY!"
-if "!PY_EXE!"=="" exit /b 0
-"!PY_EXE!" -c "import cmapi; print('ok')" >nul 2>&1
-if !ERRORLEVEL!==0 (
-    set "CM_PYTHON=!PY_EXE!"
-    echo %OK%+%NC% CarMaker Python: !PY_EXE! (cmapi 可用)
-) else (
-    set "CM_PYTHON=!PY_EXE!"
-    echo %OK%+%NC% CarMaker Python: !PY_EXE! (cmapi 不可用，后续将自动安装)
-)
-exit /b 0
-
-:found_python
-if "%CM_PYTHON%"=="" (
-    echo %ERR%!%NC% 未找到可用 Python
+echo %INFO%*%NC% 检查 CarMaker cmapi 兼容性...
+call :check_cm_compat
+if !ERRORLEVEL! neq 0 (
+    echo %ERR%!%NC% CarMaker 不兼容 Python !CM_PY_VER!
+    echo %INFO%^|%NC% 请在 setup.bat 中将 CM_PY_VER 改为兼容版本后重试
     pause
     exit /b 1
 )
-
-echo.
-echo %OK%^|%NC% 使用 Python: %CM_PYTHON%
-"%CM_PYTHON%" --version
-:: 提取版本号用于 whl 选择
-for /f "delims=" %%v in ('"%CM_PYTHON%" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"') do set "CM_PY_VER=%%v"
-call :log 使用 Python: %CM_PYTHON% (版本 !CM_PY_VER!)
+echo %OK%^|%NC% Python !CM_PY_VER! 兼容当前 CarMaker
 echo.
 
 :: ========================================
-:: Step 2: 创建虚拟环境
+:: Step 4: 安装依赖（支持增量更新）
 :: ========================================
-echo %INFO%*%NC% 步骤 2/4: 检查虚拟环境...
-call :log 步骤 2/4: 检查虚拟环境
+echo %INFO%*%NC% 步骤 4: 检查 Python 依赖...
+call :log 步骤 4: 检查 Python 依赖
 echo.
-
-set "VENV_NEEDS_CREATE=0"
-set "VENV_NEEDS_REPAIR=0"
-
-if not exist "%VENV_DIR%" (
-    echo %INFO%*%NC% 虚拟环境不存在，需要创建
-    set "VENV_NEEDS_CREATE=1"
-) else (
-    rem 检查 venv 是否有效
-    if not exist "%VENV_DIR%\Scripts\python.exe" (
-        echo %WARN%~%NC% 虚拟环境损坏（python.exe 缺失），需要重建
-        set "VENV_NEEDS_REPAIR=1"
-    ) else (
-        "%VENV_DIR%\Scripts\python.exe" -c "import venv; import pip" >nul 2>&1
-        if !ERRORLEVEL! neq 0 (
-            echo %WARN%~%NC% 虚拟环境损坏（核心模块缺失），需要重建
-            set "VENV_NEEDS_REPAIR=1"
-        ) else (
-            echo %OK%^|%NC% 虚拟环境有效，跳过创建
-            call :log 虚拟环境已存在且有效，跳过创建
-        )
-    )
-)
-
-if "!VENV_NEEDS_REPAIR!"=="1" (
-    echo %INFO%*%NC% 正在删除损坏的虚拟环境...
-    rmdir /s /q "%VENV_DIR%" 2>nul
-    set "VENV_NEEDS_CREATE=1"
-)
-
-if "!VENV_NEEDS_CREATE!"=="1" (
-    echo %INFO%*%NC% 正在创建虚拟环境...
-    "%CM_PYTHON%" -m venv "%VENV_DIR%"
-    if !ERRORLEVEL! neq 0 (
-        echo %ERR%!%NC% 虚拟环境创建失败
-        pause
-        exit /b 1
-    )
-    echo %OK%^|%NC% 虚拟环境已创建: !VENV_DIR!
-    call :log 虚拟环境已创建: !VENV_DIR!
-)
-echo.
-
-:install_deps
-:: ========================================
-:: Step 3: 安装依赖（支持增量更新）
-:: ========================================
-echo %INFO%*%NC% 步骤 3/4: 检查 Python 依赖...
-call :log 步骤 3/4: 检查 Python 依赖
-echo.
-
-set "PIP=%VENV_DIR%\Scripts\pip.exe"
 
 :: 检查 pip 是否可用
 if not exist "!PIP!" (
@@ -366,84 +208,74 @@ set "DEPS_MARKER=%VENV_DIR%\.deps_installed"
 if exist "!DEPS_MARKER!" (
     echo %OK%^|%NC% 依赖未变化，跳过安装
     call :log 依赖未变化，跳过安装
-    goto :install_cmapi
-)
-
-echo %INFO%*%NC% 首次安装依赖
-call :log 首次安装依赖
-
-:: 强制 pip 显示进度条
-set "PIP_PROGRESS_BAR=on"
-
-"%PIP%" config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple >nul 2>&1
-echo %OK%^|%NC% pip 镜像已配置（清华源）
-
-echo %INFO%*%NC% 正在升级 pip...
-"%PIP%" install --progress-bar on --upgrade pip
-if !ERRORLEVEL! equ 0 (
-    echo %OK%^|%NC% pip 已升级
 ) else (
-    echo %WARN%~%NC% pip 升级跳过
-)
-
-if exist "%REQUIREMENTS%" (
-    echo %INFO%*%NC% 正在增量安装依赖...
-    for /f "usebackq delims=" %%p in ("%REQUIREMENTS%") do (
-        echo %INFO%^|%NC% 安装 %%p ...
-        "%PIP%" install --progress-bar on %%p
-        if !ERRORLEVEL! neq 0 (
-            echo %WARN%~%NC% %%p 安装失败，跳过
+    echo %INFO%*%NC% 首次安装依赖
+    call :log 首次安装依赖
+    set "PIP_PROGRESS_BAR=on"
+    "%PIP%" config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple >nul 2>&1
+    echo %OK%^|%NC% pip 镜像已配置（清华源）
+    echo %INFO%*%NC% 正在升级 pip...
+    "%PIP%" install --progress-bar on --upgrade pip
+    if !ERRORLEVEL! equ 0 ( echo %OK%^|%NC% pip 已升级 ) else ( echo %WARN%~%NC% pip 升级跳过 )
+    if exist "%REQUIREMENTS%" (
+        echo %INFO%*%NC% 正在增量安装依赖...
+        for /f "usebackq delims=" %%p in ("%REQUIREMENTS%") do (
+            echo %INFO%^|%NC% 安装 %%p ...
+            "%PIP%" install --progress-bar on %%p
+            if !ERRORLEVEL! neq 0 (
+                echo %WARN%~%NC% %%p 安装失败，跳过
+            )
         )
+    ) else (
+        echo %WARN%~%NC% 未找到 requirements.txt，安装核心依赖
+        "%PIP%" install --progress-bar on numpy opencv-python pillow pywin32 pywinauto PySide6 pyqtgraph
     )
-) else (
-    echo %WARN%~%NC% 未找到 requirements.txt，安装核心依赖
-    "%PIP%" install --progress-bar on numpy opencv-python pillow pywin32 pywinauto PySide6 pyqtgraph
+    copy /y "%REQUIREMENTS%" "!DEPS_MARKER!" >nul
+    echo %OK%^|%NC% 依赖安装完成
+    call :log Python 依赖安装完成
 )
 
-copy /y "%REQUIREMENTS%" "!DEPS_MARKER!" >nul
-echo %OK%^|%NC% 依赖安装完成
-call :log Python 依赖安装完成
-
-:install_cmapi
 echo.
 
 :: ========================================
-:: 安装 cmapi（从 CarMaker Python 目录）
+:: Step 5: 安装 cmapi 并配置 apoc 路径
 :: ========================================
 echo %INFO%*%NC% 正在安装 CarMaker cmapi 模块...
+call :log 步骤 5: 安装 cmapi / 配置 apoc
+echo.
+
 set "CMAPI_DONE="
-set "CM_PYTHON_DIR="
-:: 获取 venv 的 Python 标签（如 cp39、cp310）用于 whl 过滤
+
+:: 计算 Python 标签（cp39、cp310 等）
 set "PY_TAG="
-if exist "%VENV_DIR%\Scripts\python.exe" (
-    for /f "delims=" %%t in ('"%VENV_DIR%\Scripts\python.exe" -c "import sys; print(f'cp{sys.version_info.major}{sys.version_info.minor}')"') do set "PY_TAG=%%t"
-)
+for /f "delims=" %%t in ('"%CM_PYTHON%" -c "import sys; print(f'cp{sys.version_info.major}{sys.version_info.minor}')"') do set "PY_TAG=%%t"
 if not defined PY_TAG (
     for /f "delims=. tokens=1,2" %%a in ("!CM_PY_VER!") do set "PY_TAG=cp%%a%%b"
 )
-if defined PY_TAG echo %OK%^|%NC% Python 标签: !PY_TAG!
-:: 扫描所有 CarMaker 版本，安装匹配版本的 whl
+echo %OK%^|%NC% Python 标签: !PY_TAG!
+
+:: 扫描 CarMaker 安装目录，安装匹配版本的 cmapi whl
 for %%r in (C:\IPG\carmaker D:\IPG\carmaker C:\IPG D:\IPG) do (
     if exist "%%r" for /f "delims=" %%d in ('dir "%%r\win64-*" /b /o-n 2^>nul') do (
-        for /f "delims=" %%w in ('dir "%%r\%%d\Python\cmapi-*!PY_TAG!*.whl" /b /o-n 2^>nul') do (
-            if not defined CMAPI_DONE "%PIP%" install "%%r\%%d\Python\%%w" >nul 2>&1
-            if not defined CMAPI_DONE if !ERRORLEVEL! equ 0 (
-                echo %OK%^|%NC% cmapi ^(whl^) 已安装 && set "CMAPI_DONE=1"
+        if not defined CMAPI_DONE (
+            for /f "delims=" %%w in ('dir "%%r\%%d\Python\cmapi-*!PY_TAG!*.whl" /b /o-n 2^>nul') do (
+                "%PIP%" install "%%r\%%d\Python\%%w" >nul 2>&1
+                if !ERRORLEVEL! equ 0 (
+                    echo %OK%^|%NC% cmapi ^(whl^) 已安装
+                    set "CMAPI_DONE=1"
+                )
             )
         )
-        for /f "delims=" %%v in ('dir "%%r\%%d\Python\python*" /b /ad /o-n 2^>nul') do (
-            if not defined CM_PYTHON_DIR (
+        :: 记录 CM_PYTHON_DIR（用于 apoc .pth）
+        if not defined CM_PYTHON_DIR (
+            for /f "delims=" %%v in ('dir "%%r\%%d\Python\python*" /b /ad /o-n 2^>nul') do (
                 set "CM_PYTHON_DIR=%%r\%%d\Python\%%v"
-            )
-            if not defined CMAPI_DONE if exist "%%r\%%d\Python\%%v\cmapi" (
-                set "CM_PYTHON_DIR=%%r\%%d\Python\%%v"
-                echo %OK%^|%NC% cmapi ^(directory^) 已配置 && set "CMAPI_DONE=1"
             )
         )
     )
 )
-:: 保留 cmapi whl 安装的 .pth（指向 build 目录，包含编译扩展）
-:: 添加 CarMaker Python 路径到 .pth，让 Python 能找到 apoc
+
+:: 配置 apoc 路径
 echo %INFO%*%NC% 配置 apoc 模块路径...
 if defined CM_PYTHON_DIR (
     >"%VENV_DIR%\Lib\site-packages\zzz_apoc_path.pth" echo !CM_PYTHON_DIR!
@@ -453,16 +285,16 @@ if defined CM_PYTHON_DIR (
     )
     echo %OK%^|%NC% CarMaker Python 路径已添加到 .pth
 ) else (
-    echo %WARN%~%NC% CM_PYTHON_DIR 为空，跳过 apoc .pth 配置
+    echo %WARN%~%NC% 未找到 CarMaker Python 目录，跳过 apoc .pth 配置
 )
-if not defined CMAPI_DONE echo %WARN%~%NC% 未找到 cmapi 模块（不影响核心功能，但 CarMaker 联调不可用）
+if not defined CMAPI_DONE echo %WARN%~%NC% 未找到 cmapi whl（不影响核心功能，但 CarMaker 联调不可用）
 call :log cmapi 模块安装状态: !CMAPI_DONE!
 
 :: ========================================
-:: Step 4: 生成 run.bat
+:: Step 6: 生成 run.bat
 :: ========================================
-echo %INFO%*%NC% 步骤 4/4: 生成启动脚本...
-call :log 步骤 4/4: 生成启动脚本
+echo %INFO%*%NC% 步骤 6: 生成启动脚本...
+call :log 步骤 6: 生成启动脚本
 
 set "RUN_BAT=%CD%\run.bat"
 (
@@ -520,4 +352,72 @@ if exist "!RUN_BAT!" (
     call :log === 环境搭建完成，但 run.bat 未生成 ===
 )
 pause
+exit /b 0
+
+:: ========================================
+:: 辅助函数
+:: ========================================
+
+:log
+echo [%DATE% %TIME%] %*
+exit /b 0
+
+:find_python_dir
+set "CM_INSTALL=%~1"
+if not exist "%CM_INSTALL%" exit /b 0
+if not defined CM_PYTHON_DIR (
+    if exist "%CM_INSTALL%\Python" (
+        for /f "delims=" %%p in ('dir "%CM_INSTALL%\Python\python*" /b /ad 2^>nul') do (
+            set "CM_PYTHON_DIR=%CM_INSTALL%\Python\%%p"
+            exit /b 0
+        )
+        :: Python 根目录（无版本子目录）
+        if exist "%CM_INSTALL%\Python" (
+            set "CM_PYTHON_DIR=%CM_INSTALL%\Python"
+        )
+    )
+)
+exit /b 0
+
+:check_cm_compat
+setlocal
+set "TAG=cp%CM_PY_VER:.=%"
+set "COMPATIBLE=0"
+set "VERSIONS="
+
+for %%r in (C:\IPG\carmaker D:\IPG\carmaker C:\IPG D:\IPG) do (
+    if exist "%%r" for /f "delims=" %%d in ('dir "%%r\win64-*" /b /o-n 2^>nul') do (
+        if exist "%%r\%%d\Python" (
+            :: 从目录名提取版本（python3.9 → cp39, python310 → cp310）
+            for /f "delims=" %%v in ('dir "%%r\%%d\Python\python*" /b /ad 2^>nul') do (
+                set "DIRVER=%%v"
+                set "DIRVER=!DIRVER:python=!"
+                set "DIRVER=!DIRVER:.=!"
+                if not defined VERSIONS (set "VERSIONS=%%v") else (set "VERSIONS=!VERSIONS! %%v")
+                if "!TAG!"=="cp!DIRVER!" set "COMPATIBLE=1"
+            )
+            :: 从 whl 文件提取版本
+            for /f "delims=" %%w in ('dir "%%r\%%d\Python\cmapi-*.whl" /b /o-n 2^>nul') do (
+                for /f "delims=- tokens=3-5" %%a in ("%%~nw") do (
+                    if not defined VERSIONS (set "VERSIONS=%%a") else (set "VERSIONS=!VERSIONS! %%a")
+                    if "%%a"=="!TAG!" set "COMPATIBLE=1"
+                    if "%%b"=="abi3" if "!COMPATIBLE!"=="0" (
+                        "%VENV_DIR%\Scripts\python.exe" -c "import sys; t='!CM_PY_VER!'; mj,mn=map(int,t.split('.')); target=mj*100+mn; raw=int('%%a'[2:]); cv=(raw//10)*100+(raw%10) if raw<100 else raw; sys.exit(0 if target>=cv else 1)"
+                        if !ERRORLEVEL! equ 0 set "COMPATIBLE=1"
+                    )
+                )
+            )
+        )
+    )
+)
+
+if "!COMPATIBLE!"=="0" (
+    echo %ERR%!%NC% CarMaker 不支持 Python !CM_PY_VER!
+    if defined VERSIONS (
+        echo %INFO%^|%NC% 支持的版本: !VERSIONS!
+    )
+    endlocal
+    exit /b 1
+)
+endlocal
 exit /b 0

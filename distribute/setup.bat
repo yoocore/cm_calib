@@ -2,17 +2,15 @@
 chcp 65001 >nul
 setlocal enabledelayedexpansion
 
-:: 全量输出捕获，覆盖旧日志
+:: 全量输出捕获（Tee-Object），时间戳避免文件锁
 if not defined TEE_ACTIVE (
     set "TEE_ACTIVE=1"
-    set "TEE_LOG_FILE=%~dp0setup.log"
+    :: 清理旧日志
+    del /f /q "%~dp0setup_*.log" >nul 2>&1
+    for /f %%t in ('powershell -NoProfile "Get-Date -Format 'yyyyMMdd_HHmmss'"') do set "TS=%%t"
+    set "TEE_LOG_FILE=%~dp0setup_!TS!.log"
     set "TEE_BAT_PATH=%~f0"
-    cmd /c "!TEE_BAT_PATH!" > "!TEE_LOG_FILE!" 2>&1
-    if not exist "!TEE_LOG_FILE!" (
-        echo [ERROR] Log file was not created.
-    ) else (
-        for /f "delims=" %%L in ('type "!TEE_LOG_FILE!"') do echo %%L
-    )
+    powershell -NoProfile "$env:TEE_ACTIVE='1'; cmd /c '!TEE_BAT_PATH!' 2>&1 | Tee-Object -FilePath '!TEE_LOG_FILE!'"
     echo.
     echo Log saved to: !TEE_LOG_FILE!
     pause

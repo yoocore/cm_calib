@@ -12,6 +12,9 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 
+rem Add CarMaker Python path for cmapi/apoc
+set "PYTHONPATH=D:\IPG\carmaker\win64-14.1\Python\python3.9;%PYTHONPATH%"
+
 python "%ROOT_DIR%\src\entry\launch_gui.py" %*
 if %ERRORLEVEL% neq 0 (
     echo [错误] 程序异常退出，代码: %ERRORLEVEL%

@@ -3,48 +3,76 @@
 ========================================
 
 [36m*[0m 正在检测 CarMaker 安装位置...
-[周日 2026/06/28 17:31:15.85] 步骤 1/4: 查找 Python
+[周日 2026/06/28 18:21:59.12] 步骤 1/4: 查找 Python
 
 [33m~[0m 找到 CarMaker 版本: win64-15.1 win64-14.1 win64-13.1 win64-12.0，但均无独立 Python 解释器
-'CarMaker' is not recognized as an internal or external command,
-operable program or batch file.
+[周日 2026/06/28 18:21:59.33] 找到 CarMaker 版本: win64-15.1 win64-14.1 win64-13.1 win64-12.0，均无 Python 解释器
 [36m*[0m 正在通过 uv 安装独立 Python 3.10...
 
 [32m|[0m 使用本地 uv.exe
 [36m*[0m 正在安装 Python 3.10...
 [32m|[0m Python 3.10 已安装
-'�过' is not recognized as an internal or external command,
-operable program or batch file.
-[33m~[0m 移除旧的虚拟环境...
+[周日 2026/06/28 18:22:00.17] 通过 uv 安装 Python 3.10 完成
 [36m*[0m 正在创建虚拟环境（Python 3.10）...
 [32m|[0m 虚拟环境已创建
 [32m|[0m 使用 Python: E:\Coding\VibeCoding\cm_calib\distribute\.venv\Scripts\python.exe
 Python 3.10.20
 
 [36m*[0m 步骤 3/4: 检查 Python 依赖...
-[周日 2026/06/28 17:31:19.54] 步骤 3/4: 检查 Python 依赖
+[周日 2026/06/28 18:22:01.36] 步骤 3/4: 检查 Python 依赖
 
 [36m*[0m 首次安装依赖
-[周日 2026/06/28 17:31:19.55] 首次安装依赖
+[周日 2026/06/28 18:22:01.37] 首次安装依赖
 [32m|[0m pip 镜像已配置（清华源）
 [36m*[0m 正在升级 pip...
+Looking in indexes: https://pypi.tuna.tsinghua.edu.cn/simple
+Requirement already satisfied: pip in .\distribute\.venv\lib\site-packages (26.1.2)
 [32m|[0m pip 已升级
 [33m~[0m 未找到 requirements.txt，安装核心依赖
+Looking in indexes: https://pypi.tuna.tsinghua.edu.cn/simple
+Collecting numpy
+  Using cached numpy-2.2.6-cp310-cp310-win_amd64.whl (12.9 MB)
+Collecting opencv-python
+  Using cached opencv_python-4.13.0.92-cp37-abi3-win_amd64.whl (40.2 MB)
+Collecting pillow
+  Using cached pillow-12.2.0-cp310-cp310-win_amd64.whl (7.1 MB)
+Collecting pywin32
+  Using cached pywin32-312-cp310-cp310-win_amd64.whl (6.9 MB)
+Collecting pywinauto
+  Using cached pywinauto-0.6.9-py2.py3-none-any.whl (363 kB)
+Collecting PySide6
+  Using cached pyside6-6.11.1-cp310-abi3-win_amd64.whl (578 kB)
+Collecting pyqtgraph
+  Using cached pyqtgraph-0.14.0-py3-none-any.whl (1.9 MB)
+Collecting six (from pywinauto)
+  Using cached six-1.17.0-py2.py3-none-any.whl (11 kB)
+Collecting comtypes (from pywinauto)
+  Using cached comtypes-1.4.16-py3-none-any.whl (296 kB)
+Collecting shiboken6==6.11.1 (from PySide6)
+  Using cached shiboken6-6.11.1-cp310-abi3-win_amd64.whl (1.2 MB)
+Collecting PySide6_Essentials==6.11.1 (from PySide6)
+  Using cached pyside6_essentials-6.11.1-cp310-abi3-win_amd64.whl (77.5 MB)
+Collecting PySide6_Addons==6.11.1 (from PySide6)
+  Using cached pyside6_addons-6.11.1-cp310-abi3-win_amd64.whl (168.8 MB)
+Collecting tomli>=2.0.1 (from PySide6)
+  Using cached tomli-2.4.1-py3-none-any.whl (14 kB)
+Collecting colorama (from pyqtgraph)
+  Using cached colorama-0.4.6-py2.py3-none-any.whl (25 kB)
+Installing collected packages: tomli, six, shiboken6, pywin32, pillow, numpy, comtypes, colorama, pywinauto, PySide6_Essentials, pyqtgraph, opencv-python, PySide6_Addons, PySide6
+
+Successfully installed PySide6-6.11.1 PySide6_Addons-6.11.1 PySide6_Essentials-6.11.1 colorama-0.4.6 comtypes-1.4.16 numpy-2.2.6 opencv-python-4.13.0.92 pillow-12.2.0 pyqtgraph-0.14.0 pywin32-312 pywinauto-0.6.9 shiboken6-6.11.1 six-1.17.0 tomli-2.4.1
 [32m|[0m 依赖安装完成
-[周日 2026/06/28 17:32:06.67] Python 依赖安装完成
+[周日 2026/06/28 18:22:54.44] Python 依赖安装完成
 
 [36m*[0m 正在安装 CarMaker cmapi 模块...
 [32m|[0m cmapi (directory) 已配置 
-[周日 2026/06/28 17:32:06.72] cmapi 模块安装状态: 1
+[周日 2026/06/28 18:22:54.48] cmapi 模块安装状态: 1
 
 [36m*[0m 步骤 4/4: 生成启动脚本...
-[周日 2026/06/28 17:32:06.72] 步骤 4/4: 生成启动脚本
+[周日 2026/06/28 18:22:54.49] 步骤 4/4: 生成启动脚本
 [32m|[0m 启动脚本已生成: run.bat
-[周日 2026/06/28 17:32:06.73] 启动脚本已生成: run.bat
+[周日 2026/06/28 18:22:54.49] 启动脚本已生成: run.bat
 
-[36m*[0m 是否创建桌面快捷方式？(Y/N)
-[周日 2026/06/28 17:32:06.73] 步骤 5/5: 桌面快捷方式
-[36m-[0m 跳过桌面快捷方式
 [32m|[0m 临时文件已清理
 
 ========================================
@@ -59,5 +87,5 @@ Python 3.10.20
 
 详细日志已保存至: E:\Coding\VibeCoding\cm_calib\distribute\setup.log
 
-[周日 2026/06/28 17:32:06.77] === 环境搭建完成 === (run.bat 已生成)
+[周日 2026/06/28 18:22:54.52] === 环境搭建完成 === (run.bat 已生成)
 Press any key to continue . . . 

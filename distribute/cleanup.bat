@@ -2,13 +2,13 @@
 chcp 65001 >nul
 setlocal enabledelayedexpansion
 
-:: 全量输出捕获，覆盖旧日志
+:: 全量输出捕获（Tee-Object）
 if not defined TEE_ACTIVE (
     set "TEE_ACTIVE=1"
-    set "TEE_LOG_FILE=%~dp0cleanup.log"
+    for /f %%t in ('powershell -NoProfile "Get-Date -Format 'yyyyMMdd_HHmmss'"') do set "TS=%%t"
+    set "TEE_LOG_FILE=%~dp0cleanup_!TS!.log"
     set "TEE_BAT_PATH=%~f0"
-    call "!TEE_BAT_PATH!" > "!TEE_LOG_FILE!" 2>&1
-    type "!TEE_LOG_FILE!"
+    powershell -NoProfile "$env:TEE_ACTIVE='1'; cmd /c '!TEE_BAT_PATH!' 2>&1 | Tee-Object -FilePath '!TEE_LOG_FILE!'"
     echo.
     echo Log saved to: !TEE_LOG_FILE!
     pause

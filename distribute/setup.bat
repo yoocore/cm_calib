@@ -172,15 +172,11 @@ if not exist "!UV_EXE!" (
 :: 用 uv 安装 Python（扫描 CarMaker Python 版本）
 echo %INFO%*%NC% 正在检测 CarMaker Python 版本...
 set "CM_PY_VER=3.10"
-for /f "delims=" %%p in ('dir /b /ad /o-n D:\IPG\carmaker\win64-*\Python\python* C:\IPG\carmaker\win64-*\Python\python* 2^>nul') do (
-    set "TMP=%%~nxp"
-    set "CM_PY_VER=!TMP:python=!"
-    goto :py_ver_found
-)
+for %%r in (D:\IPG\carmaker C:\IPG\carmaker D:\IPG C:\IPG) do if exist "%%r" for /f "delims=" %%d in ('dir /b /ad /o-n "%%r\win64-*" 2^>nul') do for /f "delims=" %%p in ('dir /b /ad /o-n "%%r\%%d\Python\python*" 2^>nul') do set "TMP=%%p" & set "CM_PY_VER=!TMP:python=!" & goto :py_ver_found
 :py_ver_found
 echo %OK%^|%NC% 使用 Python !CM_PY_VER!
 echo %INFO%*%NC% 正在安装 Python !CM_PY_VER!...
-"!UV_EXE!" python install !CM_PY_VER! >nul 2>&1
+"!UV_EXE!" python install --reinstall !CM_PY_VER! >nul 2>&1
 if !ERRORLEVEL! neq 0 (
     echo %ERR%!%NC% Python 安装失败
     call :log uv 安装 Python !CM_PY_VER! 失败
@@ -196,7 +192,7 @@ if exist "%VENV_DIR%" (
     rmdir /s /q "%VENV_DIR%" 2>nul
 )
 echo %INFO%*%NC% 正在创建虚拟环境（Python !CM_PY_VER!）...
-"!UV_EXE!" venv --python !CM_PY_VER! --no-seed "%VENV_DIR%" 2>&1
+"!UV_EXE!" venv --python !CM_PY_VER! "%VENV_DIR%" 2>&1
 if !ERRORLEVEL! neq 0 (
     echo %ERR%!%NC% 虚拟环境创建失败
     call :log uv 虚拟环境创建失败

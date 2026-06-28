@@ -416,10 +416,16 @@ for %%r in (C:\IPG\carmaker D:\IPG\carmaker C:\IPG D:\IPG) do (
         )
     )
 )
-:: 清理 whl 安装的自带 .pth 文件（可能指向 build 目录）
+:: 找到并删除 cmapi whl 安装时带入的 .pth 文件（指向 build 目录而非 site-packages）
+echo %INFO%*%NC% 检查 cmapi .pth 文件...
 if exist "%VENV_DIR%\Lib\site-packages" (
-    del /f /q "%VENV_DIR%\Lib\site-packages\cmapi*.pth" 2>nul
-    del /f /q "%VENV_DIR%\Lib\site-packages\__cmapi*.pth" 2>nul
+    for %%f in ("%VENV_DIR%\Lib\site-packages\*.pth") do (
+        findstr /m "out-cmapi" "%%f" >nul 2>&1
+        if !ERRORLEVEL! equ 0 (
+            del "%%f"
+            echo %WARN%~%NC% 已删除错误的 .pth: %%~nxf
+        )
+    )
 )
 :: 添加 CarMaker Python 路径到 .pth，让 Python 能找到 apoc
 if defined CM_PYTHON_DIR (
@@ -436,7 +442,7 @@ call :log cmapi 模块安装状态: !CMAPI_DONE!
 echo %INFO%*%NC% 步骤 4/4: 生成启动脚本...
 call :log 步骤 4/4: 生成启动脚本
 
-set "RUN_BAT=%SCRIPT_DIR%\run.bat"
+set "RUN_BAT=%CD%\run.bat"
 (
 echo @echo off
 echo chcp 65001 ^>nul

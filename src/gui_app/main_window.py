@@ -609,6 +609,7 @@ class MainWindow(QMainWindow):
                 "Calibration task started."
                 + (f" output_dir={output_dir}" if output_dir else "")
             )
+            self.output_panel.clear_results()
             for camera_name in self.state.selected_cameras:
                 self.output_panel.update_camera_result(CameraResult(camera=camera_name))
         elif event_name == "camera_prepare_started":

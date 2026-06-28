@@ -478,6 +478,13 @@ class OutputPanel(QGroupBox):
         if self.result_tree.currentItem() is None:
             self._refresh_log_row()
 
+    def clear_results(self) -> None:
+        """Remove all camera result cards and tree items."""
+        for card in self._result_cards.values():
+            card.deleteLater()
+        self._result_cards.clear()
+        self.result_tree.clear()
+
     def append_log(self, line: str, *, source: str | None = None) -> None:
         parsed_source, message = _normalize_log_source(source, line)
         if not message:

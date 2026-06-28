@@ -169,14 +169,22 @@ if not exist "!UV_EXE!" (
 )
 
 :uv_ready
-:: 用 uv 安装 Python（扫描 CarMaker Python 版本）
-echo %INFO%*%NC% 正在检测 CarMaker Python 版本...
-for %%r in (D:\IPG\carmaker C:\IPG\carmaker D:\IPG C:\IPG) do if exist "%%r" for /f "delims=" %%d in ('dir /b /ad /o-n "%%r\win64-*" 2^>nul') do for /f "delims=" %%p in ('dir /b /ad /o-n "%%r\%%d\Python\python*" 2^>nul') do set "CM_PY_VER=%%p" & goto :py_ver_found
-:py_ver_found
-if not defined CM_PY_VER set "CM_PY_VER=python3.9"
-:: Extract version number from python3.x
-set "TMP=!CM_PY_VER!"
-set "CM_PY_VER=!TMP:python=!"
+:: 用 uv 安装 Python（从 cmapi whl 解析版本）
+echo %INFO%*%NC% 正在检测 cmapi Python 版本...
+set "CM_PY_VER="
+:: 先找 cmapi whl 文件，从文件名取 Python 版本（cp39 -> 3.9）
+for %%r in (D:\IPG\carmaker C:\IPG\carmaker D:\IPG C:\IPG) do if exist "%%r" for /f "delims=" %%d in ('dir /b /ad /o-n "%%r\win64-*" 2^>nul') do for /f "delims=" %%w in ('dir /b /o-n "%%r\%%d\Python\cmapi-*.whl" 2^>nul') do for /f "tokens=2 delims=-" %%v in ("%%w") do set "CM_WHL_TAG=%%v"
+:: cmapi-1.0-cp39-cp39-win_amd64.whl -> tag=cp39 -> version=3.9
+if defined CM_WHL_TAG (
+    set "CM_PY_VER=!CM_WHL_TAG:cp=!"
+    set "CM_PY_VER=!CM_PY_VER:~0,1!.!CM_PY_VER:~1!"
+)
+if not defined CM_PY_VER (
+    :: Fallback: scan directory names
+    for %%r in (D:\IPG\carmaker C:\IPG\carmaker D:\IPG C:\IPG) do if exist "%%r" for /f "delims=" %%d in ('dir /b /ad /o-n "%%r\win64-*" 2^>nul') do for /f "delims=" %%p in ('dir /b /ad /o-n "%%r\%%d\Python\python*" 2^>nul') do set "TMP=%%p" & set "CM_PY_VER=!TMP:python=!" & goto :py_found
+)
+:py_found
+if not defined CM_PY_VER set "CM_PY_VER=3.9"
 echo %OK%^|%NC% 使用 Python !CM_PY_VER!
 echo %INFO%*%NC% 正在安装 Python !CM_PY_VER!...
 "!UV_EXE!" python install --reinstall !CM_PY_VER! >nul 2>&1

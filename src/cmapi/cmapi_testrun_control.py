@@ -62,14 +62,14 @@ def _resolve_default_cm_install() -> Path:
 
 DEFAULT_CM_INSTALL = _resolve_default_cm_install()
 DEFAULT_CONFIG_DIR = Path(__file__).resolve().parents[2] / "configs"
-CARMAKER_PROCESS_NAMES = ("CarMaker.win64.exe", "HIL.exe", "CM_Office.exe", "TM_Office.exe")
-RUNTIME_CARMAKER_PROCESS_NAMES = ("CarMaker.win64.exe", "CM_Office.exe", "TM_Office.exe", "HIL.exe")
+CARMAKER_PROCESS_NAMES = ("CarMaker.win64.exe", "HIL.exe", "CM_Office.exe")
+RUNTIME_CARMAKER_PROCESS_NAMES = ("CarMaker.win64.exe", "CM_Office.exe")
 DEFAULT_MOVIE_APPHOST = "kel"
 
 logger = logging.getLogger(__name__)
 PROCESS_ENUMERATION_COMMAND = r"""
 $procs = Get-CimInstance Win32_Process |
-    Where-Object { $_.Name -in @('CarMaker.win64.exe', 'HIL.exe', 'CM_Office.exe', 'TM_Office.exe', 'Movie.exe') } |
+    Where-Object { $_.Name -in @('CarMaker.win64.exe', 'HIL.exe', 'CM_Office.exe', 'Movie.exe') } |
     Select-Object ProcessId, Name, CommandLine
 if ($null -eq $procs) {
     '[]'
@@ -1395,16 +1395,11 @@ def bootstrap_testrun_for_movie_via_cmapi_sync(
     return resolved_pid, selected_name
 
 
-def resolve_carmaker_executable(cm_install: Path, maker_type: str = "carmaker") -> Path:
-    if maker_type == "truckmaker":
-        return require_file(
-            cm_install / "bin" / "TM_Office.exe",
-            f"TM_Office.exe for maker_type={maker_type}",
-        )
+def resolve_carmaker_executable(cm_install: Path) -> Path:
     preferred_hil = cm_install / "GUI" / "HIL.exe"
     if preferred_hil.exists():
         return preferred_hil
-    return require_file(cm_install / "bin" / "CM_Office.exe", "CM_Office executable")
+    return require_file(cm_install / "bin" / "CarMaker.win64.exe", "CarMaker executable")
 
 
 def wait_for_carmaker_tcleval_ready(
@@ -1868,18 +1863,9 @@ def wait_for_runtime_carmaker_pid(
         processes = list_carmaker_processes()
         last_summary = summarize_processes(processes)
         runtime_processes = list_runtime_carmaker_processes(processes)
-        if len(runtime_processes) >= 1:
+        if len(runtime_processes) == 1:
             running_project_root = probe_running_carmaker_projectdir(timeout_sec=1.0)
             if running_project_root is None or running_project_root == expected_project_root:
-                # Prefer HIL.exe or CM_Office.exe/TM_Office.exe as runtime process
-                # When multiple exist, return the one matching the expected project root
-                for proc in runtime_processes:
-                    proc_pid = int(proc["ProcessId"])
-                    proc_name = proc.get("Name", "")
-                    # Verify this process is for our expected project
-                    if running_project_root is None or running_project_root == expected_project_root:
-                        return proc_pid
-                # Fallback: return first runtime process
                 return int(runtime_processes[0]["ProcessId"])
         time.sleep(poll_interval_sec)
 
@@ -2165,7 +2151,7 @@ def wait_for_movie_scene_ready(
             camera_name = str(payload.get("camera_name", "") or "").strip()
             abraxas_menu_ready = str(payload.get("abraxas_menu_ready", "0") or "0") == "1"
             camera_scene_ready = bool(camera_name) and camera_name.casefold() != "default"
-            if width > 0 and height > 0 and abraxas_menu_ready and camera_scene_ready:
+            if width > 0 and height > 0 and abraxas_menu_ready:
                 payload["mode"] = "dde_execute_probe"
                 return payload
             last_detail = detail or "scene_not_ready"
@@ -2419,23 +2405,12 @@ def ensure_movie_camera_selected(
         'set _before_camera_state [expr {[winfo exists .camera] ? [wm state .camera] : "missing"}]',
         'set _before_lens_state [expr {[winfo exists .camera.cammoddlg] ? [wm state .camera.cammoddlg] : "missing"}]',
         'if {![info exists View(ev.view)]} {error "missing View(ev.view)"}',
+        'if {![info exists View(ev.view)]} {error "missing View(ev.view)"}',
         'set vno $View(ev.view)',
         'if {![winfo exists .camera] || ![winfo exists .camera.btn.set]} {',
         '    Camera::ShowSettingsDlg',
         '    update',
         '    update idletasks',
-        '}',
-        '# Wait for sensor to load in IPG-MOVIE (may take up to 30 seconds)',
-        'set _sensor_loaded 0',
-        'set _wait_count 0',
-        'while {!$_sensor_loaded && $_wait_count < 30} {',
-        '    if {[info exists Camera::sensor_list] && [llength $Camera::sensor_list] > 0} {',
-        '        set _sensor_loaded 1',
-        '    } else {',
-        '        after 1000',
-        '        update',
-        '        incr _wait_count',
-        '    }',
         '}',
         f'set target "{escaped_label}"',
         'Camera::Select $target $vno',

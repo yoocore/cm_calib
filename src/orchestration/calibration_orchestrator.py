@@ -109,13 +109,6 @@ def _parse_args() -> argparse.Namespace:
         help="CarMaker installation root.",
     )
     parser.add_argument(
-        "--maker-type",
-        type=str,
-        default="carmaker",
-        choices=["carmaker", "truckmaker"],
-        help="Product type to launch: carmaker or truckmaker.",
-    )
-    parser.add_argument(
         "--movie-apphost",
         default=cmctrl.DEFAULT_MOVIE_APPHOST,
         help="Apphost used by GUI IPG-MOVIE readiness probing.",
@@ -261,8 +254,8 @@ def _prepare_runtime_for_camera(
     existing_pids = cmctrl.list_carmaker_processes()
     if not existing_pids:
         # --- Step 1: Start CarMaker fresh ---
-        executable = cmctrl.resolve_carmaker_executable(args.cm_install.resolve(), args.maker_type)
-        print(f"Starting {args.maker_type.title()}: {executable} -projectdir {project_root}")
+        executable = cmctrl.resolve_carmaker_executable(args.cm_install.resolve())
+        print(f"Starting CarMaker: {executable} -projectdir {project_root}")
         subprocess.Popen(
             [str(executable), "-projectdir", str(project_root)],
             cwd=str(executable.parent),

@@ -236,7 +236,7 @@ def generate_html():
         }
 
         .item-image img {
-            width: 100%;
+            max-width: 100%;
             height: auto;
             border-radius: 12px;
             box-shadow: 0 10px 40px rgba(0,0,0,0.15);

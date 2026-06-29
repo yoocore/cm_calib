@@ -232,7 +232,8 @@ def generate_html():
 
         .item-image {
             flex: 1;
-            max-width: 600px;
+            min-width: 400px;
+            max-width: 800px;
         }
 
         .item-image img {

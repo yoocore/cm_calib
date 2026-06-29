@@ -16,7 +16,7 @@ def generate_html():
     # 定义文档结构
     sections = [
         {
-            "title": "工具介绍",
+            "title": "主要功能",
             "type": "intro",
             "features": [
                 "支持多种标定板类型和相机型号",

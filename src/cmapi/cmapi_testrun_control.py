@@ -468,6 +468,9 @@ def resolve_vehicle_path(project_root: Path, testrun_rel_path: Path) -> tuple[Pa
 
 
 def activate_single_vehicle_sensor(vehicle_path: Path, requested_sensor: str) -> dict[str, Any]:
+    print(f"[sensor-activate] Activating sensor: {requested_sensor}")
+    print(f"[sensor-activate] Vehicle file: {vehicle_path}")
+
     target_name = normalize_sensor_name(requested_sensor)
     text = vehicle_path.read_text(encoding="utf-8")
     lines = text.splitlines(keepends=True)
@@ -490,12 +493,20 @@ def activate_single_vehicle_sensor(vehicle_path: Path, requested_sensor: str) ->
         if active_match:
             active_line_indexes[active_match.group("index")] = line_index
 
+    print(f"[sensor-activate] Found sensors in vehicle file:")
+    for index, name in sensor_name_by_index.items():
+        active_status = "ACTIVE" if index in active_line_indexes and lines[active_line_indexes[index]].rstrip().endswith("1") else "inactive"
+        print(f"  Sensor.{index}: {name} ({active_status})")
+
     target_index = sensor_names.get(target_name.casefold())
     if target_index is None:
         available = ", ".join(sensor_name_by_index[index] for index in sorted(sensor_name_by_index, key=int))
+        print(f"[sensor-activate] ERROR: Sensor {requested_sensor!r} not found. Available: {available}")
         raise VehicleSensorActivationError(
             f"Sensor {requested_sensor!r} was not found in {vehicle_path.name}. Available sensors: {available}"
         )
+
+    print(f"[sensor-activate] Target sensor: {target_name} (index={target_index})")
 
     missing_active = [
         sensor_name_by_index[index]
@@ -527,14 +538,19 @@ def activate_single_vehicle_sensor(vehicle_path: Path, requested_sensor: str) ->
 
     if changed:
         vehicle_path.write_text("".join(lines), encoding="utf-8")
+        print(f"[sensor-activate] Vehicle file updated: activated sensor {target_name}")
+    else:
+        print(f"[sensor-activate] Vehicle file already has correct sensor active state")
 
-    return {
+    result = {
         "vehicle_path": str(vehicle_path),
         "selected_sensor_name": sensor_name_by_index[target_index],
         "selected_sensor_index": int(target_index),
         "ipgmovie_sensor_label": f"CAMERA_RSI-SENSOR Vhcl.{sensor_name_by_index[target_index]}",
         "changed": changed,
     }
+    print(f"[sensor-activate] Result: {result}")
+    return result
 
 
 def parse_args() -> argparse.Namespace:
@@ -1902,7 +1918,7 @@ def build_gui_movie_command(
     carmaker_pid: int,
 ) -> list[str]:
     movie_executable = require_file(cm_install / "GUI" / "Movie.exe", "IPG-MOVIE executable")
-    return [
+    command = [
         str(movie_executable),
         "-CMInstance",
         "0",
@@ -1917,6 +1933,15 @@ def build_gui_movie_command(
         "-cmgui",
         "CarMaker",
     ]
+    print(f"[movie-launch] Building IPG-MOVIE command:")
+    print(f"  Executable: {movie_executable}")
+    print(f"  CMInstance: 0")
+    print(f"  apphost: {movie_apphost}")
+    print(f"  apppid (CarMaker PID): {carmaker_pid}")
+    print(f"  projectdir: {project_root.resolve().as_posix()}")
+    print(f"  datapool: {cm_install.resolve().as_posix()}")
+    print(f"  Full command: {' '.join(command)}")
+    return command
 
 
 def wait_for_gui_movie_pid(
@@ -1924,14 +1949,22 @@ def wait_for_gui_movie_pid(
     timeout_sec: float = 15.0,
     poll_interval_sec: float = 0.25,
 ) -> int:
+    print(f"[movie-launch] Waiting for IPG-MOVIE to start (timeout={timeout_sec}s)...")
     deadline = time.monotonic() + timeout_sec
     last_summary = "none"
+    poll_count = 0
     while time.monotonic() < deadline:
         processes = list_gui_movie_processes()
         last_summary = summarize_processes(processes)
         new_processes = [proc for proc in processes if int(proc["ProcessId"]) not in existing_pids]
+        poll_count += 1
+        if poll_count % 4 == 0:  # Print every second
+            print(f"[movie-launch] Still waiting... found {len(new_processes)} new process(es), current processes: {last_summary}")
         if len(new_processes) == 1:
-            return int(new_processes[0]["ProcessId"])
+            pid = int(new_processes[0]["ProcessId"])
+            elapsed = time.monotonic() - (deadline - timeout_sec)
+            print(f"[movie-launch] IPG-MOVIE started successfully! PID={pid}, elapsed={elapsed:.2f}s")
+            return pid
         time.sleep(poll_interval_sec)
     raise RuntimeError(f"Timed out waiting for GUI IPG-MOVIE startup. Visible GUI Movie processes: {last_summary}")
 
@@ -2715,14 +2748,18 @@ async def start_or_reuse_movie(
     carmaker_pid: int,
     clean_existing_processes: bool,
 ) -> tuple[Optional[cmapi.IPGMovie], Optional[int], bool, str]:
+    print(f"[movie-launch] Checking for existing IPG-MOVIE instances...")
     existing_gui_movies = list_gui_movie_processes()
+    print(f"[movie-launch] Found {len(existing_gui_movies)} existing IPG-MOVIE instance(s)")
 
     if len(existing_gui_movies) == 1:
         pid = int(existing_gui_movies[0]["ProcessId"])
+        print(f"[movie-launch] Reusing existing IPG-MOVIE instance with PID {pid}")
         return None, pid, False, f"reused existing GUI IPG-MOVIE PID {pid}"
 
     if len(existing_gui_movies) > 1:
         if clean_existing_processes:
+            print(f"[movie-launch] Multiple IPG-MOVIE instances detected, cleaning up...")
             movie_reset = stop_movie_stack_via_movie_quit(
                 timeout_sec=DEFAULT_MOVIE_QUIT_TIMEOUT_SEC,
                 probe_name="cmapi_testrun_control_movie_quit_conflicting_gui",
@@ -2731,12 +2768,14 @@ async def start_or_reuse_movie(
                 f"mode={movie_reset.get('mode')} before_gui={movie_reset.get('before', {}).get('gui', [])} "
                 f"before_gpu={movie_reset.get('before', {}).get('gpu', [])}"
             )
+            print(f"[movie-launch] Cleanup complete: {summary}")
             movie_pid = await start_movie(cm_install, movie_apphost, project_root, carmaker_pid)
             return None, movie_pid, True, f"cleared conflicting GUI IPG-MOVIE processes: {summary}"
         raise RuntimeError(
             "Multiple GUI IPG-MOVIE instances are running. Re-run with cleanup enabled to reset them."
         )
 
+    print(f"[movie-launch] No existing IPG-MOVIE instance found, starting new instance...")
     movie_pid = await start_movie(cm_install, movie_apphost, project_root, carmaker_pid)
     return None, movie_pid, True, "started new GUI IPG-MOVIE instance"
 
@@ -2865,6 +2904,7 @@ async def main() -> None:
 
     sensor_activation_result: Optional[dict[str, Any]] = None
     if args.camera_sensor:
+        print(f"[main] Sensor activation requested: {args.camera_sensor}")
         sensor_activation_result = activate_single_vehicle_sensor(vehicle_path, args.camera_sensor)
 
     variation = load_variation(project_root, testrun_rel_path)
@@ -2876,21 +2916,33 @@ async def main() -> None:
     carmaker_pid: Optional[int] = None
     movie_pid: Optional[int] = None
 
+    print(f"\n[main] ====== INITIALIZATION ======")
     print(f"Project root: {project_root}")
+    print(f"Project root exists: {project_root.exists()}")
     print(f"CarMaker install: {cm_install}")
+    print(f"CarMaker install exists: {cm_install.exists()}")
     print(f"TestRun: Data/TestRun/{testrun_rel_path.as_posix()}")
     print(f"Vehicle: Data/Vehicle/{vehicle_key}")
+    print(f"Vehicle path: {vehicle_path}")
+    print(f"Vehicle path exists: {vehicle_path.exists()}")
+    print(f"Open Movie: {args.open_movie}")
+    print(f"Movie apphost: {args.movie_apphost}")
+    print(f"Clean existing processes: {args.clean_existing_processes}")
+
     if sensor_activation_result is not None:
-        print(
-            "Activated vehicle sensor: "
-            f"{sensor_activation_result['selected_sensor_name']} "
-            f"(Sensor.{sensor_activation_result['selected_sensor_index']}.Active = 1)"
-        )
+        print(f"\n[main] ====== SENSOR ACTIVATION RESULT ======")
+        print(f"Activated vehicle sensor: "
+              f"{sensor_activation_result['selected_sensor_name']} "
+              f"(Sensor.{sensor_activation_result['selected_sensor_index']}.Active = 1)")
         print(f"IPG-MOVIE sensor label: {sensor_activation_result['ipgmovie_sensor_label']}")
         if sensor_activation_result["changed"]:
             print(f"Vehicle file updated in place: {sensor_activation_result['vehicle_path']}")
         else:
             print("Vehicle file already matched the requested single-sensor state")
+    else:
+        print(f"\n[main] No sensor activation requested")
+
+    print(f"\n[main] ====== STARTING CARMAKER ======")
 
     try:
         if args.open_movie:
@@ -2907,16 +2959,21 @@ async def main() -> None:
                 project_root,
                 args.clean_existing_processes,
             )
+        print(f"\n[main] ====== CARMAKER STATUS ======")
         print(f"CarMaker action: {carmaker_action}")
         if carmaker_pid is not None:
             print(f"CarMaker PID: {carmaker_pid}")
+        else:
+            print(f"CarMaker PID: <not available>")
 
         selected_testrun_name = sync_gui_testrun_selection(project_root, testrun_rel_path)
         print(f"CarMaker GUI TestRun selected: {selected_testrun_name}")
 
         await asyncio.sleep(args.startup_settle_sec)
+        print(f"[main] Startup settle completed ({args.startup_settle_sec}s)")
 
         if args.open_movie:
+            print(f"\n[main] ====== BOOTSTRAP RUN ======")
             print("Bootstrap run: starting TestRun before IPG-MOVIE")
             if args.testrun_control_mode == "tcl":
                 carmaker, carmaker_pid, bootstrapped_testrun_name = await bootstrap_testrun_for_movie_via_cmapi(
@@ -2943,6 +3000,7 @@ async def main() -> None:
                 f"for TestRun {bootstrapped_testrun_name}"
             )
 
+            print(f"\n[main] ====== STARTING IPG-MOVIE ======")
             movie, movie_pid, movie_owned, movie_action = await start_or_reuse_movie(
                 cm_install,
                 args.movie_apphost,
@@ -2950,9 +3008,12 @@ async def main() -> None:
                 carmaker_pid,
                 args.clean_existing_processes,
             )
+            print(f"\n[main] ====== IPG-MOVIE STATUS ======")
             print(f"IPG-MOVIE action: {movie_action}")
             if movie_pid is not None:
                 print(f"IPG-MOVIE PID: {movie_pid}")
+            else:
+                print(f"IPG-MOVIE PID: <not available>")
             movie_scene = wait_for_movie_scene_ready(
                 cm_install=cm_install,
                 movie_apphost=args.movie_apphost,

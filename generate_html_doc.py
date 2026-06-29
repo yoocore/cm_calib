@@ -2,6 +2,7 @@
 """生成标定工具HTML使用说明文档"""
 
 import base64
+import json
 from pathlib import Path
 
 def get_base64_image(image_path):
@@ -13,98 +14,12 @@ def generate_html():
     """生成包含图片的HTML文档"""
     pics_dir = Path("D:/Desktop/CalibTool_pics")
 
-    # 定义文档结构
-    sections = [
-        {
-            "title": "主要功能",
-            "type": "intro",
-            "features": [
-                "支持多种标定板类型和相机型号",
-                "实时显示标定进度和得分变化",
-                "自动记录历史数据，支持多次标定对比",
-                "集成多路径寻优、坐标下降、贝叶斯优化等算法",
-                "提供虚实重叠验证，直观评估标定效果",
-            ]
-        },
-        {
-            "title": "第一部分：界面概览",
-            "items": [
-                ("初始页面", {
-                    "description": "软件启动界面，整体布局介绍",
-                    "regions": [
-                        {"name": "菜单栏", "x": "0%", "y": "0%", "w": "100%", "h": "5%", "color": "#667eea"},
-                        {"name": "工具栏", "x": "0%", "y": "5%", "w": "100%", "h": "5%", "color": "#764ba2"},
-                        {"name": "项目配置区", "x": "0%", "y": "10%", "w": "30%", "h": "35%", "color": "#28a745"},
-                        {"name": "标定设置区", "x": "0%", "y": "45%", "w": "30%", "h": "25%", "color": "#ffc107"},
-                        {"name": "输出区", "x": "30%", "y": "10%", "w": "70%", "h": "60%", "color": "#dc3545"},
-                        {"name": "进度区", "x": "0%", "y": "70%", "w": "100%", "h": "10%", "color": "#17a2b8"},
-                    ],
-                    "details": {
-                        "结构组成": [
-                            "菜单栏：包含文件、编辑、视图、帮助等常用菜单",
-                            "工具栏：快捷操作按钮，如打开项目、保存、导出等",
-                            "项目配置区：配置相机参数、标定板类型和规格",
-                            "标定设置区：选择标定算法和调整优化参数",
-                            "输出区：实时显示标定进度、日志和结果",
-                            "进度区：可视化显示当前标定进度和耗时",
-                        ],
-                        "初始化流程": [
-                            "启动软件后自动进入初始界面",
-                            "根据项目需求配置相机和标定板参数",
-                            "设置标定算法和优化选项",
-                            "点击「开始标定」按钮启动流程",
-                        ],
-                    }
-                }),
-                ("cm配置区", {
-                    "description": "配置参数区域，包括相机参数、标定板规格等",
-                    "regions": [
-                        {"name": "相机型号", "x": "5%", "y": "5%", "w": "40%", "h": "20%", "color": "#667eea"},
-                        {"name": "分辨率", "x": "55%", "y": "5%", "w": "40%", "h": "20%", "color": "#764ba2"},
-                        {"name": "标定板类型", "x": "5%", "y": "30%", "w": "40%", "h": "20%", "color": "#28a745"},
-                        {"name": "标定板尺寸", "x": "55%", "y": "30%", "w": "40%", "h": "20%", "color": "#ffc107"},
-                        {"name": "网格数量", "x": "5%", "y": "55%", "w": "40%", "h": "20%", "color": "#dc3545"},
-                        {"name": "单元格大小", "x": "55%", "y": "55%", "w": "40%", "h": "20%", "color": "#17a2b8"},
-                    ],
-                    "details": {
-                        "参数说明": [
-                            "相机型号：支持多种工业相机和USB相机",
-                            "分辨率：设置图像采集的分辨率（宽×高）",
-                            "标定板类型：支持棋盘格、圆形阵列、ChArUco等",
-                            "标定板尺寸：标定板的实际物理尺寸（mm）",
-                            "网格数量：标定板的行列数",
-                            "单元格大小：每个网格的实际尺寸（mm）",
-                        ],
-                        "配置建议": [
-                            "确保相机参数与实际硬件匹配",
-                            "标定板尺寸需精确测量，误差应小于0.1mm",
-                            "网格数量影响标定精度，建议使用7×9或更大规格",
-                        ],
-                    }
-                }),
-                ("标定设置区", "标定算法和参数设置"),
-                ("输出区", "标定结果和日志输出显示"),
-                ("进度区", "标定进度实时显示"),
-            ]
-        },
-        {
-            "title": "第二部分：标定流程",
-            "items": [
-                ("标定开始", "启动标定过程的界面"),
-                ("标定进行", "标定执行中的状态展示"),
-            ]
-        },
-        {
-            "title": "第三部分：评分与验证",
-            "items": [
-                ("本轮得分趋势", "当前轮次标定效果的得分变化"),
-                ("历史得分趋势", "全部标定轮次的得分历史统计"),
-                ("得分", "标定得分汇总和指标展示"),
-                ("虚实重叠", "实际图像与虚拟图像的对比叠加，用于验证标定效果"),
-                ("标定完成", "标定流程完成后的最终结果界面"),
-            ]
-        }
-    ]
+    # 从配置文件读取文档结构
+    config_file = Path(__file__).parent / "doc_config.json"
+    with open(config_file, 'r', encoding='utf-8') as f:
+        config = json.load(f)
+
+    sections = config["sections"]
 
     html_content = """<!DOCTYPE html>
 <html lang="zh-CN">
@@ -548,7 +463,13 @@ def generate_html():
             html_content += f'            <div class="toc-section">\n'
             html_content += f'                <div class="toc-section-title">{section["title"]}</div>\n'
             html_content += f'                <ul>\n'
-            for item_name, _ in section["items"]:
+            for item_data in section["items"]:
+                if isinstance(item_data, tuple) and len(item_data) == 2:
+                    item_name, _ = item_data
+                elif isinstance(item_data, dict):
+                    item_name = item_data["name"]
+                else:
+                    continue
                 html_content += f'                    <li><a href="#{item_name}">{item_name}</a></li>\n'
             html_content += f'                </ul>\n'
             html_content += f'            </div>\n'

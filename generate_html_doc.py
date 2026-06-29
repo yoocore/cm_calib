@@ -416,11 +416,7 @@ def generate_html():
 
     # 生成目录
     for section in sections:
-        if section.get("type") == "intro":
-            html_content += f'            <div class="toc-section">\n'
-            html_content += f'                <div class="toc-section-title">{section["title"]}</div>\n'
-            html_content += f'            </div>\n'
-        else:
+        if section.get("type") != "intro":
             html_content += f'            <div class="toc-section">\n'
             html_content += f'                <div class="toc-section-title">{section["title"]}</div>\n'
             html_content += f'                <ul>\n'

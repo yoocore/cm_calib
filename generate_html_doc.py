@@ -269,7 +269,7 @@ def generate_html():
         }
 
         @media (max-width: 900px) {
-            .item {
+            .item:not(:first-child) {
                 flex-direction: column !important;
             }
             .item-image {

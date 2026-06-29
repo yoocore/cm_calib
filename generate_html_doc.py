@@ -117,6 +117,30 @@ def generate_html():
             gap: 8px;
         }
 
+        .toc-section {
+            margin-bottom: 15px;
+        }
+
+        .toc-section-title {
+            color: #667eea;
+            font-weight: 600;
+            font-size: 1.05em;
+            margin-bottom: 8px;
+            padding-left: 8px;
+            border-left: 3px solid #667eea;
+        }
+
+        .toc-section ul {
+            list-style: none;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+
+        .toc-section li {
+            flex: 0 0 auto;
+        }
+
         .toc a {
             color: #495057;
             text-decoration: none;
@@ -348,15 +372,19 @@ def generate_html():
 
         <div class="toc">
             <h2>📑 目录导航</h2>
-            <ul>
 """
 
     # 生成目录
     for section in sections:
+        html_content += f'            <div class="toc-section">\n'
+        html_content += f'                <div class="toc-section-title">{section["title"]}</div>\n'
+        html_content += f'                <ul>\n'
         for item_name, _ in section["items"]:
-            html_content += f'                <li><a href="#{item_name}">{item_name}</a></li>\n'
+            html_content += f'                    <li><a href="#{item_name}">{item_name}</a></li>\n'
+        html_content += f'                </ul>\n'
+        html_content += f'            </div>\n'
 
-    html_content += """            </ul>
+    html_content += """
         </div>
 """
 

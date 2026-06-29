@@ -197,11 +197,16 @@ def _build_explicit_parameter_config(param_cfg: dict, initial_value: float) -> d
 
 
 def _build_annotation_legend_lines(total_detail: TotalScoreDetail) -> List[str]:
+    """Build legend lines for annotation image.
+
+    Note: Only shows board IDs, not individual scores, to avoid confusing users
+    with different scoring standards (board score vs total weighted score).
+    """
     isolated_outlier_board_set = set(total_detail.isolated_outlier_boards)
     lines: List[str] = []
     for score in total_detail.board_scores:
         if score.compared:
-            line = f"{score.board_id}: {score.total_score:.3f}"
+            line = score.board_id
             if score.board_id in isolated_outlier_board_set:
                 line += " (excluded)"
         else:

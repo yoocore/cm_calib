@@ -20,7 +20,7 @@ def generate_html():
             "type": "intro",
             "features": [
                 "支持多种标定板类型和相机型号",
-                "集成张氏标定法、两步法、直接线性变换等多种标定算法",
+                "集成多路径寻优、坐标下降、贝叶斯优化等算法",
                 "实时显示标定进度和得分变化",
                 "提供虚实重叠验证，直观评估标定效果",
                 "自动记录历史数据，支持多次标定对比"
@@ -112,17 +112,19 @@ def generate_html():
 
         .intro-features ul {
             list-style: none;
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            display: flex;
+            flex-wrap: nowrap;
             gap: 12px;
         }
 
         .intro-features li {
+            flex: 0 0 auto;
             background: white;
             padding: 12px 20px;
             border-radius: 8px;
             border-left: 4px solid #667eea;
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            white-space: nowrap;
         }
 
         .toc {

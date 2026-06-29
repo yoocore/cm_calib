@@ -109,6 +109,13 @@ def _parse_args() -> argparse.Namespace:
         help="CarMaker installation root.",
     )
     parser.add_argument(
+        "--maker-type",
+        type=str,
+        default="carmaker",
+        choices=["carmaker", "truckmaker"],
+        help="Product type to launch: carmaker or truckmaker.",
+    )
+    parser.add_argument(
         "--movie-apphost",
         default=cmctrl.DEFAULT_MOVIE_APPHOST,
         help="Apphost used by GUI IPG-MOVIE readiness probing.",

@@ -174,6 +174,16 @@ def generate_html():
             align-items: flex-start;
         }
 
+        .item:first-child {
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .item:first-child .item-content {
+            width: 100%;
+            max-width: 800px;
+        }
+
         .item:nth-child(even) {
             flex-direction: row-reverse;
         }

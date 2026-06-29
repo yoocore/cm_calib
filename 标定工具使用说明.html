@@ -151,6 +151,16 @@
             align-items: flex-start;
         }
 
+        .item:first-child {
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .item:first-child .item-content {
+            width: 100%;
+            max-width: 800px;
+        }
+
         .item:nth-child(even) {
             flex-direction: row-reverse;
         }
@@ -420,6 +430,7 @@
                     <li>自动记录历史数据，支持多次标定对比</li>
                     <li>集成多路径寻优、坐标下降、贝叶斯优化等算法</li>
                     <li>提供虚实重叠验证，直观评估标定效果</li>
+                    <li>监控测试功能</li>
 
                 </ul>
             </div>
@@ -495,8 +506,8 @@
                         <div class="image-region" style="
                             left: 0%;
                             top: 0%;
-                            width: 30%;
-                            height: 45%;
+                            width: 27%;
+                            height: 57%;
                             border: 3px solid #28a745;
                             background: #28a74522;
                         ">
@@ -504,10 +515,10 @@
                         </div>
 
                         <div class="image-region" style="
-                            left: 0%;
-                            top: 45%;
-                            width: 30%;
-                            height: 30%;
+                            left: 28%;
+                            top: 0%;
+                            width: 20%;
+                            height: 57%;
                             border: 3px solid #ffc107;
                             background: #ffc10722;
                         ">
@@ -515,10 +526,10 @@
                         </div>
 
                         <div class="image-region" style="
-                            left: 30%;
+                            left: 48%;
                             top: 0%;
-                            width: 70%;
-                            height: 75%;
+                            width: 52%;
+                            height: 98%;
                             border: 3px solid #dc3545;
                             background: #dc354522;
                         ">
@@ -527,9 +538,9 @@
 
                         <div class="image-region" style="
                             left: 0%;
-                            top: 75%;
-                            width: 100%;
-                            height: 25%;
+                            top: 57%;
+                            width: 48%;
+                            height: 41%;
                             border: 3px solid #17a2b8;
                             background: #17a2b822;
                         ">

@@ -62,14 +62,14 @@ def _resolve_default_cm_install() -> Path:
 
 DEFAULT_CM_INSTALL = _resolve_default_cm_install()
 DEFAULT_CONFIG_DIR = Path(__file__).resolve().parents[2] / "configs"
-CARMAKER_PROCESS_NAMES = ("CarMaker.win64.exe", "HIL.exe", "CM_Office.exe")
-RUNTIME_CARMAKER_PROCESS_NAMES = ("CarMaker.win64.exe", "CM_Office.exe")
+CARMAKER_PROCESS_NAMES = ("CarMaker.win64.exe", "HIL.exe", "CM_Office.exe", "TruckMaker.win64.exe", "TM_Office.exe")
+RUNTIME_CARMAKER_PROCESS_NAMES = ("CarMaker.win64.exe", "CM_Office.exe", "TruckMaker.win64.exe", "TM_Office.exe")
 DEFAULT_MOVIE_APPHOST = "kel"
 
 logger = logging.getLogger(__name__)
 PROCESS_ENUMERATION_COMMAND = r"""
 $procs = Get-CimInstance Win32_Process |
-    Where-Object { $_.Name -in @('CarMaker.win64.exe', 'HIL.exe', 'CM_Office.exe', 'Movie.exe') } |
+    Where-Object { $_.Name -in @('CarMaker.win64.exe', 'HIL.exe', 'CM_Office.exe', 'TruckMaker.win64.exe', 'TM_Office.exe', 'Movie.exe') } |
     Select-Object ProcessId, Name, CommandLine
 if ($null -eq $procs) {
     '[]'
@@ -1395,11 +1395,16 @@ def bootstrap_testrun_for_movie_via_cmapi_sync(
     return resolved_pid, selected_name
 
 
-def resolve_carmaker_executable(cm_install: Path) -> Path:
+def resolve_carmaker_executable(cm_install: Path, maker_type: str = "carmaker") -> Path:
+    if maker_type == "truckmaker":
+        return require_file(
+            cm_install / "bin" / "TM_Office.exe",
+            f"TM_Office.exe for maker_type={maker_type}",
+        )
     preferred_hil = cm_install / "GUI" / "HIL.exe"
     if preferred_hil.exists():
         return preferred_hil
-    return require_file(cm_install / "bin" / "CarMaker.win64.exe", "CarMaker executable")
+    return require_file(cm_install / "bin" / "CM_Office.exe", "CM_Office executable")
 
 
 def wait_for_carmaker_tcleval_ready(
@@ -1863,9 +1868,17 @@ def wait_for_runtime_carmaker_pid(
         processes = list_carmaker_processes()
         last_summary = summarize_processes(processes)
         runtime_processes = list_runtime_carmaker_processes(processes)
-        if len(runtime_processes) == 1:
+        if len(runtime_processes) >= 1:
             running_project_root = probe_running_carmaker_projectdir(timeout_sec=1.0)
             if running_project_root is None or running_project_root == expected_project_root:
+                # Find the correct PID for this project
+                for proc in runtime_processes:
+                    proc_pid = int(proc["ProcessId"])
+                    proc_name = proc.get("Name", "")
+                    # Verify this process is for our expected project
+                    if running_project_root is None or running_project_root == expected_project_root:
+                        return proc_pid
+                # Fallback: return first runtime process
                 return int(runtime_processes[0]["ProcessId"])
         time.sleep(poll_interval_sec)
 

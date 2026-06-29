@@ -261,8 +261,8 @@ def _prepare_runtime_for_camera(
     existing_pids = cmctrl.list_carmaker_processes()
     if not existing_pids:
         # --- Step 1: Start CarMaker fresh ---
-        executable = cmctrl.resolve_carmaker_executable(args.cm_install.resolve())
-        print(f"Starting CarMaker: {executable} -projectdir {project_root}")
+        executable = cmctrl.resolve_carmaker_executable(args.cm_install.resolve(), args.maker_type)
+        print(f"Starting {args.maker_type.title()}: {executable} -projectdir {project_root}")
         subprocess.Popen(
             [str(executable), "-projectdir", str(project_root)],
             cwd=str(executable.parent),

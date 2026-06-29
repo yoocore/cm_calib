@@ -572,18 +572,17 @@ def generate_html():
                 else:
                     # 没有图片的情况
                     details_html = ""
-                    if isinstance(item_content, dict):
-                        for section_name, items in item_content.get("details", {}).items():
-                            details_html += f"""
-                            <div class="detail-section">
-                                <h4>{section_name}</h4>
-                                <ul>
+                    for section_name, items in details.items():
+                        details_html += f"""
+                        <div class="detail-section">
+                            <h4>{section_name}</h4>
+                            <ul>
 """
-                            for item in items:
-                                details_html += f'                                <li>{item}</li>\n'
-                            details_html += """
-                                </ul>
-                            </div>
+                        for item in items:
+                            details_html += f'                                <li>{item}</li>\n'
+                        details_html += """
+                            </ul>
+                        </div>
 """
 
                     html_content += f"""

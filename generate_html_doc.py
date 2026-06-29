@@ -175,13 +175,18 @@ def generate_html():
         }
 
         .item-vertical {
-            flex-direction: column !important;
+            flex-direction: column-reverse !important;
             align-items: center !important;
         }
 
         .item-vertical .item-content {
             width: 100%;
-            max-width: 800px;
+            max-width: 1000px;
+        }
+
+        .item-vertical .item-image {
+            width: 100%;
+            max-width: 1000px;
         }
 
         .item:nth-child(even) {

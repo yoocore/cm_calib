@@ -174,32 +174,36 @@ def generate_html():
             align-items: flex-start;
         }
 
-        .item-vertical {
-            display: flex;
-            flex-direction: column !important;
-            align-items: center !important;
-        }
-
-        .item-vertical .item-header {
-            text-align: center;
-            margin-bottom: 20px;
-            width: 100%;
-            max-width: 1000px;
-        }
-
-        .item-vertical .item-image {
-            width: 100%;
-            max-width: 1000px;
-            margin-bottom: 20px;
-        }
-
-        .item-vertical .item-content {
-            width: 100%;
-            max-width: 1000px;
-        }
-
         .item:nth-child(even) {
             flex-direction: row-reverse;
+        }
+
+        .item-visual {
+            flex: 1;
+            min-width: 400px;
+        }
+
+        .item-visual h3 {
+            color: #495057;
+            font-size: 1.4em;
+            margin-bottom: 8px;
+        }
+
+        .item-description {
+            margin-bottom: 20px;
+            color: #6c757d;
+            font-size: 1.05em;
+        }
+
+        .item-image {
+            width: 100%;
+        }
+
+        .item-details {
+            flex: 1;
+            padding: 25px;
+            background: #f8f9fa;
+            border-radius: 12px;
         }
 
         .item-content {
@@ -604,38 +608,21 @@ def generate_html():
                         </div>
 """
 
-                    # 为初始页面使用垂直布局
-                    if item_name == "初始页面":
-                        html_content += f"""
-            <div class="item item-vertical" id="{item_name}">
-                <div class="item-header">
-                    <h3>{item_name}</h3>
-                    <p class="item-description">{description}</p>
-                </div>
-                <div class="item-image">
-                    <div class="image-container">
-                        <img src="data:image/png;base64,{img_base64}" alt="{item_name}">
-                        {regions_html}
-                    </div>
-                </div>
-                <div class="item-content">
-                    {details_html}
-                </div>
-            </div>
-"""
-                    else:
-                        html_content += f"""
+                    # 所有项目使用统一布局：左侧(name+description+image)，右侧(details)
+                    html_content += f"""
             <div class="item" id="{item_name}">
-                <div class="item-content">
+                <div class="item-visual">
                     <h3>{item_name}</h3>
                     <p class="item-description">{description}</p>
-                    {details_html}
-                </div>
-                <div class="item-image">
-                    <div class="image-container">
-                        <img src="data:image/png;base64,{img_base64}" alt="{item_name}">
-                        {regions_html}
+                    <div class="item-image">
+                        <div class="image-container">
+                            <img src="data:image/png;base64,{img_base64}" alt="{item_name}">
+                            {regions_html}
+                        </div>
                     </div>
+                </div>
+                <div class="item-details">
+                    {details_html}
                 </div>
             </div>
 """
@@ -670,25 +657,14 @@ def generate_html():
                         </div>
 """
 
-                    # 为初始页面使用垂直布局
-                    if item_name == "初始页面":
-                        html_content += f"""
-            <div class="item item-vertical" id="{item_name}">
-                <div class="item-header">
-                    <h3>{item_name}</h3>
-                    <p class="item-description">{description}</p>
-                </div>
-                <div class="item-content">
-                    {details_html}
-                </div>
-            </div>
-"""
-                    else:
-                        html_content += f"""
+                    # 没有图片的情况：name+description在左侧，details在右侧
+                    html_content += f"""
             <div class="item" id="{item_name}">
-                <div class="item-content full-width">
+                <div class="item-visual">
                     <h3>{item_name}</h3>
                     <p class="item-description">{description}</p>
+                </div>
+                <div class="item-details">
                     {details_html}
                 </div>
             </div>

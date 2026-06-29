@@ -123,6 +123,7 @@ def generate_html():
             border-radius: 8px;
             border-left: 4px solid #667eea;
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            white-space: nowrap;
         }
 
         .toc {

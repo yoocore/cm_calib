@@ -2800,12 +2800,13 @@ async def start_or_reuse_movie(
     print(f"[movie-launch] Found {len(existing_gui_movies)} existing IPG-MOVIE instance(s)")
     _write_movie_launch_log(f"Found {len(existing_gui_movies)} existing IPG-MOVIE instance(s)")
     for idx, proc in enumerate(existing_gui_movies):
-        _write_movie_launch_log(f"  Instance {idx}: PID={proc.get('ProcessId')}, CommandLine={proc.get('CommandLine', '')[:100]}")
+        _write_movie_launch_log(f"  Instance {idx}: PID={proc.get('ProcessId')}, CommandLine={proc.get('CommandLine', '')[:200]}")
 
     if len(existing_gui_movies) == 1:
         pid = int(existing_gui_movies[0]["ProcessId"])
         print(f"[movie-launch] Reusing existing IPG-MOVIE instance with PID {pid}")
         _write_movie_launch_log(f"Reusing existing IPG-MOVIE instance with PID {pid}")
+        _write_movie_launch_log(f"Instance details: {existing_gui_movies[0]}")
         return None, pid, False, f"reused existing GUI IPG-MOVIE PID {pid}"
 
     if len(existing_gui_movies) > 1:

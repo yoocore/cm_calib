@@ -20,13 +20,15 @@ def generate_html():
         config = json.load(f)
 
     sections = config["sections"]
+    doc_title = config.get("title", "标定工具使用说明")
+    doc_version = config.get("version", "1.0.0")
 
     html_content = """<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>标定工具使用说明</title>
+    <title>""" + doc_title + """</title>
     <style>
         * {
             margin: 0;
@@ -668,17 +670,25 @@ def generate_html():
 
             html_content += "        </div>\n"
 
-        html_content += """
+        # 生成footer
+        footer_text = config.get("footer", "文档生成时间：{date} | 标定工具使用说明 v{version}")
+        from datetime import datetime
+        footer_text = footer_text.replace("{date}", datetime.now().strftime("%Y-%m-%d"))
+        footer_text = footer_text.replace("{version}", doc_version)
+
+        html_content += f"""
         <div class="footer">
-            <p>Generated: 2026-06-29 | Calibration Tool Documentation v1.0</p>
+            <p>{footer_text}</p>
         </div>
     </div>
 </body>
 </html>
 """
 
-    # 写入文件
-    output_file = Path("标定工具使用说明.html")
+    # 根据title和version生成输出文件名
+    safe_title = doc_title.replace(" ", "_").replace("/", "_")
+    output_filename = f"{safe_title}_v{doc_version}.html"
+    output_file = Path(output_filename)
     output_file.write_text(html_content, encoding='utf-8')
     print(f"[OK] HTML 文档已生成：{output_file.absolute()}")
 

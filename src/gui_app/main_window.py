@@ -459,6 +459,7 @@ class MainWindow(QMainWindow):
             if cm_install is None:
                 raise ValueError("CM version is not selected. Choose a CM version first.")
             self.calibration_service.set_cm_install(cm_install)
+            self.calibration_service.set_maker_type(self.calibration_panel.maker_type)
             if self.calibration_service.is_running:
                 self.output_panel.append_log(
                     f"calibration_service already running; stopping first",

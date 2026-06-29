@@ -152,7 +152,7 @@ def detect_cm_versions() -> dict[str, Path]:
                 continue
             found = False
             for sub in ("GUI", "bin"):
-                for exe in ("CM_Office.exe", "CM.exe"):
+                for exe in ("CM_Office.exe", "CM.exe", "TM_Office.exe"):
                     if (entry / sub / exe).is_file():
                         version = entry.name[len("win64-"):]
                         try:
@@ -256,6 +256,11 @@ class CalibrationPanel(QGroupBox):
         self.cm_version_combo.model().item(idx).setEnabled(False)
         self.cm_version_combo.setFixedHeight(36)
 
+        self.maker_combo = QComboBox()
+        self.maker_combo.addItem("CarMaker", "carmaker")
+        self.maker_combo.addItem("TruckMaker", "truckmaker")
+        self.maker_combo.setFixedHeight(36)
+
         self.start_button = QPushButton("Calib Start")
         self.start_button.setDefault(True)
         self.start_button.setAutoDefault(True)
@@ -321,7 +326,7 @@ class CalibrationPanel(QGroupBox):
         cm_row = QWidget(self.control_group)
         cm_layout = QHBoxLayout(cm_row)
         cm_layout.setContentsMargins(0, 0, 0, 0)
-        cm_layout.addWidget(QLabel("CarMaker"))
+        cm_layout.addWidget(self.maker_combo)
         cm_layout.addWidget(self.cm_version_combo, 1)
 
         button_row = QWidget(self.control_group)
@@ -373,6 +378,13 @@ class CalibrationPanel(QGroupBox):
         if isinstance(data, Path):
             return data
         return None
+
+    @property
+    def maker_type(self) -> str:
+        data = self.maker_combo.currentData()
+        if isinstance(data, str):
+            return data
+        return "carmaker"
 
     def _on_estimated_time_changed(self) -> None:
         self.estimated_time_changed.emit()
@@ -432,6 +444,7 @@ class CalibrationPanel(QGroupBox):
         self.jitter_spin.setEnabled(not locked and not self.jitter_auto_cb.isChecked())
         self.jitter_auto_cb.setEnabled(not locked)
         self.cm_version_combo.setEnabled(not locked)
+        self.maker_combo.setEnabled(not locked)
 
     def sizeHint(self) -> QSize:
         hint = super().sizeHint()

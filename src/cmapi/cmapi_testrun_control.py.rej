@@ -1,0 +1,94 @@
+diff a/src/cmapi/cmapi_testrun_control.py b/src/cmapi/cmapi_testrun_control.py	(rejected hunks)
+@@ -37,10 +37,31 @@ if not hasattr(cmapi, "InvalidConfigurationException"):
+     if invalid_configuration_error is not None:
+         cmapi.InvalidConfigurationException = invalid_configuration_error
+ 
++# cmapi 15.x moved CarMaker.set_state() to CarMaker._set_state()
++if not hasattr(cmapi.CarMaker, "set_state") and hasattr(cmapi.CarMaker, "_set_state"):
++    cmapi.CarMaker.set_state = cmapi.CarMaker._set_state
+ 
+-DEFAULT_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+-DEFAULT_CM_INSTALL = Path(os.environ.get("IPGHOME", "D:/IPG")) / "carmaker" / "win64-14.1"
+-DEFAULT_CONFIG_DIR = Path(__file__).resolve().parent / "configs"
++
++DEFAULT_PROJECT_ROOT = Path(os.getcwd())
++
++def _resolve_default_cm_install() -> Path:
++    """Auto-discover the latest CarMaker install; fall back to common paths."""
++    try:
++        from src.entry.portable_runtime import resolve_default_cm_install
++        resolved = resolve_default_cm_install()
++        if resolved is not None:
++            return resolved
++    except Exception:
++        pass
++    ipghome = Path(os.environ.get("IPGHOME", "D:/IPG")) / "carmaker"
++    if ipghome.is_dir():
++        for entry in sorted(ipghome.iterdir(), reverse=True):
++            if entry.is_dir() and (entry / "bin" / "CarMaker.win64.exe").exists():
++                return entry
++    return ipghome
++
++DEFAULT_CM_INSTALL = _resolve_default_cm_install()
++DEFAULT_CONFIG_DIR = Path(__file__).resolve().parents[2] / "configs"
+ CARMAKER_PROCESS_NAMES = ("CarMaker.win64.exe", "HIL.exe", "CM_Office.exe")
+ RUNTIME_CARMAKER_PROCESS_NAMES = ("CarMaker.win64.exe", "CM_Office.exe")
+ DEFAULT_MOVIE_APPHOST = "kel"
+@@ -168,7 +189,7 @@ def _win32_find_processes(image_names_lower: set[str]) -> list[dict[str, Any]]:
+                 continue
+             base_name = full_path.rsplit("\\", 1)[-1]
+             if base_name.lower() in image_names_lower:
+-                matches.append({"Name": base_name, "ProcessId": int(pid)})
++                matches.append({"Name": base_name, "ProcessId": int(pid), "CommandLine": "", "CreationDate": ""})
+         finally:
+             _KERNEL32.CloseHandle(handle)
+     return matches
+@@ -187,7 +208,10 @@ def _win32_terminate_processes(procs: list[dict[str, Any]]) -> None:
+ 
+ 
+ def list_cm_processes() -> list[dict[str, Any]]:
+-    return _run_powershell_json(PROCESS_ENUMERATION_COMMAND)
++    result = _run_powershell_json(PROCESS_ENUMERATION_COMMAND)
++    if not result:
++        result = _win32_find_processes({"hil.exe", "movie.exe", "carmaker.win64.exe", "cm_office.exe"})
++    return result
+ 
+ 
+ def list_carmaker_processes() -> list[dict[str, Any]]:
+@@ -215,6 +239,8 @@ def is_gui_movie_process(process: dict[str, Any]) -> bool:
+     if is_gpusensor_movie_process(process):
+         return False
+     command_line = str(process.get("CommandLine") or "")
++    if not command_line:
++        return True  # psapi fallback: assume GUI Movie when CommandLine unavailable
+     command_line_lower = command_line.lower()
+     return all(marker.lower() in command_line_lower for marker in GUI_MOVIE_MARKERS)
+ 
+@@ -1316,6 +1342,11 @@ async def bootstrap_testrun_for_movie_via_cmapi(
+     idle_timeout_ms = max(1000, int(max(1.0, float(idle_timeout_sec)) * 1000))
+     wait_for_carmaker_status("idle", 10000, probe_name=f"{probe_name}_idle_before")
+ 
++    # Load the correct TestRun into CarMaker GUI before starting simulation.
++    # Without this, StartSim/Exec fails when CarMaker starts with internal default
++    # configuration (e.g. fresh start after kill_all_processes without prior session).
++    selected_name = sync_gui_testrun_selection(project_root, testrun_rel_path)
++
+     try:
+         start_simulation_via_tcl(
+             running_timeout_sec=max(1.0, float(running_timeout_ms) / 1000.0),
+@@ -1332,7 +1363,6 @@ async def bootstrap_testrun_for_movie_via_cmapi(
+     except Exception as exc:
+         raise RuntimeError(f"Failed to stop TestRun via {TESTRUN_CONTROL_LABEL}: {exc}") from exc
+ 
+-    selected_name = sync_gui_testrun_selection(project_root, testrun_rel_path)
+ 
+     return resolved_carmaker, resolved_pid, selected_name
+ 
+@@ -1670,6 +1700,7 @@ def restore_checkviewport(*, timeout_sec: float = 10.0) -> None:
+         print(f"[INFO] restore CheckViewPort failed (non-fatal): {exc}")
+ 
+ 
++
+ def install_view_sync_trace(*, timeout_sec: float = 10.0) -> None:
+     """Install a Tcl execution trace on View::SetSize that auto-syncs the View()
+     dict after every View::SetSize call.

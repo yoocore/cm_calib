@@ -1,0 +1,198 @@
+diff a/src/gui_app/widgets/output_panel.py b/src/gui_app/widgets/output_panel.py	(rejected hunks)
+@@ -6,7 +6,7 @@ import re
+ from datetime import datetime
+ from pathlib import Path
+ 
+-from PySide6.QtCore import Qt, Signal
++from PySide6.QtCore import Qt, QSize, Signal
+ from PySide6.QtGui import QImage, QPixmap, QPixmapCache, QTextCursor
+ from PySide6.QtWidgets import (
+     QGridLayout,
+@@ -23,7 +23,8 @@ from PySide6.QtWidgets import (
+     QWidget,
+ )
+ 
+-from gui_app.models.state import CameraResult
++from src.gui_app.models.state import CameraResult
++from src.gui_app.widgets.score_curve_window import ScoreCurveWindow
+ 
+ 
+ RESULT_JSON_ROLE = Qt.UserRole + 1
+@@ -133,6 +134,7 @@ class ArtifactPreviewLabel(QLabel):
+         super().__init__(empty_text, parent)
+         self._empty_text = empty_text
+         self._artifact_path: str | None = None
++        self._last_render_size = QSize()
+         self.setAlignment(Qt.AlignCenter)
+         self.setWordWrap(True)
+         self.setMinimumSize(180, 120)
+@@ -141,6 +143,7 @@ class ArtifactPreviewLabel(QLabel):
+ 
+     def set_artifact(self, artifact_path: str | None) -> None:
+         self._artifact_path = artifact_path.strip() if artifact_path else None
++        QPixmapCache.clear()
+         self._render()
+ 
+     def mouseDoubleClickEvent(self, event) -> None:
+@@ -152,7 +155,9 @@ class ArtifactPreviewLabel(QLabel):
+ 
+     def resizeEvent(self, event) -> None:
+         super().resizeEvent(event)
+-        self._render()
++        if self._artifact_path and self.size() != self._last_render_size:
++            self._last_render_size = self.size()
++            self._render()
+ 
+     def _render(self) -> None:
+         if not self._artifact_path:
+@@ -168,10 +173,15 @@ class ArtifactPreviewLabel(QLabel):
+ 
+         if not path.exists():
+             self.setPixmap(QPixmap())
+-            self.setText(f"Missing\n{path.name}")
++            self.setText("")
++            parent_group = self.parentWidget()
++            if parent_group is not None:
++                parent_group.hide()
+             return
+ 
+-        QPixmapCache.clear()
++        parent_group = self.parentWidget()
++        if parent_group is not None:
++            parent_group.show()
+         img = QImage(str(path))
+         if img.isNull():
+             self.setPixmap(QPixmap())
+@@ -203,15 +213,14 @@ class CameraResultCard(QGroupBox):
+         self.init_score_value = QLabel("-")
+         self.best_score_value = QLabel("-")
+         self.current_iter_value = QLabel("-")
++        self._score_windows: list[QWidget] = []
+         self.iter_preview = ArtifactPreviewLabel("")
+         self.score_preview = ArtifactPreviewLabel("")
+         self.overlay_preview = ArtifactPreviewLabel("")
+         self.open_log_button = QPushButton("Log")
+         self.open_result_button = QPushButton("Result")
+-        self.open_current_button = QPushButton("Current")
+-        self.open_best_button = QPushButton("Best")
+-        self.open_score_button = QPushButton("Score")
+-        self.open_overlay_button = QPushButton("Overlay")
++        self.open_score_live_button = QPushButton("Score Live")
++        self.open_score_plot_button = QPushButton("Score Plot")
+ 
+         info_layout = QHBoxLayout()
+         info_layout.setContentsMargins(0, 0, 0, 0)
+@@ -240,18 +249,14 @@ class CameraResultCard(QGroupBox):
+         actions_layout.setContentsMargins(0, 0, 0, 0)
+         actions_layout.addWidget(self.open_log_button)
+         actions_layout.addWidget(self.open_result_button)
+-        actions_layout.addWidget(self.open_current_button)
+-        actions_layout.addWidget(self.open_best_button)
+-        actions_layout.addWidget(self.open_score_button)
+-        actions_layout.addWidget(self.open_overlay_button)
++        actions_layout.addWidget(self.open_score_live_button)
++        actions_layout.addWidget(self.open_score_plot_button)
+ 
+         for button in (
+             self.open_log_button,
+             self.open_result_button,
+-            self.open_current_button,
+-            self.open_best_button,
+-            self.open_score_button,
+-            self.open_overlay_button,
++            self.open_score_live_button,
++            self.open_score_plot_button,
+         ):
+             button.setMinimumHeight(30)
+             button.setStyleSheet(
+@@ -267,6 +272,8 @@ class CameraResultCard(QGroupBox):
+                 "border-color: #e2e8f0;"
+                 "}"
+             )
++        self.open_score_live_button.setEnabled(False)
++        self.open_score_plot_button.setEnabled(False)
+ 
+         layout = QVBoxLayout(self)
+         layout.addLayout(info_layout)
+@@ -318,21 +325,27 @@ class CameraResultCard(QGroupBox):
+ 
+         self.open_log_button.setEnabled(bool(result.live_log))
+         self.open_result_button.setEnabled(bool(result.result_json))
+-        self.open_current_button.setEnabled(bool(result.current_iter_image or result.best_image))
+-        self.open_best_button.setEnabled(bool(result.best_image))
+-        self.open_score_button.setEnabled(bool(result.best_score_image))
+-        self.open_overlay_button.setEnabled(bool(result.best_overlay_image))
++        self.open_score_live_button.setEnabled(bool(result.best_image or result.current_iter_image))
+ 
+     def _update_preview_stretch(self) -> None:
+         from PySide6.QtGui import QImage
+ 
+         for i, label in enumerate([self.iter_preview, self.score_preview, self.overlay_preview]):
+-            stretch = 1
++            group = label.parentWidget()
++            if group is None:
++                continue
+             path = label._artifact_path
++            stretch = 0
+             if path:
+                 img = QImage(path)
+                 if not img.isNull() and img.height() > 0:
+-                    stretch = max(1, int(round(img.width() / img.height() * 10)))
++                    # Group width = image width + borders/padding (~12px)
++                    group.setMaximumWidth(img.width() + 12)
++                    stretch = img.width()
++                else:
++                    group.setMaximumWidth(16777215)  # QWIDGETSIZE_MAX
++            else:
++                group.setMaximumWidth(16777215)
+             self._previews_layout.setStretch(i, stretch)
+ 
+     def mousePressEvent(self, event) -> None:
+@@ -394,6 +407,7 @@ class OutputPanel(QGroupBox):
+ 
+         self._task_log_path: str | None = None
+         self._result_cards: dict[str, CameraResultCard] = {}
++        self._score_windows: list = []
+ 
+         self.results_container = QWidget(self)
+         self.results_layout = QVBoxLayout(self.results_container)
+@@ -491,6 +505,7 @@ class OutputPanel(QGroupBox):
+ 
+         card = self._ensure_result_card(result.camera)
+         card.update_result(result)
++        card.open_score_plot_button.setEnabled(result.status in {"finished", "completed"})
+ 
+         if self.result_tree.currentItem() is None:
+             self._select_camera(result.camera)
+@@ -529,10 +544,8 @@ class OutputPanel(QGroupBox):
+         card.activated.connect(self._open_camera_default_artifact)
+         card.open_log_button.clicked.connect(lambda _checked=False, name=camera_name: self._open_camera_artifact(name, LIVE_LOG_ROLE))
+         card.open_result_button.clicked.connect(lambda _checked=False, name=camera_name: self._open_camera_artifact(name, RESULT_JSON_ROLE))
+-        card.open_current_button.clicked.connect(lambda _checked=False, name=camera_name: self._open_camera_artifact(name, CURRENT_ITER_IMAGE_ROLE))
+-        card.open_best_button.clicked.connect(lambda _checked=False, name=camera_name: self._open_camera_artifact(name, BEST_IMAGE_ROLE))
+-        card.open_score_button.clicked.connect(lambda _checked=False, name=camera_name: self._open_camera_artifact(name, BEST_SCORE_IMAGE_ROLE))
+-        card.open_overlay_button.clicked.connect(lambda _checked=False, name=camera_name: self._open_camera_artifact(name, BEST_OVERLAY_IMAGE_ROLE))
++        card.open_score_live_button.clicked.connect(lambda _checked=False, name=camera_name: self._open_score_curve(name, "live"))
++        card.open_score_plot_button.clicked.connect(lambda _checked=False, name=camera_name: self._open_score_curve(name, "plot"))
+         card.iter_preview.clicked.connect(lambda name=camera_name: self._open_camera_artifact(name, CURRENT_ITER_IMAGE_ROLE))
+         card.score_preview.clicked.connect(lambda name=camera_name: self._open_camera_artifact(name, BEST_SCORE_IMAGE_ROLE))
+         card.overlay_preview.clicked.connect(lambda name=camera_name: self._open_camera_artifact(name, BEST_OVERLAY_IMAGE_ROLE))
+@@ -562,6 +575,18 @@ class OutputPanel(QGroupBox):
+         self.result_tree.setCurrentItem(item)
+         self._refresh_selection()
+ 
++    def _open_score_curve(self, camera_name: str, mode: str) -> None:
++        self._select_camera(camera_name)
++        item = self._find_item(camera_name)
++        result_json = self._item_data(item, RESULT_JSON_ROLE) if item is not None else None
++        if not result_json:
++            return
++        window = ScoreCurveWindow(camera_name, result_json, mode=mode)
++        window.setAttribute(Qt.WA_DeleteOnClose)
++        window.destroyed.connect(lambda obj=None, w=window: self._score_windows.remove(w) if w in self._score_windows else None)
++        self._score_windows.append(window)
++        window.show()
++
+     def _open_camera_artifact(self, camera_name: str, role: int) -> None:
+         self._select_camera(camera_name)
+         item = self._find_item(camera_name)

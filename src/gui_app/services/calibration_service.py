@@ -36,6 +36,9 @@ class CalibrationService(QObject):
     def set_cm_install(self, cm_install: Path | None) -> None:
         self._cm_install = cm_install
 
+    def set_maker_type(self, maker_type: str) -> None:
+        self._maker_type = maker_type
+
     @staticmethod
     def _resolve_calibration_root(project_root: Path) -> Path:
         return resolve_tool_root()
@@ -68,6 +71,8 @@ class CalibrationService(QObject):
         cm_install = getattr(self, "_cm_install", None)
         if cm_install is not None:
             arguments.extend(["--cm-install", str(cm_install)])
+        maker_type = getattr(self, "_maker_type", "carmaker")
+        arguments.extend(["--maker-type", maker_type])
         env = QProcessEnvironment.systemEnvironment()
         if cm_install is not None:
             pythonpath, _paths = build_cmapi_pythonpath(
@@ -94,6 +99,8 @@ class CalibrationService(QObject):
         cm_install = getattr(self, "_cm_install", None)
         if cm_install is not None:
             arguments.extend(["--cm-install", str(cm_install)])
+        maker_type = getattr(self, "_maker_type", "carmaker")
+        arguments.extend(["--maker-type", maker_type])
         env = QProcessEnvironment.systemEnvironment()
         if cm_install is not None:
             pythonpath, _paths = build_cmapi_pythonpath(

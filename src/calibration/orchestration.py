@@ -243,6 +243,50 @@ class OrchestrationMixin:
     def _camera_summary_name(self) -> str:
         return _camera_name_from_output_dir(self.output_dir)
 
+    def _build_score_statistics(
+        self,
+        best_total_detail: TotalScoreDetail,
+    ) -> Dict[str, object]:
+        """Build quick score statistics for summary."""
+        compared_scores = [
+            s.total_score
+            for s in best_total_detail.board_scores
+            if s.compared
+        ]
+
+        if not compared_scores:
+            return {
+                "min_board_score": None,
+                "max_board_score": None,
+                "avg_board_score": None,
+                "median_board_score": None,
+                "best_board_id": None,
+                "worst_board_id": None,
+            }
+
+        min_score = min(compared_scores)
+        max_score = max(compared_scores)
+        avg_score = sum(compared_scores) / len(compared_scores)
+        median_score = float(np.median(np.array(compared_scores)))
+
+        best_board = next(
+            s for s in best_total_detail.board_scores
+            if s.compared and s.total_score == max_score
+        )
+        worst_board = next(
+            s for s in best_total_detail.board_scores
+            if s.compared and s.total_score == min_score
+        )
+
+        return {
+            "min_board_score": min_score,
+            "max_board_score": max_score,
+            "avg_board_score": avg_score,
+            "median_board_score": median_score,
+            "best_board_id": best_board.board_id,
+            "worst_board_id": worst_board.board_id,
+        }
+
     def _build_calibration_summary(
         self,
         *,
@@ -288,6 +332,7 @@ class OrchestrationMixin:
             "compared_board_count": best_total_detail.compared_board_count,
             "best_image": str(best_img),
             "best_score_image": str(best_score_image) if best_score_image else None,
+            "score_statistics": self._build_score_statistics(best_total_detail),
         }
 
     def _print_calibration_summary(self, summary: Dict[str, object]) -> None:
@@ -302,6 +347,19 @@ class OrchestrationMixin:
             f"stop_reason={summary['stop_reason']} "
             f"passed={summary['passed']}"
         )
+
+        score_stats = summary.get('score_statistics', {})
+        if score_stats and score_stats.get('max_board_score') is not None:
+            print(
+                "Score statistics: "
+                f"min={float(score_stats['min_board_score']):.2f} "
+                f"max={float(score_stats['max_board_score']):.2f} "
+                f"avg={float(score_stats['avg_board_score']):.2f} "
+                f"median={float(score_stats['median_board_score']):.2f} "
+                f"best_board={score_stats['best_board_id']} "
+                f"worst_board={score_stats['worst_board_id']}"
+            )
+
         print(
             "Start values:",
             _format_scalar_value_map(dict(summary["start_values"])),
@@ -310,6 +368,55 @@ class OrchestrationMixin:
             "Final values:",
             _format_scalar_value_map(dict(summary["final_values"])),
         )
+
+    def _build_score_breakdown(
+        self,
+        best_total_detail: TotalScoreDetail,
+        best_score: float,
+    ) -> Dict[str, object]:
+        """Build detailed score breakdown for user transparency."""
+        board_map = {b.board_id: b for b in self.boards}
+        weighted_scores: Dict[str, Dict[str, object]] = {}
+        total_weight = 0.0
+        weighted_sum = 0.0
+        isolated_outlier_set = set(best_total_detail.isolated_outlier_boards)
+
+        for score in best_total_detail.board_scores:
+            if not score.compared:
+                continue
+
+            board = board_map.get(score.board_id)
+            if board is None:
+                continue
+
+            weight = board.weight
+            effective_weight = weight
+            weighted_contribution = effective_weight * score.total_score
+
+            weighted_scores[score.board_id] = {
+                "raw_score": score.total_score,
+                "weight": weight,
+                "effective_weight": effective_weight,
+                "weighted_contribution": weighted_contribution,
+                "is_isolated_outlier": score.board_id in isolated_outlier_set,
+            }
+
+            total_weight += effective_weight
+            if score.board_id not in isolated_outlier_set:
+                weighted_sum += weighted_contribution
+
+        weighted_average = weighted_sum / total_weight if total_weight > 0 else 0.0
+        degrade_contribution = best_total_detail.degrade_penalty
+
+        return {
+            "weighted_scores": weighted_scores,
+            "total_weight": total_weight,
+            "weighted_average": weighted_average,
+            "degrade_contribution": degrade_contribution,
+            "final_total_score": best_score,
+            "isolated_outlier_boards": best_total_detail.isolated_outlier_boards,
+            "degraded_boards": best_total_detail.degraded_boards,
+        }
 
     def _build_result_payload(
         self,
@@ -385,6 +492,7 @@ class OrchestrationMixin:
                     }
                     for s in best_total_detail.board_scores
                 ],
+                "score_breakdown": self._build_score_breakdown(best_total_detail, best_score),
             },
             "best_image": str(best_img),
             "best_score_image": str(best_score_image) if best_score_image else None,

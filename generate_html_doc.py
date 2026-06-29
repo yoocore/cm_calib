@@ -18,10 +18,9 @@ def generate_html():
         {
             "title": "工具介绍",
             "type": "intro",
-            "content": "标定工具（Calibration Tool）是一款专业的相机标定软件，用于自动驾驶系统中的相机参数标定。该工具集成了多种标定算法，支持实时可视化验证，并提供完整的标定效果评估体系。",
             "features": [
                 "支持多种标定板类型和相机型号",
-                "集成先进的标定算法，支持自适应优化",
+                "集成张氏标定法、两步法、直接线性变换等多种标定算法",
                 "实时显示标定进度和得分变化",
                 "提供虚实重叠验证，直观评估标定效果",
                 "自动记录历史数据，支持多次标定对比"
@@ -109,19 +108,6 @@ def generate_html():
             background: linear-gradient(135deg, #667eea22 0%, #764ba222 100%);
             padding: 40px 50px;
             border-bottom: 2px solid #e9ecef;
-        }
-
-        .intro-text {
-            font-size: 1.1em;
-            line-height: 1.8;
-            color: #2c3e50;
-            margin-bottom: 25px;
-        }
-
-        .intro-features h3 {
-            color: #495057;
-            font-size: 1.2em;
-            margin-bottom: 15px;
         }
 
         .intro-features ul {
@@ -418,9 +404,7 @@ def generate_html():
             html_content += f"""
         <div class="section intro-section">
             <h2>{section['title']}</h2>
-            <p class="intro-text">{section['content']}</p>
             <div class="intro-features">
-                <h3>主要功能：</h3>
                 <ul>
 """
             for feature in section["features"]:

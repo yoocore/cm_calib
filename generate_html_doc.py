@@ -16,6 +16,18 @@ def generate_html():
     # 定义文档结构
     sections = [
         {
+            "title": "工具介绍",
+            "type": "intro",
+            "content": "标定工具（Calibration Tool）是一款专业的相机标定软件，用于自动驾驶系统中的相机参数标定。该工具集成了多种标定算法，支持实时可视化验证，并提供完整的标定效果评估体系。",
+            "features": [
+                "支持多种标定板类型和相机型号",
+                "集成先进的标定算法，支持自适应优化",
+                "实时显示标定进度和得分变化",
+                "提供虚实重叠验证，直观评估标定效果",
+                "自动记录历史数据，支持多次标定对比"
+            ]
+        },
+        {
             "title": "第一部分：界面概览",
             "items": [
                 ("初始页面", "软件启动界面，整体布局介绍"),
@@ -314,6 +326,39 @@ def generate_html():
         .item-image img {
             cursor: zoom-in;
         }
+
+        /* 工具介绍样式 */
+        .intro-section {
+            background: linear-gradient(135deg, #667eea22 0%, #764ba222 100%);
+        }
+
+        .intro-text {
+            font-size: 1.1em;
+            line-height: 1.8;
+            color: #2c3e50;
+            margin-bottom: 25px;
+        }
+
+        .intro-features h3 {
+            color: #495057;
+            font-size: 1.2em;
+            margin-bottom: 15px;
+        }
+
+        .intro-features ul {
+            list-style: none;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 12px;
+        }
+
+        .intro-features li {
+            background: white;
+            padding: 12px 20px;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        }
     </style>
     <script>
         // 图片双击放大功能
@@ -371,13 +416,18 @@ def generate_html():
 
     # 生成目录
     for section in sections:
-        html_content += f'            <div class="toc-section">\n'
-        html_content += f'                <div class="toc-section-title">{section["title"]}</div>\n'
-        html_content += f'                <ul>\n'
-        for item_name, _ in section["items"]:
-            html_content += f'                    <li><a href="#{item_name}">{item_name}</a></li>\n'
-        html_content += f'                </ul>\n'
-        html_content += f'            </div>\n'
+        if section.get("type") == "intro":
+            html_content += f'            <div class="toc-section">\n'
+            html_content += f'                <div class="toc-section-title">{section["title"]}</div>\n'
+            html_content += f'            </div>\n'
+        else:
+            html_content += f'            <div class="toc-section">\n'
+            html_content += f'                <div class="toc-section-title">{section["title"]}</div>\n'
+            html_content += f'                <ul>\n'
+            for item_name, _ in section["items"]:
+                html_content += f'                    <li><a href="#{item_name}">{item_name}</a></li>\n'
+            html_content += f'                </ul>\n'
+            html_content += f'            </div>\n'
 
     html_content += """
         </div>
@@ -385,16 +435,33 @@ def generate_html():
 
     # 生成各部分内容
     for section in sections:
-        html_content += f"""
+        if section.get("type") == "intro":
+            html_content += f"""
+        <div class="section intro-section">
+            <h2>{section['title']}</h2>
+            <p class="intro-text">{section['content']}</p>
+            <div class="intro-features">
+                <h3>主要功能：</h3>
+                <ul>
+"""
+            for feature in section["features"]:
+                html_content += f'                    <li>{feature}</li>\n'
+            html_content += """
+                </ul>
+            </div>
+        </div>
+"""
+        else:
+            html_content += f"""
         <div class="section">
             <h2>{section['title']}</h2>
 """
 
-        for i, (item_name, item_desc) in enumerate(section["items"]):
-            image_path = pics_dir / f"{item_name}.png"
-            if image_path.exists():
-                img_base64 = get_base64_image(image_path)
-                html_content += f"""
+            for i, (item_name, item_desc) in enumerate(section["items"]):
+                image_path = pics_dir / f"{item_name}.png"
+                if image_path.exists():
+                    img_base64 = get_base64_image(image_path)
+                    html_content += f"""
             <div class="item" id="{item_name}">
                 <div class="item-content">
                     <h3>{item_name}</h3>
@@ -406,7 +473,7 @@ def generate_html():
             </div>
 """
 
-        html_content += "        </div>\n"
+            html_content += "        </div>\n"
 
     # 生成流程图
     html_content += """

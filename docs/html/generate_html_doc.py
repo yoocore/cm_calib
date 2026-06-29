@@ -671,13 +671,14 @@ def generate_html():
 
             html_content += "        </div>\n"
 
-        # 生成footer
-        footer_text = config.get("footer", "文档生成时间：{date} | 标定工具使用说明 v{version}")
-        from datetime import datetime
-        footer_text = footer_text.replace("{date}", datetime.now().strftime("%Y-%m-%d"))
-        footer_text = footer_text.replace("{version}", doc_version)
+    # 生成footer
+    footer_text = config.get("footer", "{title} v{version} | {date}")
+    from datetime import datetime
+    footer_text = footer_text.replace("{title}", doc_title)
+    footer_text = footer_text.replace("{date}", datetime.now().strftime("%Y-%m-%d"))
+    footer_text = footer_text.replace("{version}", doc_version)
 
-        html_content += f"""
+    html_content += f"""
         <div class="footer">
             <p>{footer_text}</p>
         </div>

@@ -2156,7 +2156,7 @@ def wait_for_movie_scene_ready(
             camera_name = str(payload.get("camera_name", "") or "").strip()
             abraxas_menu_ready = str(payload.get("abraxas_menu_ready", "0") or "0") == "1"
             camera_scene_ready = bool(camera_name) and camera_name.casefold() != "default"
-            if width > 0 and height > 0 and abraxas_menu_ready:
+            if width > 0 and height > 0 and abraxas_menu_ready and camera_scene_ready:
                 payload["mode"] = "dde_execute_probe"
                 return payload
             last_detail = detail or "scene_not_ready"

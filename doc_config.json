@@ -122,6 +122,16 @@
           ],
           "details": {
             "参数说明": [
+              "ProjectDir：选择CarMaker Project路径",
+              "TestRun：选择TestRun路径",
+              "Vehicle：显示选中TestRun的车辆信息",
+              "Maker Type：选择xxMaker类型，目前支持CM和TM",
+              "Version：选择xxMaker版本，目前支持ver14+",
+              "Camera Selection：自动显示Vehicle中CameraRSI",
+              "分辨率：设置图像采集的分辨率（宽×高）",
+              "标定板类型：支持棋盘格、圆形阵列、ChArUco等",
+              "标定板尺寸：标定板的实际物理尺寸（mm）",
+              "网格数量：标定板的行列数",
               "相机型号：支持多种工业相机和USB相机",
               "分辨率：设置图像采集的分辨率（宽×高）",
               "标定板类型：支持棋盘格、圆形阵列、ChArUco等",

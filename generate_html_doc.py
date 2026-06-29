@@ -404,6 +404,25 @@ def generate_html():
             line-height: 1.6;
         }
 
+        .detail-section li.sub-section {
+            margin-top: 15px;
+            margin-bottom: 15px;
+            padding: 10px 15px;
+            background: #f8f9fa;
+            border-radius: 6px;
+            border-left: 3px solid #667eea;
+        }
+
+        .detail-section li.sub-section strong {
+            color: #667eea;
+            font-size: 1.05em;
+        }
+
+        .detail-section li.sub-section ul {
+            margin-top: 8px;
+            margin-bottom: 0;
+        }
+
         .item-content.full-width {
             flex: 1;
         }
@@ -562,7 +581,24 @@ def generate_html():
                             <ul>
 """
                         for item in items:
-                            details_html += f'                                <li>{item}</li>\n'
+                            # 处理二级层级
+                            if isinstance(item, dict):
+                                # 二级标题
+                                details_html += f"""
+                                <li class="sub-section">
+                                    <strong>{item['title']}</strong>
+                                    <ul>
+"""
+                                for sub_item in item['items']:
+                                    details_html += f'                                    <li>{sub_item}</li>\n'
+                                details_html += """
+                                    </ul>
+                                </li>
+"""
+                            else:
+                                # 普通项
+                                details_html += f'                                <li>{item}</li>\n'
+
                         details_html += """
                             </ul>
                         </div>
@@ -613,7 +649,22 @@ def generate_html():
                             <ul>
 """
                         for item in items:
-                            details_html += f'                                <li>{item}</li>\n'
+                            # 处理二级层级
+                            if isinstance(item, dict):
+                                details_html += f"""
+                                <li class="sub-section">
+                                    <strong>{item['title']}</strong>
+                                    <ul>
+"""
+                                for sub_item in item['items']:
+                                    details_html += f'                                    <li>{sub_item}</li>\n'
+                                details_html += """
+                                    </ul>
+                                </li>
+"""
+                            else:
+                                details_html += f'                                <li>{item}</li>\n'
+
                         details_html += """
                             </ul>
                         </div>

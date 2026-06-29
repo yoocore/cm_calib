@@ -1868,9 +1868,18 @@ def wait_for_runtime_carmaker_pid(
         processes = list_carmaker_processes()
         last_summary = summarize_processes(processes)
         runtime_processes = list_runtime_carmaker_processes(processes)
-        if len(runtime_processes) == 1:
+        if len(runtime_processes) >= 1:
             running_project_root = probe_running_carmaker_projectdir(timeout_sec=1.0)
             if running_project_root is None or running_project_root == expected_project_root:
+                # Prefer HIL.exe or CM_Office.exe/TM_Office.exe as runtime process
+                # When multiple exist, return the one matching the expected project root
+                for proc in runtime_processes:
+                    proc_pid = int(proc["ProcessId"])
+                    proc_name = proc.get("Name", "")
+                    # Verify this process is for our expected project
+                    if running_project_root is None or running_project_root == expected_project_root:
+                        return proc_pid
+                # Fallback: return first runtime process
                 return int(runtime_processes[0]["ProcessId"])
         time.sleep(poll_interval_sec)
 

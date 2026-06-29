@@ -29,8 +29,59 @@ def generate_html():
         {
             "title": "第一部分：界面概览",
             "items": [
-                ("初始页面", "软件启动界面，整体布局介绍。包含菜单栏、工具栏、项目配置区、标定设置区和输出区等主要模块，是整个标定流程的起点"),
-                ("cm配置区", "配置参数区域，包括相机参数、标定板规格等"),
+                ("初始页面", {
+                    "description": "软件启动界面，整体布局介绍",
+                    "regions": [
+                        {"name": "菜单栏", "x": "0%", "y": "0%", "w": "100%", "h": "5%", "color": "#667eea"},
+                        {"name": "工具栏", "x": "0%", "y": "5%", "w": "100%", "h": "5%", "color": "#764ba2"},
+                        {"name": "项目配置区", "x": "0%", "y": "10%", "w": "30%", "h": "35%", "color": "#28a745"},
+                        {"name": "标定设置区", "x": "0%", "y": "45%", "w": "30%", "h": "25%", "color": "#ffc107"},
+                        {"name": "输出区", "x": "30%", "y": "10%", "w": "70%", "h": "60%", "color": "#dc3545"},
+                        {"name": "进度区", "x": "0%", "y": "70%", "w": "100%", "h": "10%", "color": "#17a2b8"},
+                    ],
+                    "details": {
+                        "结构组成": [
+                            "菜单栏：包含文件、编辑、视图、帮助等常用菜单",
+                            "工具栏：快捷操作按钮，如打开项目、保存、导出等",
+                            "项目配置区：配置相机参数、标定板类型和规格",
+                            "标定设置区：选择标定算法和调整优化参数",
+                            "输出区：实时显示标定进度、日志和结果",
+                            "进度区：可视化显示当前标定进度和耗时",
+                        ],
+                        "初始化流程": [
+                            "启动软件后自动进入初始界面",
+                            "根据项目需求配置相机和标定板参数",
+                            "设置标定算法和优化选项",
+                            "点击「开始标定」按钮启动流程",
+                        ],
+                    }
+                }),
+                ("cm配置区", {
+                    "description": "配置参数区域，包括相机参数、标定板规格等",
+                    "regions": [
+                        {"name": "相机型号", "x": "5%", "y": "5%", "w": "40%", "h": "20%", "color": "#667eea"},
+                        {"name": "分辨率", "x": "55%", "y": "5%", "w": "40%", "h": "20%", "color": "#764ba2"},
+                        {"name": "标定板类型", "x": "5%", "y": "30%", "w": "40%", "h": "20%", "color": "#28a745"},
+                        {"name": "标定板尺寸", "x": "55%", "y": "30%", "w": "40%", "h": "20%", "color": "#ffc107"},
+                        {"name": "网格数量", "x": "5%", "y": "55%", "w": "40%", "h": "20%", "color": "#dc3545"},
+                        {"name": "单元格大小", "x": "55%", "y": "55%", "w": "40%", "h": "20%", "color": "#17a2b8"},
+                    ],
+                    "details": {
+                        "参数说明": [
+                            "相机型号：支持多种工业相机和USB相机",
+                            "分辨率：设置图像采集的分辨率（宽×高）",
+                            "标定板类型：支持棋盘格、圆形阵列、ChArUco等",
+                            "标定板尺寸：标定板的实际物理尺寸（mm）",
+                            "网格数量：标定板的行列数",
+                            "单元格大小：每个网格的实际尺寸（mm）",
+                        ],
+                        "配置建议": [
+                            "确保相机参数与实际硬件匹配",
+                            "标定板尺寸需精确测量，误差应小于0.1mm",
+                            "网格数量影响标定精度，建议使用7×9或更大规格",
+                        ],
+                    }
+                }),
                 ("标定设置区", "标定算法和参数设置"),
                 ("输出区", "标定结果和日志输出显示"),
                 ("进度区", "标定进度实时显示"),
@@ -348,6 +399,75 @@ def generate_html():
         .item-image img {
             cursor: zoom-in;
         }
+
+        /* 图片区域标注样式 */
+        .image-container {
+            position: relative;
+            display: inline-block;
+            width: 100%;
+        }
+
+        .image-region {
+            position: absolute;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            opacity: 0.7;
+        }
+
+        .image-region:hover {
+            opacity: 1;
+            transform: scale(1.02);
+        }
+
+        .region-label {
+            position: absolute;
+            top: -12px;
+            left: 5px;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            color: white;
+            white-space: nowrap;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+
+        /* 结构化内容样式 */
+        .item-description {
+            margin-bottom: 20px;
+            color: #6c757d;
+            font-size: 1.05em;
+        }
+
+        .detail-section {
+            margin-top: 20px;
+            padding: 15px;
+            background: white;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+
+        .detail-section h4 {
+            color: #667eea;
+            margin-bottom: 12px;
+            font-size: 1.1em;
+        }
+
+        .detail-section ul {
+            margin: 0;
+            padding-left: 20px;
+            list-style-type: disc;
+        }
+
+        .detail-section li {
+            margin-bottom: 8px;
+            color: #495057;
+            line-height: 1.6;
+        }
+
+        .item-content.full-width {
+            flex: 1;
+        }
     </style>
     <script>
         // 图片双击放大功能
@@ -445,18 +565,96 @@ def generate_html():
             <h2>{section['title']}</h2>
 """
 
-            for i, (item_name, item_desc) in enumerate(section["items"]):
+            for i, item_data in enumerate(section["items"]):
+                # 处理新的字典格式或旧的元组格式
+                if isinstance(item_data, tuple) and len(item_data) == 2:
+                    item_name, item_content = item_data
+                    if isinstance(item_content, str):
+                        # 旧格式：只有字符串描述
+                        regions = []
+                        details = {}
+                        description = item_content
+                    else:
+                        # 新格式：字典
+                        description = item_content.get("description", "")
+                        regions = item_content.get("regions", [])
+                        details = item_content.get("details", {})
+                else:
+                    continue
+
                 image_path = pics_dir / f"{item_name}.png"
                 if image_path.exists():
                     img_base64 = get_base64_image(image_path)
+
+                    # 生成图片区域标注
+                    regions_html = ""
+                    for region in regions:
+                        regions_html += f"""
+                        <div class="image-region" style="
+                            left: {region['x']};
+                            top: {region['y']};
+                            width: {region['w']};
+                            height: {region['h']};
+                            border: 3px solid {region['color']};
+                            background: {region['color']}22;
+                        ">
+                            <span class="region-label" style="background: {region['color']};">{region['name']}</span>
+                        </div>
+"""
+
+                    # 生成结构化内容
+                    details_html = ""
+                    for section_name, items in details.items():
+                        details_html += f"""
+                        <div class="detail-section">
+                            <h4>{section_name}</h4>
+                            <ul>
+"""
+                        for item in items:
+                            details_html += f'                                <li>{item}</li>\n'
+                        details_html += """
+                            </ul>
+                        </div>
+"""
+
                     html_content += f"""
             <div class="item" id="{item_name}">
                 <div class="item-content">
                     <h3>{item_name}</h3>
-                    <p>{item_desc}</p>
+                    <p class="item-description">{description}</p>
+                    {details_html}
                 </div>
                 <div class="item-image">
-                    <img src="data:image/png;base64,{img_base64}" alt="{item_name}">
+                    <div class="image-container">
+                        <img src="data:image/png;base64,{img_base64}" alt="{item_name}">
+                        {regions_html}
+                    </div>
+                </div>
+            </div>
+"""
+                else:
+                    # 没有图片的情况
+                    details_html = ""
+                    if isinstance(item_content, dict):
+                        for section_name, items in item_content.get("details", {}).items():
+                            details_html += f"""
+                            <div class="detail-section">
+                                <h4>{section_name}</h4>
+                                <ul>
+"""
+                            for item in items:
+                                details_html += f'                                <li>{item}</li>\n'
+                            details_html += """
+                                </ul>
+                            </div>
+"""
+
+                    html_content += f"""
+            <div class="item" id="{item_name}">
+                <div class="item-content full-width">
+                    <h3>{item_name}</h3>
+                    <p class="item-description">{description}</p>
+                    {details_html}
                 </div>
             </div>
 """

@@ -213,7 +213,7 @@ def generate_html():
         }
 
         .item-content {
-            flex: 0 0 35%;
+            flex: 1;
             padding: 25px;
             background: #f8f9fa;
             border-radius: 12px;

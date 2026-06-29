@@ -63,7 +63,7 @@ def _resolve_default_cm_install() -> Path:
 DEFAULT_CM_INSTALL = _resolve_default_cm_install()
 DEFAULT_CONFIG_DIR = Path(__file__).resolve().parents[2] / "configs"
 CARMAKER_PROCESS_NAMES = ("CarMaker.win64.exe", "HIL.exe", "CM_Office.exe", "TM_Office.exe")
-RUNTIME_CARMAKER_PROCESS_NAMES = ("CarMaker.win64.exe", "CM_Office.exe", "TM_Office.exe")
+RUNTIME_CARMAKER_PROCESS_NAMES = ("CarMaker.win64.exe", "CM_Office.exe", "TM_Office.exe", "HIL.exe")
 DEFAULT_MOVIE_APPHOST = "kel"
 
 logger = logging.getLogger(__name__)

@@ -500,6 +500,12 @@ def generate_html():
                         description = item_content.get("description", "")
                         regions = item_content.get("regions", [])
                         details = item_content.get("details", {})
+                elif isinstance(item_data, dict):
+                    # 纯字典格式
+                    item_name = item_data.get("name", f"Item {i}")
+                    description = item_data.get("description", "")
+                    regions = item_data.get("regions", [])
+                    details = item_data.get("details", {})
                 else:
                     continue
 

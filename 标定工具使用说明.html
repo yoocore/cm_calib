@@ -151,12 +151,12 @@
             align-items: flex-start;
         }
 
-        .item:first-child {
-            flex-direction: column;
-            align-items: center;
+        .item-vertical {
+            flex-direction: column !important;
+            align-items: center !important;
         }
 
-        .item:first-child .item-content {
+        .item-vertical .item-content {
             width: 100%;
             max-width: 800px;
         }
@@ -471,7 +471,7 @@
         <div class="section">
             <h2>第一部分：界面概览</h2>
 
-            <div class="item" id="初始页面">
+            <div class="item item-vertical" id="初始页面">
                 <div class="item-content">
                     <h3>初始页面</h3>
                     <p class="item-description">软件启动界面，整体布局介绍</p>

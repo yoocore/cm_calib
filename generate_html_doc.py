@@ -174,12 +174,12 @@ def generate_html():
             align-items: flex-start;
         }
 
-        .item:first-child {
-            flex-direction: column;
-            align-items: center;
+        .item-vertical {
+            flex-direction: column !important;
+            align-items: center !important;
         }
 
-        .item:first-child .item-content {
+        .item-vertical .item-content {
             width: 100%;
             max-width: 800px;
         }
@@ -554,8 +554,11 @@ def generate_html():
                         </div>
 """
 
+                    # 为初始页面使用垂直布局
+                    item_class = "item item-vertical" if item_name == "初始页面" else "item"
+
                     html_content += f"""
-            <div class="item" id="{item_name}">
+            <div class="{item_class}" id="{item_name}">
                 <div class="item-content">
                     <h3>{item_name}</h3>
                     <p class="item-description">{description}</p>
@@ -585,8 +588,11 @@ def generate_html():
                         </div>
 """
 
+                    # 为初始页面使用垂直布局
+                    item_class = "item item-vertical" if item_name == "初始页面" else "item"
+
                     html_content += f"""
-            <div class="item" id="{item_name}">
+            <div class="{item_class}" id="{item_name}">
                 <div class="item-content full-width">
                     <h3>{item_name}</h3>
                     <p class="item-description">{description}</p>

@@ -668,31 +668,9 @@ def generate_html():
 
             html_content += "        </div>\n"
 
-    # 生成流程图
-    html_content += """
-        <div class="flowchart">
-            <h2>🔄 标定流程概览</h2>
-            <div class="flow-steps">
-                <div class="flow-step">初始页面</div>
-                <div class="flow-arrow">→</div>
-                <div class="flow-step">cm配置区</div>
-                <div class="flow-arrow">→</div>
-                <div class="flow-step">标定设置区</div>
-                <div class="flow-arrow">→</div>
-                <div class="flow-step">标定开始</div>
-                <div class="flow-arrow">→</div>
-                <div class="flow-step">标定进行</div>
-                <div class="flow-arrow">→</div>
-                <div class="flow-step">实时得分监控</div>
-                <div class="flow-arrow">→</div>
-                <div class="flow-step">虚实重叠验证</div>
-                <div class="flow-arrow">→</div>
-                <div class="flow-step">标定完成</div>
-            </div>
-        </div>
-
+        html_content += """
         <div class="footer">
-            <p>📅 文档生成时间：2026-06-29 | 标定工具使用说明 v1.0</p>
+            <p>Generated: 2026-06-29 | Calibration Tool Documentation v1.0</p>
         </div>
     </div>
 </body>

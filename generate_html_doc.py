@@ -247,7 +247,97 @@ def generate_html():
                 max-width: 100%;
             }
         }
+
+        /* 图片双击放大 modal 样式 */
+        .image-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.9);
+            z-index: 9999;
+            justify-content: center;
+            align-items: center;
+            cursor: zoom-out;
+        }
+
+        .image-modal.active {
+            display: flex;
+        }
+
+        .image-modal img {
+            max-width: 90vw;
+            max-height: 90vh;
+            object-fit: contain;
+            border-radius: 8px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+        }
+
+        .image-modal .close-btn {
+            position: absolute;
+            top: 20px;
+            right: 30px;
+            color: white;
+            font-size: 40px;
+            font-weight: bold;
+            cursor: pointer;
+            z-index: 10000;
+            transition: color 0.2s;
+        }
+
+        .image-modal .close-btn:hover {
+            color: #667eea;
+        }
+
+        /* 图片悬停提示 */
+        .item-image img {
+            cursor: zoom-in;
+        }
     </style>
+    <script>
+        // 图片双击放大功能
+        document.addEventListener('DOMContentLoaded', function() {
+            // 创建 modal 元素
+            const modal = document.createElement('div');
+            modal.className = 'image-modal';
+            modal.innerHTML = '<span class="close-btn">&times;</span><img src="" alt="放大图片">';
+            document.body.appendChild(modal);
+
+            const modalImg = modal.querySelector('img');
+            const closeBtn = modal.querySelector('.close-btn');
+
+            // 为所有图片添加双击事件
+            document.querySelectorAll('.item-image img').forEach(img => {
+                img.addEventListener('dblclick', function(e) {
+                    e.preventDefault();
+                    modalImg.src = this.src;
+                    modalImg.alt = this.alt;
+                    modal.classList.add('active');
+                });
+            });
+
+            // 点击关闭按钮关闭 modal
+            closeBtn.addEventListener('click', function() {
+                modal.classList.remove('active');
+            });
+
+            // 点击 modal 背景关闭
+            modal.addEventListener('click', function(e) {
+                if (e.target === modal) {
+                    modal.classList.remove('active');
+                }
+            });
+
+            // ESC 键关闭 modal
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape' && modal.classList.contains('active')) {
+                    modal.classList.remove('active');
+                }
+            });
+        });
+    </script>
 </head>
 <body>
     <div class="container">

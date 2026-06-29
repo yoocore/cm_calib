@@ -210,7 +210,7 @@ class AnnotationMixin:
         info_lines.extend(
             (line, (220, 245, 220)) for line in self._format_value_lines(param_values)
         )
-        legend_lines = _build_annotation_legend_lines(total_detail)
+        legend_lines = _build_annotation_legend_lines(total_detail, boards=self.boards)
         for index, legend_text in enumerate(legend_lines):
             color = palette[index % len(palette)]
             info_lines.append((legend_text, color))

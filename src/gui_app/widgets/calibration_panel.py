@@ -242,25 +242,6 @@ class CalibrationPanel(QGroupBox):
         self.phase_label.setWordWrap(True)
         self.phase_label.hide()
 
-        cm_versions = detect_cm_versions()
-        self.cm_version_combo = QComboBox()
-        self.cm_version_combo.addItem("Select CM version", None)
-        if not cm_versions:
-            self.cm_version_combo.setItemText(0, "Select CM version")
-        else:
-            for ver, install_path in cm_versions.items():
-                self.cm_version_combo.addItem(ver, install_path)
-            self.cm_version_combo.setCurrentIndex(0)
-        idx = self.cm_version_combo.count()
-        self.cm_version_combo.addItem("not support ver.CM14-")
-        self.cm_version_combo.model().item(idx).setEnabled(False)
-        self.cm_version_combo.setFixedHeight(36)
-
-        self.maker_combo = QComboBox()
-        self.maker_combo.addItem("CarMaker", "carmaker")
-        self.maker_combo.addItem("TruckMaker", "truckmaker")
-        self.maker_combo.setFixedHeight(36)
-
         self.start_button = QPushButton("Calib Start")
         self.start_button.setDefault(True)
         self.start_button.setAutoDefault(True)
@@ -323,12 +304,6 @@ class CalibrationPanel(QGroupBox):
         status_row.addWidget(QLabel("Status"))
         status_row.addWidget(self.status_label, 1)
 
-        cm_row = QWidget(self.control_group)
-        cm_layout = QHBoxLayout(cm_row)
-        cm_layout.setContentsMargins(0, 0, 0, 0)
-        cm_layout.addWidget(self.maker_combo)
-        cm_layout.addWidget(self.cm_version_combo, 1)
-
         button_row = QWidget(self.control_group)
         button_layout = QHBoxLayout(button_row)
         button_layout.setContentsMargins(0, 0, 0, 0)
@@ -339,8 +314,6 @@ class CalibrationPanel(QGroupBox):
         layout.setContentsMargins(8, 4, 8, 6)
         layout.setSpacing(6)
         layout.addWidget(self.strategy_group)
-        control_layout.addWidget(cm_row)
-        control_layout.addSpacing(1)
         control_layout.addWidget(status_wrapper)
         control_layout.addSpacing(2)
         control_layout.addWidget(self.prepare_button)
@@ -374,16 +347,24 @@ class CalibrationPanel(QGroupBox):
 
     @property
     def cm_install_path(self) -> Path | None:
-        data = self.cm_version_combo.currentData()
-        if isinstance(data, Path):
-            return data
+        cm_settings = self.parent().findChild(QWidget, "") or self.parent().findChild(QGroupBox)
+        # Walk up to MainWindow then find CmSettingsPanel
+        parent = self.parent()
+        while parent is not None:
+            cm = getattr(parent, "cm_settings_panel", None)
+            if cm is not None:
+                return cm.cm_install_path
+            parent = parent.parent()
         return None
 
     @property
     def maker_type(self) -> str:
-        data = self.maker_combo.currentData()
-        if isinstance(data, str):
-            return data
+        parent = self.parent()
+        while parent is not None:
+            cm = getattr(parent, "cm_settings_panel", None)
+            if cm is not None:
+                return cm.maker_type
+            parent = parent.parent()
         return "carmaker"
 
     def _on_estimated_time_changed(self) -> None:
@@ -441,10 +422,9 @@ class CalibrationPanel(QGroupBox):
         self._er_count_spin.setEnabled(not locked)
         self._er_iters_spin.setEnabled(not locked)
         self._er_refine_iters_spin.setEnabled(not locked)
-        self.jitter_spin.setEnabled(not locked and not self.jitter_auto_cb.isChecked())
         self.jitter_auto_cb.setEnabled(not locked)
-        self.cm_version_combo.setEnabled(not locked)
-        self.maker_combo.setEnabled(not locked)
+        self.jitter_spin.setEnabled(not locked and not self.jitter_auto_cb.isChecked())
+        self.jitter_spin.setEnabled(not locked and not self.jitter_auto_cb.isChecked())
 
     def sizeHint(self) -> QSize:
         hint = super().sizeHint()

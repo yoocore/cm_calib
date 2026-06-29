@@ -8,8 +8,8 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QComboBox,
     QFileDialog,
-    QMessageBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -17,12 +17,15 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QPushButton,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
+
+from src.gui_app.widgets.calibration_panel import detect_cm_versions
 
 _DEFAULT_BROWSE_ROOT = "C:/CM_Projects"
 _GREEN = QBrush(QColor("#4caf50"))
@@ -128,10 +131,37 @@ class CmSettingsPanel(QGroupBox):
         form.addRow("TestRun", testrun_row)
         form.addRow("Vehicle", self.vehicle_label)
 
+        cm_versions = detect_cm_versions()
+        self.maker_combo = QComboBox()
+        self.maker_combo.addItem("CarMaker", "carmaker")
+        self.maker_combo.addItem("TruckMaker", "truckmaker")
+        self.maker_combo.setFixedWidth(120)
+        self.maker_combo.setFixedHeight(30)
+
+        self.cm_version_combo = QComboBox()
+        self.cm_version_combo.addItem("Select CM version", None)
+        if not cm_versions:
+            self.cm_version_combo.setItemText(0, "Select CM version")
+        else:
+            for ver, install_path in cm_versions.items():
+                self.cm_version_combo.addItem(ver, install_path)
+            self.cm_version_combo.setCurrentIndex(0)
+        idx = self.cm_version_combo.count()
+        self.cm_version_combo.addItem("not support ver.CM14-")
+        self.cm_version_combo.model().item(idx).setEnabled(False)
+        self.cm_version_combo.setFixedHeight(30)
+
+        cm_row = QWidget()
+        cm_row_layout = QHBoxLayout(cm_row)
+        cm_row_layout.setContentsMargins(0, 0, 0, 0)
+        cm_row_layout.addWidget(self.maker_combo)
+        cm_row_layout.addWidget(self.cm_version_combo, 1)
+
         self.project_group = _SectionGroup("Project Inputs", self)
         project_layout = QVBoxLayout(self.project_group)
         project_layout.setContentsMargins(10, 6, 10, 8)
         project_layout.addLayout(form)
+        project_layout.addWidget(cm_row)
 
         self.camera_group = _SectionGroup("Camera Selection", self)
         camera_layout = QVBoxLayout(self.camera_group)
@@ -145,6 +175,20 @@ class CmSettingsPanel(QGroupBox):
         layout.setSpacing(6)
         layout.addWidget(self.project_group)
         layout.addWidget(self.camera_group, 1)
+
+    @property
+    def cm_install_path(self) -> Path | None:
+        data = self.cm_version_combo.currentData()
+        if isinstance(data, Path):
+            return data
+        return None
+
+    @property
+    def maker_type(self) -> str:
+        data = self.maker_combo.currentData()
+        if isinstance(data, str):
+            return data
+        return "carmaker"
 
     def _browse_project_root(self) -> None:
         start = self.project_root_edit.text().strip() or _DEFAULT_BROWSE_ROOT
@@ -402,3 +446,5 @@ class CmSettingsPanel(QGroupBox):
         self.testrun_browse_button.setEnabled(not locked)
         self.testrun_browse_button.setToolTip(tip)
         self.camera_list.setEnabled(not locked)
+        self.maker_combo.setEnabled(not locked)
+        self.cm_version_combo.setEnabled(not locked)

@@ -1,0 +1,183 @@
+{
+  "sections": [
+    {
+      "title": "主要功能",
+      "type": "intro",
+      "features": [
+        "支持多种标定板类型和相机型号",
+        "实时显示标定进度和得分变化",
+        "自动记录历史数据，支持多次标定对比",
+        "集成多路径寻优、坐标下降、贝叶斯优化等算法",
+        "提供虚实重叠验证，直观评估标定效果",
+        "监控测试功能"
+      ]
+    },
+    {
+      "title": "第一部分：界面概览",
+      "items": [
+        {
+          "name": "初始页面",
+          "description": "软件启动界面，整体布局介绍",
+          "regions": [
+            {
+              "name": "项目配置区",
+              "x": "0%",
+              "y": "0%",
+              "w": "28%",
+              "h": "57%",
+              "color": "#28a745"
+            },
+            {
+              "name": "标定设置区",
+              "x": "28%",
+              "y": "0%",
+              "w": "20%",
+              "h": "57%",
+              "color": "#ffc107"
+            },
+            {
+              "name": "输出区",
+              "x": "48%",
+              "y": "0%",
+              "w": "52%",
+              "h": "98%",
+              "color": "#dc3545"
+            },
+            {
+              "name": "进度区",
+              "x": "0%",
+              "y": "57%",
+              "w": "48%",
+              "h": "41%",
+              "color": "#17a2b8"
+            }
+          ],
+          "details": {
+            "结构组成": [
+              "项目配置区：配置相机参数、标定板类型和规格",
+              "标定设置区：选择标定算法和调整优化参数",
+              "输出区：实时显示标定进度、日志和结果",
+              "进度区：可视化显示当前标定进度和耗时"
+            ]
+          }
+        },
+        {
+          "name": "CarMaker配置区",
+          "description": "配置CarMaker工程、选择标定相机及生成配置",
+          "details": {
+            "参数说明": [
+              {
+                "title": "Project Inputs：CarMaker配置",
+                "items": [
+                  "ProjectDir：选择CarMaker Project路径",
+                  "TestRun：选择TestRun路径",
+                  "Vehicle：显示选中TestRun的车辆信息",
+                  "Maker Type：选择xxMaker类型，目前支持CM和TM",
+                  "Version：选择xxMaker版本，目前支持ver14+"
+                ]
+              },
+              {
+                "title": "Camera Selection：选择标定相机及生成标定配置",
+                "items": [
+                  "Wizard：点击后进入标定配置生成向导界面",
+                  "Config：默认置灰，直到Wizard完成，点击后打开标定配置文件夹"
+                ]
+              }
+            ],
+            "使用说明": [
+              "sensor勾选：仅勾选sensor参与标定",
+              "：：拖动：sensor在前的先进行标定",
+              "precheck：✔️/❌表明config配置是否满足标定要求"
+            ]
+          }
+        },
+        {
+          "name": "标定设置区",
+          "description": "标定算法和参数设置",
+          "参数说明": [
+            {
+              "title": "Campaign Rounds：CarMaker配置",
+              "items": [
+                "ProjectDir：选择CarMaker Project路径",
+                "TestRun：选择TestRun路径",
+                "Vehicle：显示选中TestRun的车辆信息",
+                "Maker Type：选择xxMaker类型，目前支持CM和TM",
+                "Version：选择xxMaker版本，目前支持ver14+"
+              ]
+            },
+            {
+              "title": "Camera Selection：选择标定相机及生成标定配置",
+              "items": [
+                "Wizard：点击后进入标定配置生成向导界面",
+                "Config：默认置灰，直到Wizard完成，点击后打开标定配置文件夹"
+              ]
+            }
+          ],
+          "使用说明": [
+            "sensor勾选：仅勾选sensor参与标定",
+            "：：拖动：sensor在前的先进行标定",
+            "precheck：✔️/❌表明config配置是否满足标定要求"
+          ]
+        },
+        {
+          "name": "标定向导主页面",
+          "description": "标定配置生成向导的入口界面，提供快速配置选项"
+        },
+        {
+          "name": "标定向导详细配置",
+          "description": "标定参数的详细设置界面，支持自定义标定板和相机参数"
+        },
+        {
+          "name": "标定向导输出与预览",
+          "description": "标定配置的预览和导出，生成最终的标定配置文件"
+        },
+        {
+          "name": "输出展示区",
+          "description": "标定结果和日志输出显示"
+        },
+        {
+          "name": "标定进度区",
+          "description": "标定进度实时显示"
+        }
+      ]
+    },
+    {
+      "title": "第二部分：标定流程",
+      "items": [
+        {
+          "name": "标定开始",
+          "description": "启动标定过程的界面"
+        },
+        {
+          "name": "标定进行",
+          "description": "标定执行中的状态展示"
+        }
+      ]
+    },
+    {
+      "title": "第三部分：评分与验证",
+      "items": [
+        {
+          "name": "本轮得分趋势",
+          "description": "当前轮次标定效果的得分变化"
+        },
+        {
+          "name": "历史得分趋势",
+          "description": "全部标定轮次的得分历史统计"
+        },
+        {
+          "name": "得分",
+          "description": "标定得分汇总和指标展示"
+        },
+        {
+          "name": "虚实重叠",
+          "description": "实际图像与虚拟图像的对比叠加，用于验证标定效果"
+        },
+        {
+          "name": "标定完成",
+          "description": "标定流程完成后的最终结果界面"
+        }
+      ]
+    }
+  ]
+}

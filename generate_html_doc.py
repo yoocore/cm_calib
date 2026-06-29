@@ -175,16 +175,25 @@ def generate_html():
         }
 
         .item-vertical {
-            flex-direction: column-reverse !important;
+            display: flex;
+            flex-direction: column !important;
             align-items: center !important;
         }
 
-        .item-vertical .item-content {
+        .item-vertical .item-header {
+            text-align: center;
+            margin-bottom: 20px;
             width: 100%;
             max-width: 1000px;
         }
 
         .item-vertical .item-image {
+            width: 100%;
+            max-width: 1000px;
+            margin-bottom: 20px;
+        }
+
+        .item-vertical .item-content {
             width: 100%;
             max-width: 1000px;
         }
@@ -560,10 +569,27 @@ def generate_html():
 """
 
                     # 为初始页面使用垂直布局
-                    item_class = "item item-vertical" if item_name == "初始页面" else "item"
-
-                    html_content += f"""
-            <div class="{item_class}" id="{item_name}">
+                    if item_name == "初始页面":
+                        html_content += f"""
+            <div class="item item-vertical" id="{item_name}">
+                <div class="item-header">
+                    <h3>{item_name}</h3>
+                    <p class="item-description">{description}</p>
+                </div>
+                <div class="item-image">
+                    <div class="image-container">
+                        <img src="data:image/png;base64,{img_base64}" alt="{item_name}">
+                        {regions_html}
+                    </div>
+                </div>
+                <div class="item-content">
+                    {details_html}
+                </div>
+            </div>
+"""
+                    else:
+                        html_content += f"""
+            <div class="item" id="{item_name}">
                 <div class="item-content">
                     <h3>{item_name}</h3>
                     <p class="item-description">{description}</p>
@@ -594,10 +620,21 @@ def generate_html():
 """
 
                     # 为初始页面使用垂直布局
-                    item_class = "item item-vertical" if item_name == "初始页面" else "item"
-
-                    html_content += f"""
-            <div class="{item_class}" id="{item_name}">
+                    if item_name == "初始页面":
+                        html_content += f"""
+            <div class="item item-vertical" id="{item_name}">
+                <div class="item-header">
+                    <h3>{item_name}</h3>
+                    <p class="item-description">{description}</p>
+                </div>
+                <div class="item-content">
+                    {details_html}
+                </div>
+            </div>
+"""
+                    else:
+                        html_content += f"""
+            <div class="item" id="{item_name}">
                 <div class="item-content full-width">
                     <h3>{item_name}</h3>
                     <p class="item-description">{description}</p>

@@ -152,16 +152,25 @@
         }
 
         .item-vertical {
-            flex-direction: column-reverse !important;
+            display: flex;
+            flex-direction: column !important;
             align-items: center !important;
         }
 
-        .item-vertical .item-content {
+        .item-vertical .item-header {
+            text-align: center;
+            margin-bottom: 20px;
             width: 100%;
             max-width: 1000px;
         }
 
         .item-vertical .item-image {
+            width: 100%;
+            max-width: 1000px;
+            margin-bottom: 20px;
+        }
+
+        .item-vertical .item-content {
             width: 100%;
             max-width: 1000px;
         }
@@ -477,32 +486,9 @@
             <h2>第一部分：界面概览</h2>
 
             <div class="item item-vertical" id="初始页面">
-                <div class="item-content">
+                <div class="item-header">
                     <h3>初始页面</h3>
                     <p class="item-description">软件启动界面，整体布局介绍</p>
-                    
-                        <div class="detail-section">
-                            <h4>结构组成</h4>
-                            <ul>
-                                <li>项目配置区：配置相机参数、标定板类型和规格</li>
-                                <li>标定设置区：选择标定算法和调整优化参数</li>
-                                <li>输出区：实时显示标定进度、日志和结果</li>
-                                <li>进度区：可视化显示当前标定进度和耗时</li>
-
-                            </ul>
-                        </div>
-
-                        <div class="detail-section">
-                            <h4>初始化流程</h4>
-                            <ul>
-                                <li>启动软件后自动进入初始界面</li>
-                                <li>根据项目需求配置相机和标定板参数</li>
-                                <li>设置标定算法和优化选项</li>
-                                <li>点击「开始标定」按钮启动流程</li>
-
-                            </ul>
-                        </div>
-
                 </div>
                 <div class="item-image">
                     <div class="image-container">
@@ -553,6 +539,31 @@
                         </div>
 
                     </div>
+                </div>
+                <div class="item-content">
+                    
+                        <div class="detail-section">
+                            <h4>结构组成</h4>
+                            <ul>
+                                <li>项目配置区：配置相机参数、标定板类型和规格</li>
+                                <li>标定设置区：选择标定算法和调整优化参数</li>
+                                <li>输出区：实时显示标定进度、日志和结果</li>
+                                <li>进度区：可视化显示当前标定进度和耗时</li>
+
+                            </ul>
+                        </div>
+
+                        <div class="detail-section">
+                            <h4>初始化流程</h4>
+                            <ul>
+                                <li>启动软件后自动进入初始界面</li>
+                                <li>根据项目需求配置相机和标定板参数</li>
+                                <li>设置标定算法和优化选项</li>
+                                <li>点击「开始标定」按钮启动流程</li>
+
+                            </ul>
+                        </div>
+
                 </div>
             </div>
 

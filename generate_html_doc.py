@@ -105,6 +105,40 @@ def generate_html():
             opacity: 0.9;
         }
 
+        .intro-section {
+            background: linear-gradient(135deg, #667eea22 0%, #764ba222 100%);
+            padding: 40px 50px;
+            border-bottom: 2px solid #e9ecef;
+        }
+
+        .intro-text {
+            font-size: 1.1em;
+            line-height: 1.8;
+            color: #2c3e50;
+            margin-bottom: 25px;
+        }
+
+        .intro-features h3 {
+            color: #495057;
+            font-size: 1.2em;
+            margin-bottom: 15px;
+        }
+
+        .intro-features ul {
+            list-style: none;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 12px;
+        }
+
+        .intro-features li {
+            background: white;
+            padding: 12px 20px;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        }
+
         .toc {
             background: #f8f9fa;
             padding: 30px 50px;
@@ -326,39 +360,6 @@ def generate_html():
         .item-image img {
             cursor: zoom-in;
         }
-
-        /* 工具介绍样式 */
-        .intro-section {
-            background: linear-gradient(135deg, #667eea22 0%, #764ba222 100%);
-        }
-
-        .intro-text {
-            font-size: 1.1em;
-            line-height: 1.8;
-            color: #2c3e50;
-            margin-bottom: 25px;
-        }
-
-        .intro-features h3 {
-            color: #495057;
-            font-size: 1.2em;
-            margin-bottom: 15px;
-        }
-
-        .intro-features ul {
-            list-style: none;
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 12px;
-        }
-
-        .intro-features li {
-            background: white;
-            padding: 12px 20px;
-            border-radius: 8px;
-            border-left: 4px solid #667eea;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-        }
     </style>
     <script>
         // 图片双击放大功能
@@ -409,27 +410,9 @@ def generate_html():
             <h1>📸 标定工具使用说明</h1>
             <p>完整的界面介绍与操作流程指南</p>
         </div>
-
-        <div class="toc">
-            <h2>📑 目录导航</h2>
 """
 
-    # 生成目录
-    for section in sections:
-        if section.get("type") != "intro":
-            html_content += f'            <div class="toc-section">\n'
-            html_content += f'                <div class="toc-section-title">{section["title"]}</div>\n'
-            html_content += f'                <ul>\n'
-            for item_name, _ in section["items"]:
-                html_content += f'                    <li><a href="#{item_name}">{item_name}</a></li>\n'
-            html_content += f'                </ul>\n'
-            html_content += f'            </div>\n'
-
-    html_content += """
-        </div>
-"""
-
-    # 生成各部分内容
+    # 生成工具介绍部分（在导航之前）
     for section in sections:
         if section.get("type") == "intro":
             html_content += f"""
@@ -447,7 +430,30 @@ def generate_html():
             </div>
         </div>
 """
-        else:
+
+    html_content += """
+        <div class="toc">
+            <h2>📑 目录导航</h2>
+"""
+
+    # 生成目录（跳过intro类型）
+    for section in sections:
+        if section.get("type") != "intro":
+            html_content += f'            <div class="toc-section">\n'
+            html_content += f'                <div class="toc-section-title">{section["title"]}</div>\n'
+            html_content += f'                <ul>\n'
+            for item_name, _ in section["items"]:
+                html_content += f'                    <li><a href="#{item_name}">{item_name}</a></li>\n'
+            html_content += f'                </ul>\n'
+            html_content += f'            </div>\n'
+
+    html_content += """
+        </div>
+"""
+
+    # 生成各部分内容（跳过intro类型）
+    for section in sections:
+        if section.get("type") != "intro":
             html_content += f"""
         <div class="section">
             <h2>{section['title']}</h2>

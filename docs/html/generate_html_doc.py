@@ -174,10 +174,6 @@ def generate_html():
             align-items: flex-start;
         }
 
-        .item:nth-child(even) {
-            flex-direction: row-reverse;
-        }
-
         .item-visual {
             flex: 1;
             min-width: 400px;

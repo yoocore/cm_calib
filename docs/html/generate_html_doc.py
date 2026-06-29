@@ -21,6 +21,7 @@ def generate_html():
 
     sections = config["sections"]
     doc_title = config.get("title", "标定工具使用说明")
+    doc_subtitle = config.get("subtitle", "完整的界面介绍与操作流程指南")
     doc_version = config.get("version", "1.0.0")
 
     html_content = """<!DOCTYPE html>
@@ -475,8 +476,8 @@ def generate_html():
 <body>
     <div class="container">
         <div class="header">
-            <h1>📸 标定工具使用说明</h1>
-            <p>完整的界面介绍与操作流程指南</p>
+            <h1>""" + doc_title + """</h1>
+            <p>""" + doc_subtitle + """</p>
         </div>
 """
 

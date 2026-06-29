@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import StrEnum
+from enum import Enum
 from pathlib import Path
 from typing import Optional
 
 
-class AppStatus(StrEnum):
+class AppStatus(str, Enum):
     IDLE = "idle"
     PREPARING = "preparing"
     PASSIVE = "passive"

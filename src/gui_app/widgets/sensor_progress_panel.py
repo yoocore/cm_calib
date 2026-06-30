@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QEvent
 from PySide6.QtWidgets import QGroupBox, QHBoxLayout, QHeaderView, QLabel, QProgressBar, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
 
 _PANEL_STYLE = (
@@ -61,6 +61,11 @@ class SensorProgressPanel(QGroupBox):
         layout.addLayout(sensor_row)
         layout.addWidget(self.overall_progress_bar)
         layout.addWidget(self.sensor_progress_tree, 1)
+        self._setup_column_sizes()
+
+    def showEvent(self, event: QEvent) -> None:
+        super().showEvent(event)
+        self._setup_column_sizes()
 
     def _setup_column_sizes(self) -> None:
         header = self.sensor_progress_tree.header()

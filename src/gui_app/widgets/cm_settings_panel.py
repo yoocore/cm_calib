@@ -109,8 +109,7 @@ _CONTROL_STYLE = (
     "color: #1e293b;"
     "border: 1px solid #cbd5e1;"
     "border-radius: 6px;"
-    "padding: 6px 12px;"
-    "font-size: 12px;"
+    "padding: 4px 10px;"
     "}"
     "QPushButton:hover {"
     "background-color: #f8fafc;"
@@ -125,13 +124,6 @@ _CONTROL_STYLE = (
     "border: 1px solid #cbd5e1;"
     "border-radius: 6px;"
     "background-color: #ffffff;"
-    "}"
-    "QListWidget::item {"
-    "padding: 4px;"
-    "}"
-    "QListWidget::item:selected {"
-    "background-color: #e8f0fe;"
-    "color: #1e293b;"
     "}"
 )
 
@@ -367,11 +359,12 @@ class CmSettingsPanel(QGroupBox):
 
             row_widget = QWidget()
             row_layout = QHBoxLayout(row_widget)
-            row_layout.setContentsMargins(4, 6, 4, 6)
+            row_layout.setContentsMargins(4, 2, 4, 2)
             row_layout.setSpacing(8)
 
             name_label = QLabel(f"⋮⋮ {camera_name}")
-            row_layout.addWidget(name_label, 1)
+            row_layout.addWidget(name_label)
+            row_layout.addStretch()
 
             check_label = QLabel("")
             check_label.setFixedWidth(20)
@@ -383,49 +376,16 @@ class CmSettingsPanel(QGroupBox):
             row_layout.addWidget(sep)
 
             wizard_btn = QPushButton("Wizard")
-            wizard_btn.setMinimumWidth(70)
-            wizard_btn.setFixedHeight(28)
-            wizard_btn.setStyleSheet(
-                "QPushButton {"
-                "background-color: #ffffff;"
-                "color: #1e293b;"
-                "border: 1px solid #cbd5e1;"
-                "border-radius: 6px;"
-                "padding: 6px 12px;"
-                "}"
-                "QPushButton:hover {"
-                "background-color: #f8fafc;"
-                "border-color: #94a3b8;"
-                "}"
-            )
+            wizard_btn.setFixedWidth(60)
             wizard_btn.clicked.connect(
                 lambda checked, cn=camera_name: self.wizard_for_camera_clicked.emit(cn)
             )
             row_layout.addWidget(wizard_btn)
 
             open_btn = QPushButton("Config")
-            open_btn.setMinimumWidth(70)
-            open_btn.setFixedHeight(28)
+            open_btn.setFixedWidth(60)
             open_btn.setEnabled(False)
             open_btn.setToolTip("No config generated yet")
-            open_btn.setStyleSheet(
-                "QPushButton {"
-                "background-color: #ffffff;"
-                "color: #1e293b;"
-                "border: 1px solid #cbd5e1;"
-                "border-radius: 6px;"
-                "padding: 6px 12px;"
-                "}"
-                "QPushButton:hover {"
-                "background-color: #f8fafc;"
-                "border-color: #94a3b8;"
-                "}"
-                "QPushButton:disabled {"
-                "color: #94a3b8;"
-                "background-color: #f1f5f9;"
-                "border-color: #e2e8f0;"
-                "}"
-            )
             open_btn.clicked.connect(
                 lambda checked, cn=camera_name: self._on_config_clicked(cn)
             )

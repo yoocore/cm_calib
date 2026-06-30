@@ -65,6 +65,27 @@ _PANEL_STYLE = (
 )
 
 
+_CHECKBOX_SVG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "checkbox_checked.svg")
+_CHECKBOX_STYLE = (
+    "QListWidget::indicator {"
+    "    width: 16px;"
+    "    height: 16px;"
+    "    border: 2px solid #6b7280;"
+    "    border-radius: 3px;"
+    "    background-color: #ffffff;"
+    "}"
+    "QListWidget::indicator:checked {"
+    f"    image: url({_CHECKBOX_SVG});"
+    "    border: 2px solid #6b7280;"
+    "    border-radius: 3px;"
+    "    background-color: #ffffff;"
+    "}"
+    "QListWidget::indicator:unchecked {"
+    "    background-color: #ffffff;"
+    "}"
+)
+
+
 class _SectionGroup(QGroupBox):
     def __init__(self, title: str, parent: QWidget | None = None):
         super().__init__(title, parent)
@@ -97,22 +118,7 @@ class CmSettingsPanel(QGroupBox):
         self.camera_list.setAcceptDrops(True)
         self.camera_list.setDropIndicatorShown(True)
         self.camera_list.setToolTip("拖拽调整相机顺序")
-        self.camera_list.setStyleSheet(
-            "QListWidget::indicator {"
-            "    width: 16px;"
-            "    height: 16px;"
-            "    border: 2px solid #6b7280;"
-            "    border-radius: 3px;"
-            "    background-color: #ffffff;"
-            "}"
-            "QListWidget::indicator:checked {"
-            "    border-color: #6b7280;"
-            "    background-color: #ffffff;"
-            "}"
-            "QListWidget::indicator:unchecked {"
-            "    background-color: #ffffff;"
-            "}"
-        )
+        self.camera_list.setStyleSheet(_CHECKBOX_STYLE)
 
         self._camera_check_widgets: dict[str, tuple] = {}
         self._has_precheck_results: bool = False

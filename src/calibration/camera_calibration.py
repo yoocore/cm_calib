@@ -8,6 +8,7 @@ import msvcrt
 import os
 import random
 import re
+import socket
 import shutil
 import subprocess
 import sys
@@ -161,7 +162,7 @@ class CameraCalibrator(DetectorMixin, ScoringMixin, AnnotationMixin, ScriptContr
         self.cmapi_host = str(cfg.get("cmapi_host", "localhost"))
         default_cm_install_root = Path(os.environ.get("IPGHOME", "D:/IPG")) / "carmaker" / "win64-14.1"
         self.cm_install_root = Path(str(cfg.get("cm_install_root", default_cm_install_root)))
-        self.movie_apphost = str(cfg.get("movie_apphost", "kel")).strip() or "kel"
+        self.movie_apphost = str(cfg.get("movie_apphost", socket.gethostname())).strip() or socket.gethostname()
         self.score_scope = _resolve_score_scope_from_cfg(cfg)
         self.output_dir = _resolve_config_output_dir(cfg, config_path)
         cfg["output_dir"] = str(self.output_dir)

@@ -1129,7 +1129,17 @@ class DetectorMixin:
         matched_template_shape: Tuple[int, int] = (int(template_gray.shape[0]), int(template_gray.shape[1]))
         offset = (0, 0)
 
-        sim_sourced = board.board_id in self._sim_sourced_board_ids
+        # For custom_maker boards, template matching is always on SIM images.
+        # Reference detection uses _reference_detection_from_board_geometry
+        # directly (no template matching), so THRESH_BINARY_INV is safe to
+        # skip. Real-image templates vs SIM renderings produce incompatible
+        # binary patterns (NCC ~ 0.1-0.3 vs 0.9+ with raw gray), so skip
+        # binarization entirely for this board type.
+        sim_sourced = (
+            True
+            if _is_custom_marker_board_type(board.board_type)
+            else board.board_id in self._sim_sourced_board_ids
+        )
 
         for padding in roi_attempts:
             roi_img, current_offset = self._extract_roi(eval_image, board.roi, padding=padding)

@@ -231,6 +231,12 @@ class CalibrationPanel(QGroupBox):
         self.jitter_spin.setValue(2.0)
         self.jitter_spin.setDecimals(2)
         self.jitter_spin.setEnabled(False)
+        self.jitter_spin.setStyleSheet(
+            "QDoubleSpinBox::disabled {"
+            "    background-color: #e5e7eb;"
+            "    color: #9ca3af;"
+            "}"
+        )
         self.jitter_auto_cb.toggled.connect(lambda checked: self.jitter_spin.setEnabled(not checked))
 
         self.status_label = QLabel("idle")
@@ -423,7 +429,6 @@ class CalibrationPanel(QGroupBox):
         self._er_iters_spin.setEnabled(not locked)
         self._er_refine_iters_spin.setEnabled(not locked)
         self.jitter_auto_cb.setEnabled(not locked)
-        self.jitter_spin.setEnabled(not locked and not self.jitter_auto_cb.isChecked())
         self.jitter_spin.setEnabled(not locked and not self.jitter_auto_cb.isChecked())
 
     def sizeHint(self) -> QSize:

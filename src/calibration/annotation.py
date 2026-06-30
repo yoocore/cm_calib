@@ -142,27 +142,6 @@ class AnnotationMixin:
                 else:
                     x, y, width, height = self._points_bbox(mapped_points)
                     cv2.rectangle(sim_bgr, (x, y), (x + width, y + height), color, 2)
-
-                # Draw expected ROI box as a semi-transparent overlay for comparison
-                if board.roi is not None:
-                    rx, ry, rw, rh = board.roi
-                    sx = transform.scale_x
-                    sy = transform.scale_y
-                    ox = transform.offset_x
-                    oy = transform.offset_y
-                    roi_src_x = int(round(rx / sx - ox / sx)) if sx > 0 else rx
-                    roi_src_y = int(round(ry / sy - oy / sy)) if sy > 0 else ry
-                    roi_src_w = int(round(rw / sx)) if sx > 0 else rw
-                    roi_src_h = int(round(rh / sy)) if sy > 0 else rh
-                    overlay = sim_bgr.copy()
-                    cv2.rectangle(
-                        overlay,
-                        (roi_src_x, roi_src_y),
-                        (roi_src_x + roi_src_w, roi_src_y + roi_src_h),
-                        color, 2,
-                    )
-                    cv2.addWeighted(overlay, 0.25, sim_bgr, 0.75, 0, sim_bgr)
-
                 for point in mapped_points:
                     cv2.circle(
                         sim_bgr,

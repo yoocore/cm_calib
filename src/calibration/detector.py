@@ -266,15 +266,15 @@ class DetectorMixin:
                     ]
                 )
             elif _is_custom_marker_board_type(board.board_type):
-                # Template matching on sim images produces false positives when
-                # the search extends beyond the expected ROI (a random texture
-                # elsewhere in the image can coincidentally match the template).
-                # Unlike checkerboard/aruco (geometric constraints prevent false
-                # positives), template_match has no such safeguards, so it must
-                # search only the ROI region itself.  A board whose sim position
-                # is completely outside the ROI will score high (fail penalty)
-                # and the optimizer will iteratively pull it back into view.
-                auto_paddings = []
+                source_roi = board.template_source_roi or board.roi
+                _, _, source_w, source_h = source_roi
+                source_span = max(1, int(max(source_w, source_h)))
+                auto_paddings.extend(
+                    [
+                        max(240, int(round(source_span * 1.5))),
+                        max(480, int(round(source_span * 3.0))),
+                    ]
+                )
 
             for padding_value in auto_paddings:
                 attempts.append(min(max_auto_padding, padding_value))
@@ -1124,7 +1124,6 @@ class DetectorMixin:
         best_failure_message = "search roi smaller than template"
         best_failure_value: Optional[float] = None
         match_x: Optional[float] = None
-        match_score_value: float = 0.0
         match_y: Optional[float] = None
         matched_crop: Tuple[int, int, int, int] = (0, 0, int(template_gray.shape[1]), int(template_gray.shape[0]))
         matched_template_shape: Tuple[int, int] = (int(template_gray.shape[0]), int(template_gray.shape[1]))
@@ -1168,7 +1167,6 @@ class DetectorMixin:
                     offset = current_offset
                     match_x = float(offset[0] + current_max_location[0])
                     match_y = float(offset[1] + current_max_location[1])
-                    match_score_value = float(current_max_value)
                     matched_crop = variant_crop
                     matched_template_shape = (int(variant_gray.shape[0]), int(variant_gray.shape[1]))
                     break
@@ -1216,17 +1214,15 @@ class DetectorMixin:
             ],
             dtype=np.float32,
         )
-
-        if match_x is not None and match_y is not None:
-            return DetectionResult(
-                board_id=board.board_id,
-                success=True,
-                point_count=int(anchors.shape[0]),
-                ordered_points=anchors,
-                board_type=board.board_type,
-                roi_used=board.roi,
-                detector="template_match",
-            )
+        return DetectionResult(
+            board_id=board.board_id,
+            success=True,
+            point_count=int(anchors.shape[0]),
+            ordered_points=anchors,
+            board_type=board.board_type,
+            roi_used=board.roi,
+            detector="template_match",
+        )
 
     def _detect_custom_groundmaker(
         self, gray_image: np.ndarray, board: BoardProfile
@@ -1380,18 +1376,9 @@ class DetectorMixin:
         detections: Dict[str, DetectionResult] = {}
         visible_count = 0
         for board in self.boards:
-            if _is_custom_marker_board_type(board.board_type):
-                # Custom boards: use template matching on the real image for
-                # accurate reference detection.  The template was created FROM
-                # the real image's ROI, so matching is reliable.  Fall back to
-                # geometry anchors if template matching fails.
+            detection = self._reference_detection_from_board_geometry(board)
+            if detection is None:
                 detection = self._detect_board(self.real_img, board)
-                if not detection.success:
-                    detection = self._reference_detection_from_board_geometry(board)
-            else:
-                detection = self._reference_detection_from_board_geometry(board)
-                if detection is None:
-                    detection = self._detect_board(self.real_img, board)
             if self._is_visible(detection, self._effective_detection_min_points(board, detection)):
                 visible_count += 1
             detections[board.board_id] = detection

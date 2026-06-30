@@ -200,37 +200,13 @@ def _build_annotation_legend_lines(
     total_detail: TotalScoreDetail,
     boards: Optional[List] = None,
 ) -> List[str]:
-    """Build legend lines showing each board's contribution to total score.
-
-    This ensures users see unified scoring: each board's displayed score
-    equals its weighted contribution to the total, not the raw board score.
-    """
+    """Build legend lines showing each board's individual score."""
     isolated_outlier_board_set = set(total_detail.isolated_outlier_boards)
     lines: List[str] = []
 
-    # Calculate total weight for normalization
-    total_weight = 0.0
-    board_weight_map = {}
-    if boards:
-        board_map = {b.board_id: b for b in boards}
-        for score in total_detail.board_scores:
-            if score.compared and score.board_id not in isolated_outlier_board_set:
-                board = board_map.get(score.board_id)
-                if board:
-                    total_weight += board.weight
-                    board_weight_map[score.board_id] = board.weight
-
     for score in total_detail.board_scores:
         if score.compared:
-            if boards and total_weight > 0 and score.board_id in board_weight_map:
-                # Calculate contribution to total score (unified standard)
-                weight = board_weight_map[score.board_id]
-                contribution = (weight / total_weight) * total_detail.total_score
-                line = f"{score.board_id}: {contribution:.3f}"
-            else:
-                # Fallback to raw score if boards not provided
-                line = f"{score.board_id}: {score.total_score:.3f}"
-
+            line = f"{score.board_id}: {score.total_score:.3f}"
             if score.board_id in isolated_outlier_board_set:
                 line += " (excluded)"
         else:

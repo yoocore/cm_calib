@@ -266,13 +266,13 @@ class DetectorMixin:
                     ]
                 )
             elif _is_custom_marker_board_type(board.board_type):
-                # Template matching on sim images is restricted to the ROI
-                # itself (padding=0).  Larger paddings would search outside the
-                # ROI and risk false positives.  When the NCC is below
-                # threshold the best below-threshold position is still used,
-                # giving a valid (dx, dy) offset for the optimizer without
-                # false-positive risk.
-                auto_paddings = []
+                # Raw gray matching now gives NCC 0.9+, so false positives
+                # from background are much less likely.  Moderate paddings
+                # let the optimizer follow the board as parameters shift.
+                auto_paddings = [
+                    max(60, int(round(base_span * 0.15))),
+                    max(120, int(round(base_span * 0.30))),
+                ]
 
             for padding_value in auto_paddings:
                 attempts.append(min(max_auto_padding, padding_value))

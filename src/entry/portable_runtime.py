@@ -155,6 +155,11 @@ def apply_cmapi_to_current_process(
     try:
         import cmapi  # noqa: F401
     except ImportError:
+        # In frozen (PyInstaller) builds, sys.executable points to the exe
+        # itself, not python.exe. Running pip with it would recursively
+        # launch the exe again, causing an infinite restart loop.
+        if getattr(sys, "frozen", False):
+            return paths
         whls = list(Path(paths[0]).glob("cmapi-*.whl"))
         if whls:
             import subprocess

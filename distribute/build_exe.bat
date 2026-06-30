@@ -4,7 +4,7 @@ setlocal enabledelayedexpansion
 
 set "SCRIPT_DIR=%~dp0"
 set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
-set "VENV=%SCRIPT_DIR%\.venv"
+set "VENV=%SCRIPT_DIR%\cm_calib_dist\.venv"
 set "PYTHON=%VENV%\Scripts\python.exe"
 set "DIST_DIR=%SCRIPT_DIR%\dist_exe"
 

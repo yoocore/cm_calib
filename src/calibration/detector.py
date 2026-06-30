@@ -454,69 +454,47 @@ class DetectorMixin:
         sim_detection: DetectionResult,
         sim_eval_image: Optional[np.ndarray],
     ) -> float:
-        """Measure geometric alignment via homography-corrected structure comparison.
+        """Pure geometric structure penalty — no pixel comparison.
 
-        Unlike pixel-MAE (which conflates content differences with geometry), this:
-        1. Computes homography sim->real from detected points
-        2. Warps sim_patch to real coordinate frame (separates geometry from content)
-        3. Compares edge structure alignment (lighting-invariant)
+        Virtual and real images have different lighting/texture/backgrounds,
+        so pixel-level comparison is meaningless. This only uses geometry:
+        1. Homography consistency (outlier fraction)
+        2. Perspective distortion (SVD condition number)
 
-        Returns additive penalty in pixel-equivalent units. Low = good alignment.
+        Returns additive penalty in pixel units. Low = good alignment.
         """
         if sim_eval_image is None:
             return 0.0
 
         real_points = real_detection.ordered_points
         sim_points = sim_detection.ordered_points
-
-        real_bbox = self._points_bbox(real_points)
-        rx, ry, rw, rh = real_bbox
-        if rw < 8 or rh < 8:
+        n = min(len(real_points), len(sim_points))
+        if n < 4:
             return 0.0
 
-        real_patch = self.real_img[ry:ry+rh, rx:rx+rw]
-        if real_patch.size == 0:
+        real_pts = np.ascontiguousarray(real_points[:n].astype(np.float32))
+        sim_pts = np.ascontiguousarray(sim_points[:n].astype(np.float32))
+
+        H, mask = cv2.findHomography(sim_pts, real_pts, cv2.RANSAC, 4.0)
+        if H is None or mask is None:
             return 0.0
 
-        # Compute homography from sim->real points
-        H, _ = cv2.findHomography(sim_points, real_points, cv2.RANSAC, 4.0)
-        if H is None:
-            return float(np.mean(np.linalg.norm(sim_points - real_points, axis=1)))
+        inlier_mask = mask.ravel().astype(bool)
+        inlier_count = int(inlier_mask.sum())
+        if inlier_count < 4:
+            return 0.0
 
-        # Warp sim eval image to align with real patch coordinate frame
-        H_inv = np.linalg.inv(H)
-        warped = cv2.warpPerspective(
-            sim_eval_image, H_inv, (real_patch.shape[1], real_patch.shape[0]),
-            borderMode=cv2.BORDER_CONSTANT, borderValue=0,
-        )
+        # Outlier fraction — high outliers = structure mismatch
+        outlier_frac = 1.0 - (inlier_count / n)
 
-        def to_gray(img):
-            return img if len(img.shape) == 2 else cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        # SVD condition of affine part — extreme perspective = penalty
+        A = np.array(H[:2, :2], dtype=np.float64)
+        s = np.linalg.svd(A, compute_uv=False)
+        cond = s.max() / max(s.min(), 1e-10)
+        cond_penalty = max(0.0, (cond - 5.0)) * 0.3
 
-        real_gray = to_gray(real_patch)
-        sim_gray = to_gray(warped)
-
-        real_processed = self._preprocess_template_match_image(real_gray, board)
-
-        real_f32 = real_processed.astype(np.float32)
-        sim_f32 = sim_gray.astype(np.float32)
-
-        real_mean = np.mean(real_f32)
-        sim_mean = np.mean(sim_f32)
-
-        numerator = float(np.mean((real_f32 - real_mean) * (sim_f32 - sim_mean)))
-        real_var = float(np.mean(np.square(real_f32 - real_mean)))
-        sim_var = float(np.mean(np.square(sim_f32 - sim_mean)))
-        denom = float(np.sqrt(max(1e-10, real_var * sim_var)))
-        ncc = numerator / max(1e-10, denom)
-        ncc = max(-1.0, min(1.0, ncc))
-
-        residual_rms = float(np.sqrt(np.mean(np.square(real_f32 - sim_f32)))) / 255.0
-
-        structure_penalty = max(0.0, (1.0 - ncc) * 15.0)
-        residual_penalty = residual_rms * 20.0
-
-        return structure_penalty + residual_penalty
+        # Combined penalty: outliers contribute up to ~5, perspective up to ~10
+        return outlier_frac * 5.0 + cond_penalty
 
     def _prepare_eval_image(self, image: np.ndarray) -> np.ndarray:
         source_h, source_w = image.shape[:2]

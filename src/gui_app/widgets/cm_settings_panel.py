@@ -109,7 +109,8 @@ _CONTROL_STYLE = (
     "color: #1e293b;"
     "border: 1px solid #cbd5e1;"
     "border-radius: 6px;"
-    "padding: 4px 10px;"
+    "padding: 6px 12px;"
+    "font-size: 12px;"
     "}"
     "QPushButton:hover {"
     "background-color: #f8fafc;"
@@ -124,6 +125,13 @@ _CONTROL_STYLE = (
     "border: 1px solid #cbd5e1;"
     "border-radius: 6px;"
     "background-color: #ffffff;"
+    "}"
+    "QListWidget::item {"
+    "padding: 4px;"
+    "}"
+    "QListWidget::item:selected {"
+    "background-color: #e8f0fe;"
+    "color: #1e293b;"
     "}"
 )
 

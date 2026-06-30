@@ -266,20 +266,15 @@ class DetectorMixin:
                     ]
                 )
             elif _is_custom_marker_board_type(board.board_type):
-                source_roi = board.template_source_roi or board.roi
-                _, _, source_w, source_h = source_roi
-                source_span = max(1, int(max(source_w, source_h)))
-                # Template matching on sim images is prone to false positives
-                # when the search region is too large (the template won't match
-                # sim content well when camera pose is wrong).  Use modest
-                # paddings so the board can drift a bit due to pose error but
-                # not enough to hit a random look-alike elsewhere in the image.
-                auto_paddings.extend(
-                    [
-                        max(60, int(round(source_span * 0.3))),
-                        max(120, int(round(source_span * 0.6))),
-                    ]
-                )
+                # Template matching on sim images produces false positives when
+                # the search extends beyond the expected ROI (a random texture
+                # elsewhere in the image can coincidentally match the template).
+                # Unlike checkerboard/aruco (geometric constraints prevent false
+                # positives), template_match has no such safeguards, so it must
+                # search only the ROI region itself.  A board whose sim position
+                # is completely outside the ROI will score high (fail penalty)
+                # and the optimizer will iteratively pull it back into view.
+                auto_paddings = []
 
             for padding_value in auto_paddings:
                 attempts.append(min(max_auto_padding, padding_value))
@@ -1225,17 +1220,6 @@ class DetectorMixin:
         # Reject detections too far from expected ROI when padding expands the
         # search region (prevents false positives on sim images where the
         # template doesn't match the ROI content well at padding > 0).
-        if padding > 0 and not self._detection_within_reference_roi(
-            anchors, board, padding
-        ):
-            match_x = None
-        # For large padding, also require a minimum match confidence because
-        # a barely-above-threshold NCC at full-image search is usually a false
-        # positive.  0.30 is low enough for edge-positioned boards with valid
-        # perspective-distorted matches but high enough to filter random noise.
-        if padding > 200 and match_score_value < 0.30:
-            match_x = None
-
         if match_x is not None and match_y is not None:
             return DetectionResult(
                 board_id=board.board_id,

@@ -371,8 +371,7 @@ class CmSettingsPanel(QGroupBox):
             row_layout.setSpacing(8)
 
             name_label = QLabel(f"⋮⋮ {camera_name}")
-            row_layout.addWidget(name_label)
-            row_layout.addStretch()
+            row_layout.addWidget(name_label, 1)
 
             check_label = QLabel("")
             check_label.setFixedWidth(20)
@@ -384,12 +383,14 @@ class CmSettingsPanel(QGroupBox):
             row_layout.addWidget(sep)
 
             wizard_btn = QPushButton("Wizard")
+            wizard_btn.setMinimumWidth(70)
             wizard_btn.clicked.connect(
                 lambda checked, cn=camera_name: self.wizard_for_camera_clicked.emit(cn)
             )
             row_layout.addWidget(wizard_btn)
 
             open_btn = QPushButton("Config")
+            open_btn.setMinimumWidth(70)
             open_btn.setEnabled(False)
             open_btn.setToolTip("No config generated yet")
             open_btn.clicked.connect(

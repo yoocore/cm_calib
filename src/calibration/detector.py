@@ -246,7 +246,7 @@ class DetectorMixin:
         return abs(det_cx - ref_cx) <= tolerance and abs(det_cy - ref_cy) <= tolerance
 
     def _detect_roi_padding_attempts(self, board: BoardProfile) -> List[int]:
-        attempts = [0]
+        attempts: List[int] = []
         configured_padding = max(0, int(board.detect_roi_padding))
         if configured_padding > 0:
             attempts.append(configured_padding)
@@ -259,6 +259,7 @@ class DetectorMixin:
             auto_paddings: List[int] = []
 
             if board.board_type == "checkerboard" or _is_aruco_family_board_type(board.board_type) or _is_apriltag_board_type(board.board_type) or _is_circle_grid_board_type(board.board_type) or _is_aruco_grid_board_type(board.board_type):
+                attempts.append(0)
                 auto_paddings.extend(
                     [
                         max(120, int(round(base_span * 1.5))),
@@ -266,12 +267,14 @@ class DetectorMixin:
                     ]
                 )
             elif _is_custom_marker_board_type(board.board_type):
-                # Raw gray matching now gives NCC 0.9+, so false positives
-                # from background are much less likely.  Moderate paddings
-                # let the optimizer follow the board as parameters shift.
+                # Start from a moderate padding so the full-template response
+                # map has spatial extent (when template == ROI size, padding=0
+                # collapses to a 1x1 response).  Raw gray matching (NCC 0.9+)
+                # keeps false-positive risk low even with larger paddings.
                 auto_paddings = [
-                    max(60, int(round(base_span * 0.15))),
-                    max(120, int(round(base_span * 0.30))),
+                    max(40, int(round(base_span * 0.10))),
+                    max(80, int(round(base_span * 0.20))),
+                    max(140, int(round(base_span * 0.35))),
                 ]
 
             for padding_value in auto_paddings:

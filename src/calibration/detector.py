@@ -447,6 +447,77 @@ class DetectorMixin:
         ) / 255.0
         return mae * 100.0
 
+    def _custom_board_geometric_penalty(
+        self,
+        board: BoardProfile,
+        real_detection: DetectionResult,
+        sim_detection: DetectionResult,
+        sim_eval_image: Optional[np.ndarray],
+    ) -> float:
+        """Measure geometric alignment via homography-corrected structure comparison.
+
+        Unlike pixel-MAE (which conflates content differences with geometry), this:
+        1. Computes homography sim->real from detected points
+        2. Warps sim_patch to real coordinate frame (separates geometry from content)
+        3. Compares edge structure alignment (lighting-invariant)
+
+        Returns additive penalty in pixel-equivalent units. Low = good alignment.
+        """
+        if sim_eval_image is None:
+            return 0.0
+
+        real_points = real_detection.ordered_points
+        sim_points = sim_detection.ordered_points
+
+        real_bbox = self._points_bbox(real_points)
+        rx, ry, rw, rh = real_bbox
+        if rw < 8 or rh < 8:
+            return 0.0
+
+        real_patch = self.real_img[ry:ry+rh, rx:rx+rw]
+        if real_patch.size == 0:
+            return 0.0
+
+        # Compute homography from sim->real points
+        H, _ = cv2.findHomography(sim_points, real_points, cv2.RANSAC, 4.0)
+        if H is None:
+            return float(np.mean(np.linalg.norm(sim_points - real_points, axis=1)))
+
+        # Warp sim eval image to align with real patch coordinate frame
+        H_inv = np.linalg.inv(H)
+        warped = cv2.warpPerspective(
+            sim_eval_image, H_inv, (real_patch.shape[1], real_patch.shape[0]),
+            borderMode=cv2.BORDER_CONSTANT, borderValue=0,
+        )
+
+        def to_gray(img):
+            return img if len(img.shape) == 2 else cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+        real_gray = to_gray(real_patch)
+        sim_gray = to_gray(warped)
+
+        real_processed = self._preprocess_template_match_image(real_gray, board)
+
+        real_f32 = real_processed.astype(np.float32)
+        sim_f32 = sim_gray.astype(np.float32)
+
+        real_mean = np.mean(real_f32)
+        sim_mean = np.mean(sim_f32)
+
+        numerator = float(np.mean((real_f32 - real_mean) * (sim_f32 - sim_mean)))
+        real_var = float(np.mean(np.square(real_f32 - real_mean)))
+        sim_var = float(np.mean(np.square(sim_f32 - sim_mean)))
+        denom = float(np.sqrt(max(1e-10, real_var * sim_var)))
+        ncc = numerator / max(1e-10, denom)
+        ncc = max(-1.0, min(1.0, ncc))
+
+        residual_rms = float(np.sqrt(np.mean(np.square(real_f32 - sim_f32)))) / 255.0
+
+        structure_penalty = max(0.0, (1.0 - ncc) * 15.0)
+        residual_penalty = residual_rms * 20.0
+
+        return structure_penalty + residual_penalty
+
     def _prepare_eval_image(self, image: np.ndarray) -> np.ndarray:
         source_h, source_w = image.shape[:2]
         target_h, target_w = self.real_img.shape[:2]

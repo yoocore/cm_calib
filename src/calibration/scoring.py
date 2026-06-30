@@ -139,15 +139,19 @@ class ScoringMixin:
         mean_error = float(np.mean(distances))
         max_error = float(np.max(distances))
         if _is_custom_marker_board_type(board.board_type):
-            image_penalty = self._custom_board_image_penalty(
+            geometric_penalty = self._custom_board_geometric_penalty(
                 board,
                 real_detection,
                 sim_detection,
                 sim_eval_image,
             )
-            rmse = max(rmse, image_penalty)
-            mean_error = max(mean_error, image_penalty)
-            max_error = max(max_error, image_penalty)
+            # Additive geometric penalty: rewards structure alignment after
+            # homography warping. Unlike old max(image_penalty, rmse) which
+            # conflated pixel content with geometry, this correctly correlates
+            # with overlay quality: good alignment -> low penalty -> low score.
+            rmse = rmse + geometric_penalty
+            mean_error = mean_error + geometric_penalty
+            max_error = max(max_error, mean_error + geometric_penalty)
         miss_rate = 1.0 - (matched_points / max(1, real_detection.point_count))
         total_score = rmse + board.alpha * miss_rate + board.beta * max_error
 

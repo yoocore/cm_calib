@@ -266,15 +266,13 @@ class DetectorMixin:
                     ]
                 )
             elif _is_custom_marker_board_type(board.board_type):
-                source_roi = board.template_source_roi or board.roi
-                _, _, source_w, source_h = source_roi
-                source_span = max(1, int(max(source_w, source_h)))
-                auto_paddings.extend(
-                    [
-                        max(240, int(round(source_span * 1.5))),
-                        max(480, int(round(source_span * 3.0))),
-                    ]
-                )
+                # Template matching on sim images is restricted to the ROI
+                # itself (padding=0).  Larger paddings would search outside the
+                # ROI and risk false positives.  When the NCC is below
+                # threshold the best below-threshold position is still used,
+                # giving a valid (dx, dy) offset for the optimizer without
+                # false-positive risk.
+                auto_paddings = []
 
             for padding_value in auto_paddings:
                 attempts.append(min(max_auto_padding, padding_value))
@@ -1123,6 +1121,8 @@ class DetectorMixin:
         )
         best_failure_message = "search roi smaller than template"
         best_failure_value: Optional[float] = None
+        best_failure_location: Optional[Tuple[int, int]] = None
+        best_failure_offset: Tuple[int, int] = (0, 0)
         match_x: Optional[float] = None
         match_y: Optional[float] = None
         matched_crop: Tuple[int, int, int, int] = (0, 0, int(template_gray.shape[1]), int(template_gray.shape[0]))
@@ -1157,6 +1157,8 @@ class DetectorMixin:
                 for threshold in threshold_attempts:
                     if best_failure_value is None or current_max_value > best_failure_value:
                         best_failure_value = float(current_max_value)
+                        best_failure_location = current_max_location
+                        best_failure_offset = current_offset
                         best_failure_message = (
                             f"template match below threshold: {current_max_value:.3f} < "
                             f"{threshold:.3f}"
@@ -1167,6 +1169,7 @@ class DetectorMixin:
                     offset = current_offset
                     match_x = float(offset[0] + current_max_location[0])
                     match_y = float(offset[1] + current_max_location[1])
+                    match_score_value = float(current_max_value)
                     matched_crop = variant_crop
                     matched_template_shape = (int(variant_gray.shape[0]), int(variant_gray.shape[1]))
                     break
@@ -1176,17 +1179,30 @@ class DetectorMixin:
                 break
 
         if match_x is None or match_y is None:
-            return DetectionResult(
-                board_id=board.board_id,
-                success=False,
-                point_count=0,
-                ordered_points=np.empty((0, 2), dtype=np.float32),
-                board_type=board.board_type,
-                roi_used=board.roi,
-                detector="template_match",
-                error_message=best_failure_message,
-                match_score=best_failure_value,
-            )
+            # No candidate passed the NCC threshold at any padding level.
+            # If we have a below-threshold match from the ROI-only search
+            # (padding=0), use it — the position within the ROI still gives
+            # a valid (dx, dy) offset for the optimizer, and unlike larger
+            # paddings it cannot be a false positive from elsewhere in the
+            # image.
+            if best_failure_location is not None and best_failure_value is not None:
+                bfl = best_failure_location
+                bfo = best_failure_offset
+                match_x = float(bfo[0] + bfl[0])
+                match_y = float(bfo[1] + bfl[1])
+                match_score_value = float(best_failure_value)
+            else:
+                return DetectionResult(
+                    board_id=board.board_id,
+                    success=False,
+                    point_count=0,
+                    ordered_points=np.empty((0, 2), dtype=np.float32),
+                    board_type=board.board_type,
+                    roi_used=board.roi,
+                    detector="template_match",
+                    error_message=best_failure_message,
+                    match_score=best_failure_value,
+                )
 
         template_h, template_w = matched_template_shape
         anchor_x = match_x

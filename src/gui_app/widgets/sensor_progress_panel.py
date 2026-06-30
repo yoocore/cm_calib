@@ -40,7 +40,7 @@ class SensorProgressPanel(QGroupBox):
         self.sensor_progress_tree.setStyleSheet(
             "QTreeView { background-color: #ffffff; }"
             "QTreeView::item { background-color: #ffffff; padding: 2px 4px; }"
-            "QTreeView::item:selected { background-color: #e8f0fe; }"
+            "QTreeView::item:selected { background-color: #e8f0fe; color: #1e293b; }"
         )
         self.sensor_progress_tree.setColumnCount(8)
         self.sensor_progress_tree.setHeaderLabels(

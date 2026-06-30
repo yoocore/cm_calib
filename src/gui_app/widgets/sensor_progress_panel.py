@@ -48,7 +48,6 @@ class SensorProgressPanel(QGroupBox):
         )
         header = self.sensor_progress_tree.header()
         header.setDefaultAlignment(Qt.AlignLeft)
-        header.setStretchLastSection(True)
         self.sensor_progress_tree.setIndentation(0)
         self.sensor_progress_tree.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._sensor_progress_items: dict[str, QTreeWidgetItem] = {}

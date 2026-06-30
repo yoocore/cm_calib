@@ -48,7 +48,9 @@ class SensorProgressPanel(QGroupBox):
         )
         header = self.sensor_progress_tree.header()
         header.setDefaultAlignment(Qt.AlignLeft)
+        header.setStretchLastSection(True)
         self.sensor_progress_tree.setIndentation(0)
+        self.sensor_progress_tree.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._sensor_progress_items: dict[str, QTreeWidgetItem] = {}
         self._sensor_progress_bars: dict[str, QProgressBar] = {}
 
@@ -63,19 +65,8 @@ class SensorProgressPanel(QGroupBox):
 
     def _setup_column_sizes(self) -> None:
         header = self.sensor_progress_tree.header()
-        modes = [
-            (0, QHeaderView.Stretch, 200),   # Sensor
-            (1, QHeaderView.Interactive, 70),   # Status
-            (2, QHeaderView.Interactive, 90),   # Iteration
-            (3, QHeaderView.Interactive, 75),   # Elapsed
-            (4, QHeaderView.Stretch, 120),      # Progress (bar)
-            (5, QHeaderView.Interactive, 65),   # Init
-            (6, QHeaderView.Interactive, 65),   # Current
-            (7, QHeaderView.Interactive, 65),   # Best
-        ]
-        for col, mode, default_width in modes:
-            header.setSectionResizeMode(col, mode)
-            header.resizeSection(col, default_width)
+        for col in range(self.sensor_progress_tree.columnCount()):
+            header.setSectionResizeMode(col, QHeaderView.Stretch)
 
     def reset_sensor_progress(
         self,

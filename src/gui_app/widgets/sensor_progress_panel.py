@@ -41,13 +41,6 @@ class SensorProgressPanel(QGroupBox):
             "QTreeView { background-color: #ffffff; }"
             "QTreeView::item { background-color: #ffffff; padding: 2px 4px; }"
             "QTreeView::item:selected { background-color: #e8f0fe; }"
-            "QHeaderView::section {"
-            "border: none;"
-            "border-bottom: 1px solid #cbd5e1;"
-            "padding: 4px;"
-            "color: #334155;"
-            "background-color: transparent;"
-            "}"
         )
         self.sensor_progress_tree.setColumnCount(8)
         self.sensor_progress_tree.setHeaderLabels(
@@ -71,14 +64,14 @@ class SensorProgressPanel(QGroupBox):
     def _setup_column_sizes(self) -> None:
         header = self.sensor_progress_tree.header()
         modes = [
-            (0, QHeaderView.Interactive, 150),  # Sensor
-            (1, QHeaderView.Interactive, 100),  # Status
-            (2, QHeaderView.Interactive, 120),  # Iteration
-            (3, QHeaderView.Interactive, 100),  # Elapsed
-            (4, QHeaderView.Stretch, 150),      # Progress (bar)
-            (5, QHeaderView.Interactive, 80),   # Init
-            (6, QHeaderView.Interactive, 80),   # Current
-            (7, QHeaderView.Interactive, 80),   # Best
+            (0, QHeaderView.Stretch, 200),   # Sensor
+            (1, QHeaderView.Interactive, 70),   # Status
+            (2, QHeaderView.Interactive, 90),   # Iteration
+            (3, QHeaderView.Interactive, 75),   # Elapsed
+            (4, QHeaderView.Stretch, 120),      # Progress (bar)
+            (5, QHeaderView.Interactive, 65),   # Init
+            (6, QHeaderView.Interactive, 65),   # Current
+            (7, QHeaderView.Interactive, 65),   # Best
         ]
         for col, mode, default_width in modes:
             header.setSectionResizeMode(col, mode)

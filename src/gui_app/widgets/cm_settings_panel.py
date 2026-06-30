@@ -324,6 +324,16 @@ class CmSettingsPanel(QGroupBox):
             open_btn.setFixedWidth(60)
             open_btn.setEnabled(False)
             open_btn.setToolTip("No config generated yet")
+            open_btn.setStyleSheet(
+                "QPushButton:disabled {"
+                "color: #94a3b8; background-color: #f1f5f9;"
+                "border: 1px solid #e2e8f0; border-radius: 4px;"
+                "}"
+                "QPushButton:enabled {"
+                "color: #1e293b; background-color: #ffffff;"
+                "border: 1px solid #cbd5e1; border-radius: 4px;"
+                "}"
+            )
             open_btn.clicked.connect(
                 lambda checked, cn=camera_name: self._on_config_clicked(cn)
             )

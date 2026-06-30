@@ -64,6 +64,26 @@ _PANEL_STYLE = (
     "}"
 )
 
+_ROW_BUTTON_STYLE = (
+    "QPushButton {"
+    "background-color: #ffffff;"
+    "color: #1e293b;"
+    "border: 1px solid #cbd5e1;"
+    "border-radius: 6px;"
+    "padding: 4px 8px;"
+    "font-size: 12px;"
+    "}"
+    "QPushButton:hover {"
+    "background-color: #f8fafc;"
+    "border-color: #94a3b8;"
+    "}"
+    "QPushButton:disabled {"
+    "color: #94a3b8;"
+    "background-color: #f1f5f9;"
+    "border-color: #e2e8f0;"
+    "}"
+)
+
 
 _CHECKBOX_SVG = (Path(__file__).resolve().parent.parent / "checkbox_checked.svg").as_posix()
 _CHECKBOX_STYLE = (
@@ -315,6 +335,7 @@ class CmSettingsPanel(QGroupBox):
 
             wizard_btn = QPushButton("Wizard")
             wizard_btn.setFixedWidth(60)
+            wizard_btn.setStyleSheet(_ROW_BUTTON_STYLE)
             wizard_btn.clicked.connect(
                 lambda checked, cn=camera_name: self.wizard_for_camera_clicked.emit(cn)
             )
@@ -322,18 +343,9 @@ class CmSettingsPanel(QGroupBox):
 
             open_btn = QPushButton("Config")
             open_btn.setFixedWidth(60)
+            open_btn.setStyleSheet(_ROW_BUTTON_STYLE)
             open_btn.setEnabled(False)
             open_btn.setToolTip("No config generated yet")
-            open_btn.setStyleSheet(
-                "QPushButton:disabled {"
-                "color: #94a3b8; background-color: #f1f5f9;"
-                "border: 1px solid #e2e8f0; border-radius: 4px;"
-                "}"
-                "QPushButton:enabled {"
-                "color: #1e293b; background-color: #ffffff;"
-                "border: 1px solid #cbd5e1; border-radius: 4px;"
-                "}"
-            )
             open_btn.clicked.connect(
                 lambda checked, cn=camera_name: self._on_config_clicked(cn)
             )

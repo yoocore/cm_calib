@@ -504,13 +504,13 @@ class DetectorMixin:
         if real_patch.size == 0:
             return outlier_frac * 5.0 + cond_penalty
 
-        # Warp sim eval image to align with real patch coordinate frame
-        # Both patches now cover the SAME physical region
-        H_inv = np.linalg.inv(H)
-        warped = cv2.warpPerspective(
-            sim_eval_image, H_inv, (rw, rh),
+        # Warp sim eval image to real coordinate frame, then crop at bbox
+        # warpPerspective internally applies M^(-1), so pass H (sim->real) directly
+        full_warped = cv2.warpPerspective(
+            sim_eval_image, H, (sim_eval_image.shape[1], sim_eval_image.shape[0]),
             borderMode=cv2.BORDER_CONSTANT, borderValue=0,
         )
+        warped = full_warped[ry : ry + rh, rx : rx + rw]
 
         def _to_gray(img):
             return img if len(img.shape) == 2 else cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)

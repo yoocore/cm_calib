@@ -109,7 +109,7 @@ _CONTROL_STYLE = (
     "color: #1e293b;"
     "border: 1px solid #cbd5e1;"
     "border-radius: 6px;"
-    "padding: 4px 10px;"
+    "padding: 6px 10px;"
     "}"
     "QPushButton:hover {"
     "background-color: #f8fafc;"
@@ -379,14 +379,14 @@ class CmSettingsPanel(QGroupBox):
             row_layout.addWidget(sep)
 
             wizard_btn = QPushButton("Wizard")
-            wizard_btn.setFixedWidth(60)
+            wizard_btn.setFixedWidth(70)
             wizard_btn.clicked.connect(
                 lambda checked, cn=camera_name: self.wizard_for_camera_clicked.emit(cn)
             )
             row_layout.addWidget(wizard_btn)
 
             open_btn = QPushButton("Config")
-            open_btn.setFixedWidth(60)
+            open_btn.setFixedWidth(70)
             open_btn.setEnabled(False)
             open_btn.setToolTip("No config generated yet")
             open_btn.clicked.connect(

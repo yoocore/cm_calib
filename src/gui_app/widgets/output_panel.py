@@ -371,11 +371,47 @@ class OutputPanel(QGroupBox):
         self.output_dir_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.open_output_button = QPushButton("Open Output")
         self.open_output_button.setEnabled(False)
+        self.open_output_button.setStyleSheet(
+            "QPushButton {"
+            "background-color: #ffffff;"
+            "color: #1e293b;"
+            "border: 1px solid #cbd5e1;"
+            "border-radius: 6px;"
+            "padding: 6px 10px;"
+            "}"
+            "QPushButton:hover {"
+            "background-color: #f8fafc;"
+            "border-color: #94a3b8;"
+            "}"
+            "QPushButton:disabled {"
+            "color: #94a3b8;"
+            "background-color: #f1f5f9;"
+            "border-color: #e2e8f0;"
+            "}"
+        )
         self.log_path_label = QLabel("-")
         self.log_path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.log_path_label.setWordWrap(False)
         self.open_log_button = QPushButton("Open Log")
         self.open_log_button.setEnabled(False)
+        self.open_log_button.setStyleSheet(
+            "QPushButton {"
+            "background-color: #ffffff;"
+            "color: #1e293b;"
+            "border: 1px solid #cbd5e1;"
+            "border-radius: 6px;"
+            "padding: 6px 10px;"
+            "}"
+            "QPushButton:hover {"
+            "background-color: #f8fafc;"
+            "border-color: #94a3b8;"
+            "}"
+            "QPushButton:disabled {"
+            "color: #94a3b8;"
+            "background-color: #f1f5f9;"
+            "border-color: #e2e8f0;"
+            "}"
+        )
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.setStyleSheet(

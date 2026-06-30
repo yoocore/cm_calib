@@ -63,8 +63,8 @@ def _resolve_default_cm_install() -> Path:
 
 DEFAULT_CM_INSTALL = _resolve_default_cm_install()
 DEFAULT_CONFIG_DIR = Path(__file__).resolve().parents[2] / "configs"
-CARMAKER_PROCESS_NAMES = ("CarMaker.win64.exe", "HIL.exe", "CM_Office.exe", "TruckMaker.win64.exe", "TM_Office.exe")
-RUNTIME_CARMAKER_PROCESS_NAMES = ("CarMaker.win64.exe", "CM_Office.exe", "TruckMaker.win64.exe", "TM_Office.exe")
+CARMAKER_PROCESS_NAMES = ("CarMaker.win64.exe", "HIL.exe", "CM_Office.exe", "TruckMaker.win64.exe", "TM_Office.exe", "MCycleMaker.win64.exe", "MM_Office.exe")
+RUNTIME_CARMAKER_PROCESS_NAMES = ("CarMaker.win64.exe", "CM_Office.exe", "TruckMaker.win64.exe", "TM_Office.exe", "MCycleMaker.win64.exe", "MM_Office.exe")
 DEFAULT_MOVIE_APPHOST = socket.gethostname()
 
 logger = logging.getLogger(__name__)
@@ -110,7 +110,7 @@ def _write_movie_launch_log(message: str) -> None:
         pass  # Don't fail on logging errors
 PROCESS_ENUMERATION_COMMAND = r"""
 $procs = Get-CimInstance Win32_Process |
-    Where-Object { $_.Name -in @('CarMaker.win64.exe', 'HIL.exe', 'CM_Office.exe', 'TruckMaker.win64.exe', 'TM_Office.exe', 'Movie.exe') } |
+    Where-Object { $_.Name -in @('CarMaker.win64.exe', 'HIL.exe', 'CM_Office.exe', 'TruckMaker.win64.exe', 'TM_Office.exe', 'MCycleMaker.win64.exe', 'MM_Office.exe', 'Movie.exe') } |
     Select-Object ProcessId, Name, CommandLine
 if ($null -eq $procs) {
     '[]'
@@ -1468,6 +1468,11 @@ def resolve_carmaker_executable(cm_install: Path, maker_type: str = "carmaker") 
         return require_file(
             cm_install / "bin" / "TM_Office.exe",
             f"TM_Office.exe for maker_type={maker_type}",
+        )
+    if maker_type == "mcyclemaker":
+        return require_file(
+            cm_install / "bin" / "MM_Office.exe",
+            f"MM_Office.exe for maker_type={maker_type}",
         )
     preferred_hil = cm_install / "GUI" / "HIL.exe"
     if preferred_hil.exists():

@@ -112,8 +112,8 @@ def _parse_args() -> argparse.Namespace:
         "--maker-type",
         type=str,
         default="carmaker",
-        choices=["carmaker", "truckmaker"],
-        help="Product type to launch: carmaker or truckmaker.",
+        choices=["carmaker", "truckmaker", "mcyclemaker"],
+        help="Product type to launch: carmaker, truckmaker or mcyclemaker.",
     )
     parser.add_argument(
         "--movie-apphost",

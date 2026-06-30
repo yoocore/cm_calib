@@ -157,6 +157,7 @@ class CmSettingsPanel(QGroupBox):
         self.maker_combo = QComboBox()
         self.maker_combo.addItem("CarMaker", "carmaker")
         self.maker_combo.addItem("TruckMaker", "truckmaker")
+        self.maker_combo.addItem("MCycleMaker", "mcyclemaker")
         self.maker_combo.setFixedWidth(120)
         self.maker_combo.setFixedHeight(30)
 

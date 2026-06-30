@@ -152,7 +152,7 @@ def detect_cm_versions() -> dict[str, Path]:
                 continue
             found = False
             for sub in ("GUI", "bin"):
-                for exe in ("CM_Office.exe", "CM.exe", "TM_Office.exe"):
+                for exe in ("CM_Office.exe", "CM.exe", "TM_Office.exe", "MM_Office.exe"):
                     if (entry / sub / exe).is_file():
                         version = entry.name[len("win64-"):]
                         try:

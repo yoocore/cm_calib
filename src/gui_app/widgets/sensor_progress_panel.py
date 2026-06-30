@@ -45,7 +45,6 @@ class SensorProgressPanel(QGroupBox):
             "border: none;"
             "border-bottom: 1px solid #cbd5e1;"
             "padding: 4px;"
-            "font-weight: 600;"
             "color: #334155;"
             "background-color: transparent;"
             "}"
@@ -73,13 +72,13 @@ class SensorProgressPanel(QGroupBox):
         header = self.sensor_progress_tree.header()
         modes = [
             (0, QHeaderView.Stretch, 200),   # Sensor
-            (1, QHeaderView.Interactive, 70),   # Status
-            (2, QHeaderView.Interactive, 90),   # Iteration
-            (3, QHeaderView.Interactive, 75),   # Elapsed
+            (1, QHeaderView.Interactive, 80),   # Status
+            (2, QHeaderView.Interactive, 100),  # Iteration
+            (3, QHeaderView.Interactive, 85),   # Elapsed
             (4, QHeaderView.Stretch, 120),      # Progress (bar)
-            (5, QHeaderView.Interactive, 65),   # Init
-            (6, QHeaderView.Interactive, 65),   # Current
-            (7, QHeaderView.Interactive, 65),   # Best
+            (5, QHeaderView.Interactive, 75),   # Init
+            (6, QHeaderView.Interactive, 75),   # Current
+            (7, QHeaderView.Interactive, 75),   # Best
         ]
         for col, mode, default_width in modes:
             header.setSectionResizeMode(col, mode)

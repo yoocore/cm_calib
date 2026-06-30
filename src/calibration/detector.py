@@ -454,16 +454,13 @@ class DetectorMixin:
         sim_detection: DetectionResult,
         sim_eval_image: Optional[np.ndarray],
     ) -> float:
-        """Symmetric binary-structure penalty — both sides preprocessed identically.
+        """Pure geometric structure penalty — no pixel comparison.
 
-        Virtual/real images have different lighting, so compare binary structure:
-        1. Warp sim eval image to real coordinate frame (via homography)
-        2. Preprocess BOTH patches with identical binary thresholding
-           (same _preprocess_template_match_image, no is_sim_sourced asymmetry)
-        3. NCC and residual RMS between the two binary images
-        4. Plus homography consistency (outlier fraction, condition number)
+        Only uses homography consistency checks:
+        1. RANSAC outlier fraction — structural mismatch
+        2. SVD condition number — perspective distortion
 
-        Returns additive penalty in pixel units. Low = good alignment.
+        Suitable for all board types. Returns additive penalty in pixel units.
         """
         if sim_eval_image is None:
             return 0.0
@@ -486,7 +483,6 @@ class DetectorMixin:
         if inlier_count < 4:
             return 0.0
 
-        # ---- Geometric checks (pure geometry) ----
         outlier_frac = 1.0 - (inlier_count / n)
 
         A = np.array(H[:2, :2], dtype=np.float64)
@@ -494,62 +490,7 @@ class DetectorMixin:
         cond = s.max() / max(s.min(), 1e-10)
         cond_penalty = max(0.0, (cond - 5.0)) * 0.3
 
-        # ---- Symmetric binary-structure comparison ----
-        real_bbox = self._points_bbox(real_points)
-        rx, ry, rw, rh = real_bbox
-        if rw < 12 or rh < 12:
-            return outlier_frac * 5.0 + cond_penalty
-
-        real_patch = self.real_img[ry : ry + rh, rx : rx + rw]
-        if real_patch.size == 0:
-            return outlier_frac * 5.0 + cond_penalty
-
-        # Warp sim eval image to real coordinate frame, then crop at bbox
-        # warpPerspective internally applies M^(-1), so pass H (sim->real) directly
-        full_warped = cv2.warpPerspective(
-            sim_eval_image, H, (sim_eval_image.shape[1], sim_eval_image.shape[0]),
-            borderMode=cv2.BORDER_CONSTANT, borderValue=0,
-        )
-        warped = full_warped[ry : ry + rh, rx : rx + rw]
-
-        def _to_gray(img):
-            return img if len(img.shape) == 2 else cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-        real_gray = _to_gray(real_patch)
-        sim_gray = _to_gray(warped)
-
-        # KEY FIX: both sides go through IDENTICAL preprocessing
-        # (no is_sim_sourced asymmetry — both become binary 0/255)
-        real_processed = self._preprocess_template_match_image(real_gray, board)
-        sim_processed = self._preprocess_template_match_image(sim_gray, board)
-
-        real_f32 = real_processed.astype(np.float32)
-        sim_f32 = sim_processed.astype(np.float32)
-
-        # NCC — symmetric domain (binary vs binary), reliable
-        r_mean = np.mean(real_f32)
-        s_mean = np.mean(sim_f32)
-        numer = float(np.mean((real_f32 - r_mean) * (sim_f32 - s_mean)))
-        r_var = float(np.mean(np.square(real_f32 - r_mean)))
-        s_var = float(np.mean(np.square(sim_f32 - s_mean)))
-        denom = float(np.sqrt(max(1e-10, r_var * s_var)))
-        ncc = numer / max(1e-10, denom)
-        ncc = max(-1.0, min(1.0, ncc))
-
-        # Residual RMS in same binary domain
-        residual_rms = float(np.sqrt(np.mean(np.square(real_f32 - sim_f32)))) / 255.0
-
-        # NCC → penalty: 1.0 (perfect) → 0, 0.0 (uncorrelated) → 15
-        structure_penalty = max(0.0, (1.0 - ncc) * 15.0)
-        # Residual: 0 → 0, 0.5 → 10, 1.0 → 20
-        residual_penalty = residual_rms * 20.0
-
-        return (
-            outlier_frac * 5.0
-            + cond_penalty
-            + structure_penalty
-            + residual_penalty
-        )
+        return outlier_frac * 5.0 + cond_penalty
 
     def _prepare_eval_image(self, image: np.ndarray) -> np.ndarray:
         source_h, source_w = image.shape[:2]

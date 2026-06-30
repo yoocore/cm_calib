@@ -64,14 +64,25 @@ _PANEL_STYLE = (
     "}"
 )
 
-_ROW_BUTTON_STYLE = (
+_CONTROL_STYLE = (
+    "QLineEdit, QComboBox {"
+    "border: 1px solid #cbd5e1;"
+    "border-radius: 6px;"
+    "padding: 4px 10px;"
+    "background-color: #ffffff;"
+    "color: #1e293b;"
+    "}"
+    "QLineEdit:disabled, QComboBox:disabled {"
+    "background-color: #f1f5f9;"
+    "color: #94a3b8;"
+    "border-color: #e2e8f0;"
+    "}"
     "QPushButton {"
     "background-color: #ffffff;"
     "color: #1e293b;"
     "border: 1px solid #cbd5e1;"
     "border-radius: 6px;"
-    "padding: 4px 8px;"
-    "font-size: 12px;"
+    "padding: 4px 10px;"
     "}"
     "QPushButton:hover {"
     "background-color: #f8fafc;"
@@ -81,6 +92,11 @@ _ROW_BUTTON_STYLE = (
     "color: #94a3b8;"
     "background-color: #f1f5f9;"
     "border-color: #e2e8f0;"
+    "}"
+    "QListWidget {"
+    "border: 1px solid #cbd5e1;"
+    "border-radius: 6px;"
+    "background-color: #ffffff;"
     "}"
 )
 
@@ -120,7 +136,7 @@ class CmSettingsPanel(QGroupBox):
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__("CM Settings", parent)
-        self.setStyleSheet(_PANEL_STYLE)
+        self.setStyleSheet(_PANEL_STYLE + _CONTROL_STYLE + _CHECKBOX_STYLE)
 
         self.project_root_edit = QLineEdit()
         self.project_root_edit.setPlaceholderText("e.g. C:/CM_Projects/CMO141_Calibration")
@@ -335,7 +351,6 @@ class CmSettingsPanel(QGroupBox):
 
             wizard_btn = QPushButton("Wizard")
             wizard_btn.setFixedWidth(60)
-            wizard_btn.setStyleSheet(_ROW_BUTTON_STYLE)
             wizard_btn.clicked.connect(
                 lambda checked, cn=camera_name: self.wizard_for_camera_clicked.emit(cn)
             )
@@ -343,7 +358,6 @@ class CmSettingsPanel(QGroupBox):
 
             open_btn = QPushButton("Config")
             open_btn.setFixedWidth(60)
-            open_btn.setStyleSheet(_ROW_BUTTON_STYLE)
             open_btn.setEnabled(False)
             open_btn.setToolTip("No config generated yet")
             open_btn.clicked.connect(

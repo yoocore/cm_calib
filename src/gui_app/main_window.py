@@ -458,8 +458,11 @@ class MainWindow(QMainWindow):
             cm_install = self.calibration_panel.cm_install_path
             if cm_install is None:
                 raise ValueError("CM version is not selected. Choose a CM version first.")
+            maker_type = self.calibration_panel.maker_type
+            if maker_type is None:
+                raise ValueError("Maker type is not selected. Choose a Maker Type first.")
             self.calibration_service.set_cm_install(cm_install)
-            self.calibration_service.set_maker_type(self.calibration_panel.maker_type)
+            self.calibration_service.set_maker_type(maker_type)
             if self.calibration_service.is_running:
                 self.output_panel.append_log(
                     f"calibration_service already running; stopping first",
@@ -504,7 +507,11 @@ class MainWindow(QMainWindow):
             cm_install = self.calibration_panel.cm_install_path
             if cm_install is None:
                 raise ValueError("CM version is not selected. Choose a CM version first.")
+            maker_type = self.calibration_panel.maker_type
+            if maker_type is None:
+                raise ValueError("Maker type is not selected. Choose a Maker Type first.")
             self.calibration_service.set_cm_install(cm_install)
+            self.calibration_service.set_maker_type(maker_type)
 
             if self.calibration_service.is_running:
                 self.output_panel.append_log(

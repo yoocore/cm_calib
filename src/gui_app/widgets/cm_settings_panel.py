@@ -384,6 +384,19 @@ class CmSettingsPanel(QGroupBox):
 
             wizard_btn = QPushButton("Wizard")
             wizard_btn.setMinimumWidth(70)
+            wizard_btn.setStyleSheet(
+                "QPushButton {"
+                "background-color: #ffffff;"
+                "color: #1e293b;"
+                "border: 1px solid #cbd5e1;"
+                "border-radius: 6px;"
+                "padding: 6px 12px;"
+                "}"
+                "QPushButton:hover {"
+                "background-color: #f8fafc;"
+                "border-color: #94a3b8;"
+                "}"
+            )
             wizard_btn.clicked.connect(
                 lambda checked, cn=camera_name: self.wizard_for_camera_clicked.emit(cn)
             )
@@ -393,6 +406,24 @@ class CmSettingsPanel(QGroupBox):
             open_btn.setMinimumWidth(70)
             open_btn.setEnabled(False)
             open_btn.setToolTip("No config generated yet")
+            open_btn.setStyleSheet(
+                "QPushButton {"
+                "background-color: #ffffff;"
+                "color: #1e293b;"
+                "border: 1px solid #cbd5e1;"
+                "border-radius: 6px;"
+                "padding: 6px 12px;"
+                "}"
+                "QPushButton:hover {"
+                "background-color: #f8fafc;"
+                "border-color: #94a3b8;"
+                "}"
+                "QPushButton:disabled {"
+                "color: #94a3b8;"
+                "background-color: #f1f5f9;"
+                "border-color: #e2e8f0;"
+                "}"
+            )
             open_btn.clicked.connect(
                 lambda checked, cn=camera_name: self._on_config_clicked(cn)
             )

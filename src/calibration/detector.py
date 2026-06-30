@@ -454,12 +454,14 @@ class DetectorMixin:
         sim_detection: DetectionResult,
         sim_eval_image: Optional[np.ndarray],
     ) -> float:
-        """Pure geometric structure penalty — no pixel comparison.
+        """Symmetric binary-structure penalty — both sides preprocessed identically.
 
-        Virtual and real images have different lighting/texture/backgrounds,
-        so pixel-level comparison is meaningless. This only uses geometry:
-        1. Homography consistency (outlier fraction)
-        2. Perspective distortion (SVD condition number)
+        Virtual/real images have different lighting, so compare binary structure:
+        1. Warp sim eval image to real coordinate frame (via homography)
+        2. Preprocess BOTH patches with identical binary thresholding
+           (same _preprocess_template_match_image, no is_sim_sourced asymmetry)
+        3. NCC and residual RMS between the two binary images
+        4. Plus homography consistency (outlier fraction, condition number)
 
         Returns additive penalty in pixel units. Low = good alignment.
         """
@@ -484,17 +486,70 @@ class DetectorMixin:
         if inlier_count < 4:
             return 0.0
 
-        # Outlier fraction — high outliers = structure mismatch
+        # ---- Geometric checks (pure geometry) ----
         outlier_frac = 1.0 - (inlier_count / n)
 
-        # SVD condition of affine part — extreme perspective = penalty
         A = np.array(H[:2, :2], dtype=np.float64)
         s = np.linalg.svd(A, compute_uv=False)
         cond = s.max() / max(s.min(), 1e-10)
         cond_penalty = max(0.0, (cond - 5.0)) * 0.3
 
-        # Combined penalty: outliers contribute up to ~5, perspective up to ~10
-        return outlier_frac * 5.0 + cond_penalty
+        # ---- Symmetric binary-structure comparison ----
+        real_bbox = self._points_bbox(real_points)
+        rx, ry, rw, rh = real_bbox
+        if rw < 12 or rh < 12:
+            return outlier_frac * 5.0 + cond_penalty
+
+        real_patch = self.real_img[ry : ry + rh, rx : rx + rw]
+        if real_patch.size == 0:
+            return outlier_frac * 5.0 + cond_penalty
+
+        # Warp sim eval image to align with real patch coordinate frame
+        # Both patches now cover the SAME physical region
+        H_inv = np.linalg.inv(H)
+        warped = cv2.warpPerspective(
+            sim_eval_image, H_inv, (rw, rh),
+            borderMode=cv2.BORDER_CONSTANT, borderValue=0,
+        )
+
+        def _to_gray(img):
+            return img if len(img.shape) == 2 else cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+        real_gray = _to_gray(real_patch)
+        sim_gray = _to_gray(warped)
+
+        # KEY FIX: both sides go through IDENTICAL preprocessing
+        # (no is_sim_sourced asymmetry — both become binary 0/255)
+        real_processed = self._preprocess_template_match_image(real_gray, board)
+        sim_processed = self._preprocess_template_match_image(sim_gray, board)
+
+        real_f32 = real_processed.astype(np.float32)
+        sim_f32 = sim_processed.astype(np.float32)
+
+        # NCC — symmetric domain (binary vs binary), reliable
+        r_mean = np.mean(real_f32)
+        s_mean = np.mean(sim_f32)
+        numer = float(np.mean((real_f32 - r_mean) * (sim_f32 - s_mean)))
+        r_var = float(np.mean(np.square(real_f32 - r_mean)))
+        s_var = float(np.mean(np.square(sim_f32 - s_mean)))
+        denom = float(np.sqrt(max(1e-10, r_var * s_var)))
+        ncc = numer / max(1e-10, denom)
+        ncc = max(-1.0, min(1.0, ncc))
+
+        # Residual RMS in same binary domain
+        residual_rms = float(np.sqrt(np.mean(np.square(real_f32 - sim_f32)))) / 255.0
+
+        # NCC → penalty: 1.0 (perfect) → 0, 0.0 (uncorrelated) → 15
+        structure_penalty = max(0.0, (1.0 - ncc) * 15.0)
+        # Residual: 0 → 0, 0.5 → 10, 1.0 → 20
+        residual_penalty = residual_rms * 20.0
+
+        return (
+            outlier_frac * 5.0
+            + cond_penalty
+            + structure_penalty
+            + residual_penalty
+        )
 
     def _prepare_eval_image(self, image: np.ndarray) -> np.ndarray:
         source_h, source_w = image.shape[:2]

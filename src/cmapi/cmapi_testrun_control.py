@@ -2852,6 +2852,18 @@ async def start_or_reuse_movie(
     for idx, proc in enumerate(existing_gui_movies):
         _write_movie_launch_log(f"  Instance {idx}: PID={proc.get('ProcessId')}, CommandLine={proc.get('CommandLine', '')[:200]}")
 
+    # If no GUI movie but GPUSensor movie exists, clean up orphaned stack first.
+    # This prevents two movie stacks (residual GPUSensor + new GUI) from coexisting
+    # when the CarMaker/TruckMaker GUI was restarted without cleaning up movies.
+    if not existing_gui_movies:
+        existing_gpu_movies = list_gpusensor_movie_processes()
+        if existing_gpu_movies:
+            print(f"[movie-launch] Found {len(existing_gpu_movies)} orphaned GPU sensor process(es), cleaning up...")
+            _write_movie_launch_log(
+                f"Found {len(existing_gpu_movies)} orphaned GPU sensor process(es), attempting clean shutdown..."
+            )
+            kill_movie_stack_if_gpusensor_present()
+
     if len(existing_gui_movies) == 1:
         pid = int(existing_gui_movies[0]["ProcessId"])
         # Verify the existing instance is for the correct project

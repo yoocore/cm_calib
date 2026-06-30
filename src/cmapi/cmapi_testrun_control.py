@@ -62,7 +62,6 @@ def _resolve_default_cm_install() -> Path:
     return ipghome
 
 DEFAULT_CM_INSTALL = _resolve_default_cm_install()
-DEFAULT_CONFIG_DIR = Path(__file__).resolve().parents[2] / "configs"
 CARMAKER_PROCESS_NAMES = ("CarMaker.win64.exe", "HIL.exe", "CM_Office.exe", "TruckMaker.win64.exe", "TM_Office.exe", "MCycleMaker.win64.exe", "MM_Office.exe")
 RUNTIME_CARMAKER_PROCESS_NAMES = ("CarMaker.win64.exe", "CM_Office.exe", "TruckMaker.win64.exe", "TM_Office.exe", "MCycleMaker.win64.exe", "MM_Office.exe")
 DEFAULT_MOVIE_APPHOST = socket.gethostname()
@@ -662,14 +661,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--config-dir",
         type=Path,
-        default=DEFAULT_CONFIG_DIR,
+        required=True,
         help="Directory containing generated camera.<name>.json runtime configs.",
     )
     parser.add_argument(
         "--bootstrap-template",
         type=Path,
         default=None,
-        help="Optional bootstrap template path. Defaults to configs/bootstrap.template.json next to the script.",
+        help="Optional bootstrap template path. Defaults to bootstrap.template.json in the config directory.",
     )
     parser.add_argument(
         "--movie-dir",

@@ -12,7 +12,7 @@ class ConfigService:
     def __init__(self, project_root: Path):
         self.project_root = project_root.resolve()
         self.calibration_root = resolve_tool_root()
-        self.config_dir = self.calibration_root / "configs"
+        self.config_dir = self.project_root / "Data" / "Script" / "CameraCalibration"
 
     def list_cameras(self) -> list[str]:
         if not self.config_dir.exists():

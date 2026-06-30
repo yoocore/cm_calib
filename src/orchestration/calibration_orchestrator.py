@@ -32,7 +32,6 @@ ORCHESTRATION_EVENT_PREFIX = "ORCHESTRATION_EVENT_JSON:"
 ORCHESTRATION_SUMMARY_PREFIX = "ORCHESTRATION_SUMMARY_JSON:"
 
 DEFAULT_PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_CONFIG_DIR = Path(__file__).resolve().parents[2] / "configs"
 
 
 _STOP_REQUESTED = False
@@ -99,7 +98,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--config-dir",
         type=Path,
-        default=DEFAULT_CONFIG_DIR,
+        required=True,
         help="Directory containing camera.<name>.json runtime configs.",
     )
     parser.add_argument(
@@ -620,7 +619,7 @@ def main() -> None:
             project_root=project_root,
             camera_names=cameras,
             config_dir=config_dir,
-            template_path=(config_dir / "bootstrap.template.json") if (config_dir / "bootstrap.template.json").exists() else (Path(__file__).resolve().parent / "configs" / "bootstrap.template.json"),
+            template_path=config_dir / "bootstrap.template.json",
             movie_dir=project_root / "Movie",
             overwrite_existing=False,
             capture_current_params=False,

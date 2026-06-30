@@ -65,17 +65,42 @@ _PANEL_STYLE = (
 )
 
 _CONTROL_STYLE = (
-    "QLineEdit, QComboBox {"
+    "QLineEdit {"
     "border: 1px solid #cbd5e1;"
     "border-radius: 6px;"
     "padding: 4px 10px;"
     "background-color: #ffffff;"
     "color: #1e293b;"
     "}"
-    "QLineEdit:disabled, QComboBox:disabled {"
+    "QLineEdit:disabled {"
     "background-color: #f1f5f9;"
     "color: #94a3b8;"
     "border-color: #e2e8f0;"
+    "}"
+    "QComboBox {"
+    "border: 1px solid #cbd5e1;"
+    "border-radius: 6px;"
+    "padding: 4px 10px;"
+    "background-color: #ffffff;"
+    "color: #1e293b;"
+    "}"
+    "QComboBox:disabled {"
+    "background-color: #f1f5f9;"
+    "color: #94a3b8;"
+    "border-color: #e2e8f0;"
+    "}"
+    "QComboBox::drop-down {"
+    "border: none;"
+    "width: 28px;"
+    "background: transparent;"
+    "border-left: 1px solid #e2e8f0;"
+    "border-top-right-radius: 6px;"
+    "border-bottom-right-radius: 6px;"
+    "}"
+    "QComboBox::down-arrow {"
+    f"image: url({_DROPDOWN_ARROW_SVG});"
+    "width: 10px;"
+    "height: 10px;"
     "}"
     "QPushButton {"
     "background-color: #ffffff;"
@@ -102,6 +127,7 @@ _CONTROL_STYLE = (
 
 
 _CHECKBOX_SVG = (Path(__file__).resolve().parent.parent / "checkbox_checked.svg").as_posix()
+_DROPDOWN_ARROW_SVG = (Path(__file__).resolve().parent.parent / "dropdown_arrow.svg").as_posix()
 _CHECKBOX_STYLE = (
     "QListWidget::indicator {"
     "    width: 16px;"

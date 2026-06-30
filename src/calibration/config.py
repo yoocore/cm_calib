@@ -31,9 +31,6 @@ _ANNOTATION_OCR_ENGINE = None
 
 def _default_bootstrap_template_path() -> Path:
     calibration_dir = Path(__file__).resolve().parent
-    preferred = calibration_dir / "configs" / "bootstrap.template.json"
-    if preferred.exists():
-        return preferred
     legacy_preferred = calibration_dir / "bootstrap.template.json"
     if legacy_preferred.exists():
         return legacy_preferred

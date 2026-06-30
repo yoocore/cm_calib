@@ -1,8 +1,8 @@
 {
   "title": "CarMaker标定工具介绍",
   "subtitle": "基于已有CarMaker标定场景实现Camera标定自动化",
-  "version": "1.0.0",
-  "footer": "文档生成时间：{date} | 标定工具使用说明 v{version}",
+  "version": "1.2.6",
+  "footer": "{title} v{version} | {date}",
   "sections": [
     {
       "title": "主要功能",

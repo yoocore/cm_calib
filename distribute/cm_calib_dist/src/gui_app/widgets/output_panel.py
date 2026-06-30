@@ -1,0 +1,685 @@
+from __future__ import annotations
+
+import html
+import os
+import re
+from datetime import datetime
+from pathlib import Path
+
+from PySide6.QtCore import Qt, QSize, Signal
+from PySide6.QtGui import QImage, QPixmap, QPixmapCache, QTextCursor
+from PySide6.QtWidgets import (
+    QGridLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QTextEdit,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
+
+from src.gui_app.models.state import CameraResult
+from src.gui_app.widgets.score_curve_window import ScoreCurveWindow
+
+
+RESULT_JSON_ROLE = Qt.UserRole + 1
+BEST_IMAGE_ROLE = Qt.UserRole + 2
+BEST_SCORE_IMAGE_ROLE = Qt.UserRole + 3
+BEST_OVERLAY_IMAGE_ROLE = Qt.UserRole + 4
+LIVE_LOG_ROLE = Qt.UserRole + 5
+CURRENT_ITER_IMAGE_ROLE = Qt.UserRole + 6
+SUPPORTED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
+_LOG_SOURCE_RE = re.compile(r"^\[(?P<source>[^\]]+)\]\s*(?P<body>.*)$")
+_LOG_LEVEL_STYLES = {
+    "info": {"label": "INFO", "fg": "#90caf9", "bg": "#0d1b2a"},
+    "success": {"label": "SUCCESS", "fg": "#81c784", "bg": "#102417"},
+    "warning": {"label": "WARNING", "fg": "#ffd54f", "bg": "#2a2111"},
+    "error": {"label": "ERROR", "fg": "#ef9a9a", "bg": "#2b1416"},
+}
+_LOG_SOURCE_COLORS = {
+    "runtime": "#64b5f6",
+    "calibration": "#4dd0e1",
+    "system": "#b0bec5",
+}
+
+_PANEL_STYLE = (
+    "QGroupBox#OutputPanel {"
+    "border: 1px solid #cbd5e1;"
+    "border-radius: 12px;"
+    "margin-top: 12px;"
+    "padding: 14px;"
+    "background-color: #ffffff;"
+    "font-weight: 700;"
+    "}"
+    "QGroupBox#OutputPanel::title {"
+    "subcontrol-origin: margin;"
+    "left: 12px;"
+    "padding: 0 6px;"
+    "color: #0f172a;"
+    "}"
+)
+
+
+def _format_score(value: float | None) -> str:
+    return "-" if value is None else f"{value:.2f}"
+
+
+def _normalize_log_source(source: str | None, line: str) -> tuple[str, str]:
+    if source:
+        return source.strip().lower() or "system", line.strip()
+
+    text = line.strip()
+    match = _LOG_SOURCE_RE.match(text)
+    if match:
+        parsed_source = match.group("source").strip().lower() or "system"
+        parsed_body = match.group("body").strip()
+        return parsed_source, parsed_body
+    return "system", text
+
+
+def _classify_log_level(message: str) -> str:
+    text = message.casefold()
+    if not text:
+        return "info"
+    # Explicit level markers at message start take priority over text pattern matching
+    stripped = message.strip()
+    if stripped.startswith("[INFO]"):
+        return "info"
+    if stripped.startswith("[WARN]"):
+        return "warning"
+    if stripped.startswith("[ERROR]"):
+        return "error"
+    if stripped.startswith("[SUCCESS]"):
+        return "success"
+    # ERROR — conditions that cause calibration to terminate
+    if any(token in text for token in ("traceback", " exception", "runtimeerror", "fatal", "not found", "error")):
+        return "error"
+    if " failed" in text or " failure" in text:
+        return "error"
+    if " critical " in text or text.startswith("critical ") or text.endswith(" critical"):
+        return "error"
+    # WARNING — non-fatal issues
+    if any(token in text for token in ("warn", "warning", "timeout", "timed out", "passive", "not ready", "mismatch", " fail")):
+        return "warning"
+    if any(token in text for token in (" success", " succeeded", "completed", "ready", " all passed", " ok", " status=ok")):
+        return "success"
+    return "info"
+
+
+def _build_log_plain_text(timestamp_text: str, source: str, level: str, message: str) -> str:
+    level_label = _LOG_LEVEL_STYLES[level]["label"]
+    return f"[{timestamp_text}] [{source.upper()}] [{level_label}] {message}"
+
+
+def _build_log_html(timestamp_text: str, source: str, level: str, message: str) -> str:
+    level_style = _LOG_LEVEL_STYLES[level]
+    source_color = _LOG_SOURCE_COLORS.get(source, "#b0bec5")
+    return (
+        '<div style="margin:0 0 4px 0;">'
+        f'<span style="color:#8fa3b0;">[{html.escape(timestamp_text)}]</span> '
+        f'<span style="color:{source_color}; font-weight:700;">[{html.escape(source.upper())}]</span> '
+        f'<span style="color:{level_style["fg"]}; background-color:{level_style["bg"]}; '
+        'font-weight:700; border-radius:4px; padding:1px 6px;">'
+        f'[{html.escape(level_style["label"])}]</span> '
+        f'<span style="color:#e6edf3;">{html.escape(message)}</span>'
+        "</div>"
+    )
+
+
+class ArtifactPreviewLabel(QLabel):
+    clicked = Signal()
+
+    def __init__(self, empty_text: str, parent: QWidget | None = None):
+        super().__init__(empty_text, parent)
+        self._empty_text = empty_text
+        self._artifact_path: str | None = None
+        self._last_render_size = QSize()
+        self.setAlignment(Qt.AlignCenter)
+        self.setWordWrap(True)
+        self.setMinimumSize(180, 120)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        self.setStyleSheet("border: 1px solid #666; padding: 4px;")
+
+    def set_artifact(self, artifact_path: str | None) -> None:
+        self._artifact_path = artifact_path.strip() if artifact_path else None
+        QPixmapCache.clear()
+        self._render()
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton and self._artifact_path:
+            self.clicked.emit()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if self._artifact_path and self.size() != self._last_render_size:
+            self._last_render_size = self.size()
+            self._render()
+
+    def _render(self) -> None:
+        if not self._artifact_path:
+            self.setPixmap(QPixmap())
+            self.setText(self._empty_text)
+            return
+
+        path = Path(self._artifact_path)
+        if path.suffix.casefold() not in SUPPORTED_IMAGE_SUFFIXES:
+            self.setPixmap(QPixmap())
+            self.setText(path.name)
+            return
+
+        if not path.exists():
+            self.setPixmap(QPixmap())
+            self.setText("")
+            parent_group = self.parentWidget()
+            if parent_group is not None:
+                parent_group.hide()
+            return
+
+        parent_group = self.parentWidget()
+        if parent_group is not None:
+            parent_group.show()
+        img = QImage(str(path))
+        if img.isNull():
+            self.setPixmap(QPixmap())
+            self.setText(f"Preview failed\n{path.name}")
+            return
+
+        pixmap = QPixmap.fromImage(img)
+        scaled = pixmap.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.setPixmap(scaled)
+        self.setText("")
+
+
+_PREVIEW_GROUP_STYLE = (
+    "QGroupBox { border: 1px solid #d0d7de; border-radius: 10px;"
+    " margin-top: 8px; padding-top: 14px; font-weight: 600; background-color: #ffffff; }"
+    "QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; color: #334155; }"
+)
+
+
+class CameraResultCard(QGroupBox):
+    selected = Signal(str)
+    activated = Signal(str)
+
+    def __init__(self, camera_name: str, parent: QWidget | None = None):
+        super().__init__(camera_name, parent)
+        self.camera_name = camera_name
+
+        self.status_value = QLabel("pending")
+        self.init_score_value = QLabel("-")
+        self.best_score_value = QLabel("-")
+        self.current_iter_value = QLabel("-")
+        self._score_windows: list[QWidget] = []
+        self.iter_preview = ArtifactPreviewLabel("")
+        self.score_preview = ArtifactPreviewLabel("")
+        self.overlay_preview = ArtifactPreviewLabel("")
+        self.open_log_button = QPushButton("Log")
+        self.open_result_button = QPushButton("Result")
+        self.open_score_live_button = QPushButton("Score Live")
+        self.open_score_plot_button = QPushButton("Score Plot")
+
+        info_layout = QHBoxLayout()
+        info_layout.setContentsMargins(0, 0, 0, 0)
+        info_layout.addWidget(self.status_value)
+        info_layout.addWidget(QLabel(" | Init:"))
+        info_layout.addWidget(self.init_score_value)
+        info_layout.addWidget(QLabel("| Best:"))
+        info_layout.addWidget(self.best_score_value)
+        info_layout.addWidget(QLabel("| Current:"))
+        info_layout.addWidget(self.current_iter_value)
+        info_layout.addStretch(1)
+
+        self._iter_group = self._make_preview_group("Current Iter", self.iter_preview)
+        self._score_group = self._make_preview_group("Best Score", self.score_preview)
+        self._overlay_group = self._make_preview_group("Best Overlay", self.overlay_preview)
+
+        previews = QWidget(self)
+        self._previews_layout = QHBoxLayout(previews)
+        self._previews_layout.setContentsMargins(0, 0, 0, 0)
+        self._previews_layout.addWidget(self._iter_group)
+        self._previews_layout.addWidget(self._score_group)
+        self._previews_layout.addWidget(self._overlay_group)
+
+        actions = QWidget(self)
+        actions_layout = QHBoxLayout(actions)
+        actions_layout.setContentsMargins(0, 0, 0, 0)
+        actions_layout.addWidget(self.open_log_button)
+        actions_layout.addWidget(self.open_result_button)
+        actions_layout.addWidget(self.open_score_live_button)
+        actions_layout.addWidget(self.open_score_plot_button)
+
+        for button in (
+            self.open_log_button,
+            self.open_result_button,
+            self.open_score_live_button,
+            self.open_score_plot_button,
+        ):
+            button.setMinimumHeight(30)
+            button.setStyleSheet(
+                "QPushButton {"
+                "background-color: #ffffff;"
+                "color: #475569;"
+                "border: 1px solid #cbd5e1;"
+                "border-radius: 8px;"
+                "padding: 5px 10px;"
+                "}"
+                "QPushButton:disabled {"
+                "color: #94a3b8;"
+                "border-color: #e2e8f0;"
+                "}"
+            )
+        self.open_score_live_button.setEnabled(False)
+        self.open_score_plot_button.setEnabled(False)
+
+        layout = QVBoxLayout(self)
+        layout.addLayout(info_layout)
+        layout.addWidget(previews)
+        layout.addWidget(actions)
+
+        self.set_selected(False)
+
+    def _make_preview_group(self, title: str, label: ArtifactPreviewLabel) -> QGroupBox:
+        group = QGroupBox(title, self)
+        group.setStyleSheet(_PREVIEW_GROUP_STYLE)
+        inner = QVBoxLayout(group)
+        inner.setContentsMargins(4, 4, 4, 4)
+        label.setParent(group)
+        inner.addWidget(label)
+        return group
+
+    def set_selected(self, selected: bool) -> None:
+        border_color = "#1f6feb" if selected else "#666"
+        background = "#f8fbff" if selected else "#ffffff"
+        self.setStyleSheet(
+            "QGroupBox {"
+            f"border: 2px solid {border_color};"
+            "border-radius: 12px;"
+            "margin-top: 8px;"
+            "padding-top: 10px;"
+            f"background-color: {background};"
+            "}"
+        )
+
+    def update_result(self, result: CameraResult) -> None:
+        self.status_value.setText("fail" if result.status == "failed" else result.status)
+        self.init_score_value.setText(_format_score(result.init_score))
+        self.best_score_value.setText(_format_score(result.best_score))
+        self.current_iter_value.setText(_format_score(result.current_iter_score))
+        if result.current_iter_image is not None:
+            self.iter_preview.set_artifact(result.current_iter_image)
+        else:
+            self.iter_preview.set_artifact(None)
+        if result.best_score_image is not None:
+            self.score_preview.set_artifact(result.best_score_image)
+        else:
+            self.score_preview.set_artifact(None)
+        if result.best_overlay_image is not None:
+            self.overlay_preview.set_artifact(result.best_overlay_image)
+        else:
+            self.overlay_preview.set_artifact(None)
+        self._update_preview_stretch()
+
+        self.open_log_button.setEnabled(bool(result.live_log))
+        self.open_result_button.setEnabled(bool(result.result_json))
+        self.open_score_live_button.setEnabled(bool(result.best_image or result.current_iter_image))
+
+    def _update_preview_stretch(self) -> None:
+        from PySide6.QtGui import QImage
+
+        for i, label in enumerate([self.iter_preview, self.score_preview, self.overlay_preview]):
+            group = label.parentWidget()
+            if group is None:
+                continue
+            path = label._artifact_path
+            stretch = 0
+            if path:
+                img = QImage(path)
+                if not img.isNull() and img.height() > 0:
+                    # Group width = image width + borders/padding (~12px)
+                    group.setMaximumWidth(img.width() + 12)
+                    stretch = img.width()
+                else:
+                    group.setMaximumWidth(16777215)  # QWIDGETSIZE_MAX
+            else:
+                group.setMaximumWidth(16777215)
+            self._previews_layout.setStretch(i, stretch)
+
+    def mousePressEvent(self, event) -> None:
+        self.selected.emit(self.camera_name)
+        super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        self.selected.emit(self.camera_name)
+        self.activated.emit(self.camera_name)
+        super().mouseDoubleClickEvent(event)
+
+
+class OutputPanel(QGroupBox):
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__("Output", parent)
+        self.setObjectName("OutputPanel")
+        self.setStyleSheet(_PANEL_STYLE)
+        self.output_dir_label = QLabel("-")
+        self.output_dir_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.open_output_button = QPushButton("Open Output")
+        self.open_output_button.setEnabled(False)
+        self.log_path_label = QLabel("-")
+        self.log_path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.log_path_label.setWordWrap(False)
+        self.open_log_button = QPushButton("Open Log")
+        self.open_log_button.setEnabled(False)
+        self.log_view = QTextEdit()
+        self.log_view.setReadOnly(True)
+        self.log_view.setStyleSheet(
+            "QTextEdit {"
+            "background-color: #0b1220;"
+            "color: #e6edf3;"
+            "border: 1px solid #334155;"
+            "font-family: Consolas, 'Courier New', monospace;"
+            "}"
+            "QScrollBar:vertical {"
+            "background: #0b1220;"
+            "width: 10px;"
+            "margin: 0;"
+            "}"
+            "QScrollBar::handle:vertical {"
+            "background: #475569;"
+            "min-height: 20px;"
+            "border-radius: 5px;"
+            "}"
+            "QScrollBar::handle:vertical:hover {"
+            "background: #64748b;"
+            "}"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {"
+            "height: 0px;"
+            "}"
+            "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {"
+            "background: none;"
+            "}"
+        )
+
+        self.result_tree = QTreeWidget(self)
+        self.result_tree.setColumnCount(4)
+        self.result_tree.setHeaderLabels(["Camera", "Status", "Best Score", "Current Iter Score"])
+        self.result_tree.hide()
+
+        self._task_log_path: str | None = None
+        self._result_cards: dict[str, CameraResultCard] = {}
+        self._score_windows: list = []
+
+        self.results_container = QWidget(self)
+        self.results_layout = QVBoxLayout(self.results_container)
+        self.results_layout.setContentsMargins(0, 0, 0, 0)
+        self.results_layout.setSpacing(10)
+        self.results_layout.addStretch(1)
+
+        self.results_scroll = QScrollArea(self)
+        self.results_scroll.setWidgetResizable(True)
+        self.results_scroll.setWidget(self.results_container)
+        self.results_scroll.setStyleSheet(
+            "QScrollBar:vertical {"
+            "background: #0f172a;"
+            "width: 10px;"
+            "margin: 0;"
+            "}"
+            "QScrollBar::handle:vertical {"
+            "background: #475569;"
+            "min-height: 20px;"
+            "border-radius: 5px;"
+            "}"
+            "QScrollBar::handle:vertical:hover {"
+            "background: #64748b;"
+            "}"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {"
+            "height: 0px;"
+            "}"
+            "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {"
+            "background: none;"
+            "}"
+        )
+
+        top_row = QWidget(self)
+        top_layout = QHBoxLayout(top_row)
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.addWidget(QLabel("Output"))
+        top_layout.addWidget(self.output_dir_label, 1)
+        top_layout.addWidget(self.open_output_button)
+
+        log_row = QWidget(self)
+        log_layout = QHBoxLayout(log_row)
+        log_layout.setContentsMargins(0, 0, 0, 0)
+        log_layout.addWidget(QLabel("Log"))
+        log_layout.addWidget(self.log_path_label, 1)
+        log_layout.addWidget(self.open_log_button)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+        layout.addWidget(top_row)
+        layout.addWidget(self.results_scroll, 3)
+        layout.addWidget(log_row)
+        layout.addWidget(self.log_view, 1)
+
+        self.open_output_button.clicked.connect(self._open_output_dir)
+        self.open_log_button.clicked.connect(self._open_log_file)
+        self.result_tree.itemSelectionChanged.connect(self._refresh_selection)
+
+    def set_output_dir(self, output_dir: str | None) -> None:
+        self.output_dir_label.setText(output_dir or "-")
+        self.open_output_button.setEnabled(bool(output_dir))
+
+    def set_log_path(self, log_path: str | None) -> None:
+        self._task_log_path = str(log_path).strip() if log_path else None
+        if self.result_tree.currentItem() is None:
+            self._refresh_log_row()
+
+    def clear_results(self) -> None:
+        """Remove all camera result cards and tree items."""
+        for card in self._result_cards.values():
+            card.deleteLater()
+        self._result_cards.clear()
+        self.result_tree.clear()
+
+    def append_log(self, line: str, *, source: str | None = None) -> None:
+        parsed_source, message = _normalize_log_source(source, line)
+        if not message:
+            return
+        level = _classify_log_level(message)
+        timestamp_text = datetime.now().strftime("%H:%M:%S")
+        plain_text = _build_log_plain_text(timestamp_text, parsed_source, level, message)
+        entry_html = _build_log_html(timestamp_text, parsed_source, level, message)
+
+        cursor = self.log_view.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        cursor.insertHtml(entry_html)
+        cursor.insertBlock()
+        self.log_view.setTextCursor(cursor)
+        self.log_view.ensureCursorVisible()
+
+    def update_camera_result(self, result: CameraResult) -> None:
+        item = self._find_or_create_item(result.camera)
+        item.setText(0, result.camera)
+        item.setText(1, result.status)
+        item.setText(2, _format_score(result.best_score))
+        item.setText(3, _format_score(result.current_iter_score))
+        item.setData(0, LIVE_LOG_ROLE, result.live_log or "")
+        item.setData(0, RESULT_JSON_ROLE, result.result_json or "")
+        item.setData(0, BEST_IMAGE_ROLE, result.best_image or "")
+        item.setData(0, CURRENT_ITER_IMAGE_ROLE, result.current_iter_image or result.best_image or "")
+        item.setData(0, BEST_SCORE_IMAGE_ROLE, result.best_score_image or "")
+        item.setData(0, BEST_OVERLAY_IMAGE_ROLE, result.best_overlay_image or "")
+
+        card = self._ensure_result_card(result.camera)
+        card.update_result(result)
+        card.open_score_plot_button.setEnabled(result.status in {"finished", "completed"})
+
+        if self.result_tree.currentItem() is None:
+            self._select_camera(result.camera)
+        elif self.result_tree.currentItem() is item or result.status in {"running", "preparing", "ready", "finished", "failed"}:
+            self._select_camera(result.camera)
+
+    def resolve_item_artifact(self, item: QTreeWidgetItem, column: int) -> str | None:
+        result_json = self._item_data(item, RESULT_JSON_ROLE)
+        best_image = self._item_data(item, BEST_IMAGE_ROLE)
+        current_iter_image = self._item_data(item, CURRENT_ITER_IMAGE_ROLE)
+        best_score_image = self._item_data(item, BEST_SCORE_IMAGE_ROLE)
+        best_overlay_image = self._item_data(item, BEST_OVERLAY_IMAGE_ROLE)
+        candidates_by_column = {
+            0: [result_json, best_image, best_score_image, best_overlay_image],
+            1: [result_json, best_image, best_score_image, best_overlay_image],
+            2: [best_score_image],
+            3: [best_overlay_image, best_image, result_json, best_score_image],
+        }
+        for candidate in candidates_by_column.get(column, [result_json, best_image, best_score_image, best_overlay_image]):
+            if candidate:
+                return candidate
+        return None
+
+    def current_log_path(self) -> str | None:
+        item = self.result_tree.currentItem()
+        live_log = self._item_data(item, LIVE_LOG_ROLE) if item is not None else None
+        return live_log or self._task_log_path
+
+    def _ensure_result_card(self, camera_name: str) -> CameraResultCard:
+        card = self._result_cards.get(camera_name)
+        if card is not None:
+            return card
+
+        card = CameraResultCard(camera_name, self.results_container)
+        card.selected.connect(self._select_camera)
+        card.activated.connect(self._open_camera_default_artifact)
+        card.open_log_button.clicked.connect(lambda _checked=False, name=camera_name: self._open_camera_artifact(name, LIVE_LOG_ROLE))
+        card.open_result_button.clicked.connect(lambda _checked=False, name=camera_name: self._open_camera_artifact(name, RESULT_JSON_ROLE))
+        card.open_score_live_button.clicked.connect(lambda _checked=False, name=camera_name: self._open_score_curve(name, "live"))
+        card.open_score_plot_button.clicked.connect(lambda _checked=False, name=camera_name: self._open_score_curve(name, "plot"))
+        card.iter_preview.clicked.connect(lambda name=camera_name: self._open_camera_artifact(name, CURRENT_ITER_IMAGE_ROLE))
+        card.score_preview.clicked.connect(lambda name=camera_name: self._open_camera_artifact(name, BEST_SCORE_IMAGE_ROLE))
+        card.overlay_preview.clicked.connect(lambda name=camera_name: self._open_camera_artifact(name, BEST_OVERLAY_IMAGE_ROLE))
+        self.results_layout.insertWidget(self.results_layout.count() - 1, card)
+        self._result_cards[camera_name] = card
+        return card
+
+    def _find_or_create_item(self, camera_name: str) -> QTreeWidgetItem:
+        item = self._find_item(camera_name)
+        if item is not None:
+            return item
+        item = QTreeWidgetItem(self.result_tree)
+        self.result_tree.addTopLevelItem(item)
+        return item
+
+    def _find_item(self, camera_name: str) -> QTreeWidgetItem | None:
+        for index in range(self.result_tree.topLevelItemCount()):
+            item = self.result_tree.topLevelItem(index)
+            if item.text(0) == camera_name:
+                return item
+        return None
+
+    def _select_camera(self, camera_name: str) -> None:
+        item = self._find_item(camera_name)
+        if item is None:
+            return
+        self.result_tree.setCurrentItem(item)
+        self._refresh_selection()
+
+    def _open_score_curve(self, camera_name: str, mode: str) -> None:
+        self._select_camera(camera_name)
+        item = self._find_item(camera_name)
+        result_json = self._item_data(item, RESULT_JSON_ROLE) if item is not None else None
+        if not result_json:
+            return
+        window = ScoreCurveWindow(camera_name, result_json, mode=mode)
+        window.setAttribute(Qt.WA_DeleteOnClose)
+        window.destroyed.connect(lambda obj=None, w=window: self._score_windows.remove(w) if w in self._score_windows else None)
+        self._score_windows.append(window)
+        window.show()
+
+    def _open_camera_artifact(self, camera_name: str, role: int) -> None:
+        self._select_camera(camera_name)
+        item = self._find_item(camera_name)
+        artifact = self._item_data(item, role) if item is not None else None
+        if artifact:
+            os.startfile(artifact)
+
+    def _open_camera_default_artifact(self, camera_name: str) -> None:
+        self._select_camera(camera_name)
+        item = self._find_item(camera_name)
+        if item is None:
+            return
+        artifact = self._first_existing_artifact(
+            self._item_data(item, CURRENT_ITER_IMAGE_ROLE),
+            self._item_data(item, RESULT_JSON_ROLE),
+            self._item_data(item, BEST_IMAGE_ROLE),
+            self._item_data(item, BEST_SCORE_IMAGE_ROLE),
+            self._item_data(item, BEST_OVERLAY_IMAGE_ROLE),
+        )
+        if artifact:
+            os.startfile(artifact)
+
+    def _refresh_selection(self) -> None:
+        item = self.result_tree.currentItem()
+        if item is None:
+            self._refresh_log_row()
+            self._sync_card_selection(None)
+            return
+
+        camera_name = item.text(0) or "<unknown>"
+        self._refresh_log_row(item)
+        self._sync_card_selection(camera_name)
+
+    def _sync_card_selection(self, selected_camera: str | None) -> None:
+        for camera_name, card in self._result_cards.items():
+            card.set_selected(camera_name == selected_camera)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if self.result_tree.currentItem() is not None:
+            self._refresh_selection()
+
+    def _refresh_log_row(self, item: QTreeWidgetItem | None = None) -> None:
+        current_item = item or self.result_tree.currentItem()
+        live_log = self._item_data(current_item, LIVE_LOG_ROLE) if current_item is not None else None
+        log_path = live_log or self._task_log_path
+        self.log_path_label.setText(log_path or "-")
+        self.log_path_label.setToolTip(log_path or "")
+        self.open_log_button.setEnabled(bool(log_path))
+
+    def _open_log_file(self) -> None:
+        log_path = self.current_log_path()
+        if log_path:
+            os.startfile(log_path)
+
+    @staticmethod
+    def _first_existing_artifact(*candidates: str | None) -> str | None:
+        first_non_empty: str | None = None
+        for candidate in candidates:
+            if not candidate:
+                continue
+            if first_non_empty is None:
+                first_non_empty = candidate
+            path = Path(candidate)
+            if path.exists():
+                return candidate
+        return first_non_empty
+
+    @staticmethod
+    def _item_data(item: QTreeWidgetItem | None, role: int) -> str | None:
+        if item is None:
+            return None
+        value = item.data(0, role)
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    def _open_output_dir(self) -> None:
+        text = self.output_dir_label.text().strip()
+        if not text or text == "-":
+            return
+        os.startfile(text)

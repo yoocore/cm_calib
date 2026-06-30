@@ -1,0 +1,10 @@
+diff a/src/gui_app/services/runtime_service.py b/src/gui_app/services/runtime_service.py	(rejected hunks)
+@@ -17,7 +18,7 @@ class RuntimeService(QObject):
+     def __init__(self, project_root: Path, parent: QObject | None = None):
+         super().__init__(parent)
+         self.project_root = project_root.resolve()
+-        self.calibration_root = self.project_root / "Data" / "Script" / "CameraCalibration"
++        self.calibration_root = resolve_tool_root()
+         self.process_service = ProcessService(self)
+         self.process_service.line_received.connect(self.line_received.emit)
+         self.process_service.runtime_summary.connect(self.runtime_summary.emit)

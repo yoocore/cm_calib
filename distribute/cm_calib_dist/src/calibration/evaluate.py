@@ -1,0 +1,191 @@
+"""EvaluateMixin — evaluate() and optimize() methods for calibration evaluation and optimization."""
+import time
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+import cv2
+
+from src.calibration.calib_types import BoardScoreDetail, TotalScoreDetail
+try:
+    import optuna
+    _OPTUNA_AVAILABLE = True
+except ImportError:
+    _OPTUNA_AVAILABLE = False
+
+
+class EvaluateMixin:
+
+    def evaluate(
+        self, tag: str, baseline_metrics: Optional[Dict[str, Dict[str, float]]] = None,
+    ) -> Tuple[TotalScoreDetail, Path]:
+        t0 = time.perf_counter()
+        sim_path = self.capture_movie(tag)
+        t_capture = time.perf_counter() - t0
+        self._last_eval_image = str(sim_path)
+        sim_img = cv2.imread(str(sim_path), cv2.IMREAD_GRAYSCALE)
+        if sim_img is None:
+            raise RuntimeError(f"Failed reading screenshot: {sim_path}")
+
+        # Reference detection on real image (sim will be upsampled for comparison)
+        if self.real_detections is None:
+            self.real_detections = self._detect_reference_boards()
+
+        mean_brightness = float(sim_img.mean())
+        if mean_brightness < 5.0:
+            print(f"[health] Black frame detected (mean={mean_brightness:.1f}), attempting UpdateView recovery...")
+            try:
+                self._force_update_view()
+                sim_path = self.capture_movie(tag + "_blackfix")
+                sim_img = cv2.imread(str(sim_path), cv2.IMREAD_GRAYSCALE)
+                if sim_img is not None and float(sim_img.mean()) >= 5.0:
+                    print(f"[health] Black frame fixed after UpdateView (mean={float(sim_img.mean()):.1f})")
+                elif sim_img is not None:
+                    print(f"[health] Black frame persists after UpdateView (mean={float(sim_img.mean()):.1f})")
+            except Exception as exc:
+                print(f"[health] UpdateView recovery failed: {exc}")
+
+        # Freshness check: detect stale capture (same pixel data as previous)
+        current_hash = hash(sim_img.tobytes())
+        current_params = self._snapshot_values()
+        prev_hash = getattr(self, "_last_capture_hash", None)
+        if prev_hash is not None and current_hash == prev_hash:
+            # Check if parameters changed — same params means same image is expected
+            prev_params = getattr(self, "_last_capture_params", None)
+            if prev_params is not None and current_params == prev_params:
+                # Parameters unchanged: identical image is expected, not a rendering issue
+                self._consecutive_stale_count = 0
+            else:
+                stale_count = getattr(self, "_consecutive_stale_count", 0) + 1
+                self._consecutive_stale_count = stale_count
+                print(f"[health] Stale capture #{stale_count} for '{tag}': image identical to previous. Attempting recovery...")
+                if stale_count >= 3:
+                    raise RuntimeError(f"RENDERING_BROKEN: Too many consecutive stale captures ({stale_count}), rendering permanently frozen")
+                try:
+                    from src.health.rendering_health import try_restart_rendering
+                    r = try_restart_rendering()
+                    if r.get("restart_success"):
+                        print(f"[health] Rendering restarted (UC growth={r.get('uc_growth')}), re-capturing...")
+                        sim_path = self.capture_movie(tag + "_re")
+                        sim_img = cv2.imread(str(sim_path), cv2.IMREAD_GRAYSCALE)
+                        if sim_img is None:
+                            raise RuntimeError(f"Failed reading re-captured screenshot: {sim_path}")
+                        re_hash = hash(sim_img.tobytes())
+                        if re_hash == current_hash:
+                            raise RuntimeError(f"Stale capture persists after rendering restart: {sim_path}")
+                        current_hash = re_hash
+                    else:
+                        raise RuntimeError(f"Stale capture and rendering restart failed: {r.get('error', 'unknown')}")
+                except RuntimeError:
+                    raise  # Propagate explicit RuntimeErrors above
+                except ImportError:
+                    raise RuntimeError(f"Stale capture detected (rendering_health not available): {sim_path}")
+                except Exception as exc:
+                    raise RuntimeError(f"Stale capture recovery failed: {exc}")
+        else:
+            self._consecutive_stale_count = 0
+        self._last_capture_hash = current_hash
+        self._last_capture_params = current_params
+
+        sim_prepared = self._prepare_eval_image(sim_img)
+        t_prepare = time.perf_counter() - t0 - t_capture
+
+        board_scores: List[BoardScoreDetail] = []
+        t_detect_start = time.perf_counter()
+        for board in self.boards:
+            real_detection = self.real_detections[board.board_id]
+            sim_detection = self._detect_board(sim_prepared, board)
+            board_scores.append(self._score_board(board, real_detection, sim_detection, sim_prepared))
+
+        t_detect = time.perf_counter() - t_detect_start
+        total_detail = self._aggregate_scores(board_scores, baseline_metrics)
+        t_total = time.perf_counter() - t0
+        print(f"[timing] capture={t_capture:.2f}s prepare={t_prepare:.2f}s detect+score={t_detect:.2f}s total={t_total:.2f}s boards={len(self.boards)}")
+        return total_detail, sim_path
+
+    def optimize(self) -> dict:
+        mode = getattr(self, "optimizer_mode", "coordinate_descent")
+        if mode == "hybrid" or (mode == "auto" and _OPTUNA_AVAILABLE):
+            print(f"Using hybrid (phase1_CD->phase2_Bayesian)" if mode == "auto" else f"Using {mode} optimizer")
+            result = self._optimize_hybrid()
+        elif mode == "bayesian" and _OPTUNA_AVAILABLE:
+            print("Using bayesian optimizer")
+            result = self._optimize_bayesian_impl()
+        else:
+            if mode == "auto":
+                print("Optuna not available, falling back to coordinate_descent")
+            result = self._optimize_coordinate_descent_impl()
+        self._prune_intermediate_images(Path(result["best_image"]))
+        return result
+
+    def _optimize_hybrid(self) -> dict:
+        """P5: CD then Bayesian in a tight search box."""
+        phase1_iters = getattr(self, 'hybrid_phase1_iters', 15)
+        search_sigma = getattr(self, 'hybrid_search_box_sigma', 3.0)
+        total = self.max_iters
+        cd_iters = min(phase1_iters, total - max(3, total // 4))
+        if cd_iters < 3:
+            return self._optimize_coordinate_descent_impl()
+
+        print(f"[hybrid] Phase 1: CD x {cd_iters}")
+        cd_result = self._optimize_coordinate_descent_impl(cd_iters)
+        cd_score = cd_result.get("final_score", float("inf"))
+        cd_values = cd_result.get("final_values", {})
+
+        bayes_iters = total - cd_iters
+        print(f"[hybrid] Phase 2: Bayesian x {bayes_iters} around CD best")
+        search_range = {}
+        for p in self.params:
+            step = max(p.step, 1e-6) if p.step else 0.001
+            centre = cd_values.get(p.name, p.value)
+            half = search_sigma * step
+            search_range[p.name] = (
+                max(p.min_value, centre - half),
+                min(p.max_value, centre + half),
+            )
+        self._apply_value_map(cd_values)
+        import time
+        time.sleep(self.settle_sec)
+
+        def objective(trial):
+            values = {}
+            for param in self.params:
+                low, high = search_range[param.name]
+                step = max(param.step, 1e-6) if param.step else 0.001
+                values[param.name] = trial.suggest_float(param.name, low, high, step=step)
+            self._apply_value_map(values)
+            time.sleep(self.settle_sec)
+            total_detail, _ = self.evaluate("bayes_hybrid", None)
+            return float(total_detail.total_score)
+
+        sampler = optuna.samplers.TPESampler(
+            multivariate=True,
+            n_startup_trials=max(2, min(bayes_iters // 2, 15)),
+            seed=42,
+        )
+        study = optuna.create_study(direction="minimize", sampler=sampler)
+        study.enqueue_trial(cd_values)
+        study.optimize(objective, n_trials=bayes_iters, n_jobs=1)
+
+        bayes_score = study.best_value
+        if bayes_score >= cd_score - self.min_improve:
+            # Bayesian didn't improve enough — CD wins
+            print(f"[hybrid] CD best retained ({cd_score:.6f} vs Bayesian {bayes_score:.6f})")
+            return cd_result
+
+        # Bayesian improved — apply best, capture final
+        best_values = {p.name: study.best_params[p.name] for p in self.params}
+        self._apply_value_map(best_values)
+        time.sleep(self.settle_sec)
+        best_total_detail, best_img = self.evaluate("hybrid_final", None)
+        print(f"[hybrid] Bayesian improved ({bayes_score:.6f} vs CD {cd_score:.6f})")
+        return self._build_result_payload(
+            best_score=bayes_score,
+            best_values=best_values,
+            best_total_detail=best_total_detail,
+            best_img=best_img,
+            best_score_image=self._ensure_best_score_image(best_img, best_total_detail, values=best_values),
+            best_overlay_image=self._ensure_best_overlay_image(best_img),
+            stop_reason="max_iters_reached",
+            history=[],
+            in_progress=False,
+        )

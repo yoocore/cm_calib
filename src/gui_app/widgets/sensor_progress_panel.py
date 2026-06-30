@@ -70,14 +70,14 @@ class SensorProgressPanel(QGroupBox):
     def _setup_column_sizes(self) -> None:
         header = self.sensor_progress_tree.header()
         modes = [
-            (0, QHeaderView.Interactive, 180),  # Sensor
-            (1, QHeaderView.Interactive, 120),  # Status
-            (2, QHeaderView.Interactive, 140),  # Iteration
-            (3, QHeaderView.Interactive, 120),  # Elapsed
-            (4, QHeaderView.Interactive, 180),  # Progress (bar)
-            (5, QHeaderView.Interactive, 100),  # Init
-            (6, QHeaderView.Interactive, 100),  # Current
-            (7, QHeaderView.Interactive, 100),  # Best
+            (0, QHeaderView.Interactive, 100),  # Sensor
+            (1, QHeaderView.Interactive, 70),  # Status
+            (2, QHeaderView.Interactive, 80),  # Iteration
+            (3, QHeaderView.Interactive, 80),  # Elapsed
+            (4, QHeaderView.Interactive, 110),  # Progress (bar)
+            (5, QHeaderView.Interactive, 70),  # Init
+            (6, QHeaderView.Interactive, 70),  # Current
+            (7, QHeaderView.Interactive, 70),  # Best
         ]
         for col, mode, default_width in modes:
             header.setSectionResizeMode(col, mode)

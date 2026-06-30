@@ -1,0 +1,65 @@
+diff a/src/entry/portable_runtime.py b/src/entry/portable_runtime.py	(rejected hunks)
+@@ -130,38 +141,40 @@ def apply_cmapi_to_current_process(
+     *,
+     version_info: tuple[int, int] | None = None,
+ ) -> list[Path]:
+-    pythonpath, paths = build_cmapi_pythonpath(
+-        cm_install,
+-        existing_pythonpath=os.environ.get("PYTHONPATH", ""),
+-        version_info=version_info,
+-    )
+-    if pythonpath:
+-        os.environ["PYTHONPATH"] = pythonpath
++    if cm_install is None:
++        cm_install = resolve_default_cm_install()
++    if cm_install is None:
++        return []
++    paths = discover_cmapi_paths(cm_install, version_info=version_info)
+     for path in reversed(paths):
+         as_text = str(path)
+         if as_text not in sys.path:
+             sys.path.insert(0, as_text)
++    if not paths:
++        return paths
++    try:
++        import cmapi  # noqa: F401
++    except ImportError:
++        whls = list(Path(paths[0]).glob("cmapi-*.whl"))
++        if whls:
++            import subprocess
++            result = subprocess.run(
++                [sys.executable, "-m", "pip", "install", str(whls[0])],
++                capture_output=True, text=True,
++            )
++            if result.returncode == 0:
++                import importlib
++                importlib.invalidate_caches()
++                if str(paths[0]) not in sys.path:
++                    sys.path.insert(0, str(paths[0]))
+     return paths
+ 
+ 
+-def resolve_project_root(anchor_file: str | Path | None = None) -> Path:
+-    if getattr(sys, "frozen", False):
+-        exe_dir = Path(sys.executable).resolve().parent
+-        bundled_calibration_root = exe_dir / "Data" / "Script" / "CameraCalibration"
+-        if bundled_calibration_root.is_dir():
+-            return exe_dir
+-
+-    anchor_path = Path(anchor_file).resolve() if anchor_file is not None else Path(__file__).resolve()
+-    return anchor_path.parents[3]
+-
+-
+-def resolve_calibration_root(project_root: Path | None = None) -> Path:
+-    base_root = project_root.resolve() if project_root is not None else resolve_project_root()
+-    return (base_root / "Data" / "Script" / "CameraCalibration").resolve()
+-
++def resolve_tool_root() -> Path:
++    return Path(__file__).resolve().parents[2]
+ 
+ def ensure_calibration_root_on_sys_path(project_root: Path | None = None) -> Path:
+-    calibration_root = resolve_calibration_root(project_root)
++    calibration_root = resolve_tool_root()
+     calibration_root_text = str(calibration_root)
+     if calibration_root_text not in sys.path:
+         sys.path.insert(0, calibration_root_text)

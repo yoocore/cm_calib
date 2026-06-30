@@ -269,10 +269,15 @@ class DetectorMixin:
                 source_roi = board.template_source_roi or board.roi
                 _, _, source_w, source_h = source_roi
                 source_span = max(1, int(max(source_w, source_h)))
+                # Template matching on sim images is prone to false positives
+                # when the search region is too large (the template won't match
+                # sim content well when camera pose is wrong).  Use modest
+                # paddings so the board can drift a bit due to pose error but
+                # not enough to hit a random look-alike elsewhere in the image.
                 auto_paddings.extend(
                     [
-                        max(240, int(round(source_span * 1.5))),
-                        max(480, int(round(source_span * 3.0))),
+                        max(60, int(round(source_span * 0.3))),
+                        max(120, int(round(source_span * 0.6))),
                     ]
                 )
 
@@ -1124,6 +1129,7 @@ class DetectorMixin:
         best_failure_message = "search roi smaller than template"
         best_failure_value: Optional[float] = None
         match_x: Optional[float] = None
+        match_score_value: float = 0.0
         match_y: Optional[float] = None
         matched_crop: Tuple[int, int, int, int] = (0, 0, int(template_gray.shape[1]), int(template_gray.shape[0]))
         matched_template_shape: Tuple[int, int] = (int(template_gray.shape[0]), int(template_gray.shape[1]))
@@ -1167,6 +1173,7 @@ class DetectorMixin:
                     offset = current_offset
                     match_x = float(offset[0] + current_max_location[0])
                     match_y = float(offset[1] + current_max_location[1])
+                    match_score_value = float(current_max_value)
                     matched_crop = variant_crop
                     matched_template_shape = (int(variant_gray.shape[0]), int(variant_gray.shape[1]))
                     break
@@ -1214,15 +1221,31 @@ class DetectorMixin:
             ],
             dtype=np.float32,
         )
-        return DetectionResult(
-            board_id=board.board_id,
-            success=True,
-            point_count=int(anchors.shape[0]),
-            ordered_points=anchors,
-            board_type=board.board_type,
-            roi_used=board.roi,
-            detector="template_match",
-        )
+
+        # Reject detections too far from expected ROI when padding expands the
+        # search region (prevents false positives on sim images where the
+        # template doesn't match the ROI content well at padding > 0).
+        if padding > 0 and not self._detection_within_reference_roi(
+            anchors, board, padding
+        ):
+            match_x = None
+        # For large padding, also require a minimum match confidence because
+        # a barely-above-threshold NCC at full-image search is usually a false
+        # positive.  0.30 is low enough for edge-positioned boards with valid
+        # perspective-distorted matches but high enough to filter random noise.
+        if padding > 200 and match_score_value < 0.30:
+            match_x = None
+
+        if match_x is not None and match_y is not None:
+            return DetectionResult(
+                board_id=board.board_id,
+                success=True,
+                point_count=int(anchors.shape[0]),
+                ordered_points=anchors,
+                board_type=board.board_type,
+                roi_used=board.roi,
+                detector="template_match",
+            )
 
     def _detect_custom_groundmaker(
         self, gray_image: np.ndarray, board: BoardProfile

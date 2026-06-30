@@ -109,7 +109,7 @@ _CONTROL_STYLE = (
     "color: #1e293b;"
     "border: 1px solid #cbd5e1;"
     "border-radius: 6px;"
-    "padding: 6px 10px;"
+    "padding: 4px 10px;"
     "}"
     "QPushButton:hover {"
     "background-color: #f8fafc;"

@@ -367,7 +367,7 @@ class CmSettingsPanel(QGroupBox):
 
             row_widget = QWidget()
             row_layout = QHBoxLayout(row_widget)
-            row_layout.setContentsMargins(4, 2, 4, 2)
+            row_layout.setContentsMargins(4, 6, 4, 6)
             row_layout.setSpacing(8)
 
             name_label = QLabel(f"⋮⋮ {camera_name}")
@@ -384,6 +384,7 @@ class CmSettingsPanel(QGroupBox):
 
             wizard_btn = QPushButton("Wizard")
             wizard_btn.setMinimumWidth(70)
+            wizard_btn.setFixedHeight(28)
             wizard_btn.setStyleSheet(
                 "QPushButton {"
                 "background-color: #ffffff;"
@@ -404,6 +405,7 @@ class CmSettingsPanel(QGroupBox):
 
             open_btn = QPushButton("Config")
             open_btn.setMinimumWidth(70)
+            open_btn.setFixedHeight(28)
             open_btn.setEnabled(False)
             open_btn.setToolTip("No config generated yet")
             open_btn.setStyleSheet(

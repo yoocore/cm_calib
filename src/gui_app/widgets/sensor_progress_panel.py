@@ -37,6 +37,11 @@ class SensorProgressPanel(QGroupBox):
         )
         self.overall_progress_detail_label = QLabel("0 / 0 | 0s / ~0s")
         self.sensor_progress_tree = QTreeWidget()
+        self.sensor_progress_tree.setStyleSheet(
+            "QTreeView { background-color: #ffffff; }"
+            "QTreeView::item { background-color: #ffffff; padding: 2px 4px; }"
+            "QTreeView::item:selected { background-color: #e8f0fe; }"
+        )
         self.sensor_progress_tree.setColumnCount(8)
         self.sensor_progress_tree.setHeaderLabels(
             ["Sensor", "Status", "Iteration", "Elapsed", "Progress", "Init", "Current", "Best"]

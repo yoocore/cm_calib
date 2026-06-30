@@ -65,7 +65,7 @@ _PANEL_STYLE = (
 )
 
 
-_CHECKBOX_SVG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "checkbox_checked.svg")
+_CHECKBOX_SVG = (Path(__file__).resolve().parent.parent / "checkbox_checked.svg").as_posix()
 _CHECKBOX_STYLE = (
     "QListWidget::indicator {"
     "    width: 16px;"

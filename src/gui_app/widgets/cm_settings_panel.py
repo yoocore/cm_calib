@@ -125,6 +125,9 @@ _CONTROL_STYLE = (
     "border-radius: 6px;"
     "background-color: #ffffff;"
     "}"
+    "QListWidget::item:selected {"
+    "background-color: #e8f0fe;"
+    "}"
 )
 
 

@@ -27,7 +27,7 @@ class BoardProfile:
     template_source_crop: Optional[Tuple[int, int, int, int]] = None
     board_size: Optional[Tuple[int, int]] = None
     square_size: float = 1.0
-    alpha: float = 1000.0
+    alpha: float = 100.0
     beta: float = 0.1
     fail_penalty: float = 1e6
     min_detected_points: int = 1

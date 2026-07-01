@@ -826,7 +826,7 @@ class CameraCalibrator(DetectorMixin, ScoringMixin, AnnotationMixin, ScriptContr
                     template_source_crop=template_source_crop,
                     board_size=board_size,
                     square_size=self._read_float(board.get("square_size"), 1.0),
-                    alpha=self._read_float(board.get("alpha"), 1000.0),
+                    alpha=self._read_float(board.get("alpha"), 100.0),
                     beta=self._read_float(board.get("beta"), 0.1),
                     fail_penalty=self._read_float(board.get("fail_penalty"), 1e6),
                     min_detected_points=self._read_int(

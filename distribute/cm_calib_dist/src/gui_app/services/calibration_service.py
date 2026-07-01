@@ -48,9 +48,12 @@ class CalibrationService(QObject):
             self.stop()
         calibration_root = self._resolve_calibration_root(launch.project_root)
         script_path = calibration_root / "src" / "orchestration" / "calibration_orchestrator.py"
+        config_dir = launch.project_root / "Data" / "Script" / "CameraCalibration"
         arguments = [
             "--project-root",
             str(launch.project_root),
+            "--config-dir",
+            str(config_dir),
             "--testrun",
             launch.testrun,
             "--campaign-rounds",
@@ -89,8 +92,10 @@ class CalibrationService(QObject):
             return
         calibration_root = self._resolve_calibration_root(launch.project_root)
         script_path = calibration_root / "src" / "orchestration" / "calibration_orchestrator.py"
+        config_dir = launch.project_root / "Data" / "Script" / "CameraCalibration"
         arguments = [
             "--project-root", str(launch.project_root),
+            "--config-dir", str(config_dir),
             "--testrun", launch.testrun,
             "--prepare-only",
         ]

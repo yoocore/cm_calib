@@ -13,8 +13,8 @@ class PrecheckService:
     def __init__(self, project_root: Path):
         self.project_root = project_root.resolve()
         self.calibration_root = resolve_tool_root()
-        self.bootstrap_template_path = self.calibration_root / "configs" / "bootstrap.template.json"
-        self.config_dir = self.calibration_root / "configs"
+        self.config_dir = self.project_root / "Data" / "Script" / "CameraCalibration"
+        self.bootstrap_template_path = self.config_dir / "bootstrap.template.json"
         self.movie_dir = self.project_root / "Movie"
 
     def run_for_cameras(self, camera_names: list[str]) -> list[dict[str, Any]]:

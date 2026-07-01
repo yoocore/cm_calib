@@ -1,9 +1,5 @@
 from __future__ import annotations
 
-import json
-from pathlib import Path
-from typing import Optional
-
 from PySide6.QtCore import Qt, QEvent
 from PySide6.QtWidgets import QGroupBox, QHBoxLayout, QHeaderView, QLabel, QProgressBar, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
 
@@ -46,9 +42,9 @@ class SensorProgressPanel(QGroupBox):
             "QTreeView::item { background-color: #ffffff; padding: 2px 4px; }"
             "QTreeView::item:selected { background-color: #e8f0fe; color: #1e293b; }"
         )
-        self.sensor_progress_tree.setColumnCount(9)
+        self.sensor_progress_tree.setColumnCount(8)
         self.sensor_progress_tree.setHeaderLabels(
-            ["Sensor", "Status", "Iteration", "Elapsed", "Progress", "Init", "Current", "Best", "Target"]
+            ["Sensor", "Status", "Iteration", "Elapsed", "Progress", "Init", "Current", "Best"]
         )
         header = self.sensor_progress_tree.header()
         header.setDefaultAlignment(Qt.AlignLeft)
@@ -56,11 +52,6 @@ class SensorProgressPanel(QGroupBox):
         self.sensor_progress_tree.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._sensor_progress_items: dict[str, QTreeWidgetItem] = {}
         self._sensor_progress_bars: dict[str, QProgressBar] = {}
-        self._target_config_paths: dict[str, Path] = {}
-
-        self.sensor_progress_tree.setEditTriggers(QTreeWidget.EditTrigger.NoEditTriggers)
-        self.sensor_progress_tree.itemDoubleClicked.connect(self._on_item_double_clicked)
-        self.sensor_progress_tree.itemChanged.connect(self._on_cell_changed)
 
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
@@ -79,65 +70,28 @@ class SensorProgressPanel(QGroupBox):
     def _setup_column_sizes(self) -> None:
         header = self.sensor_progress_tree.header()
         modes = [
-            (0, QHeaderView.Interactive, 90),  # Sensor
-            (1, QHeaderView.Interactive, 60),   # Status
-            (2, QHeaderView.Interactive, 80),   # Iteration
-            (3, QHeaderView.Interactive, 70),   # Elapsed
-            (4, QHeaderView.Interactive, 90),  # Progress (bar)
-            (5, QHeaderView.Interactive, 65),   # Init
-            (6, QHeaderView.Interactive, 65),   # Current
-            (7, QHeaderView.Interactive, 65),   # Best
-            (8, QHeaderView.Interactive, 65),   # Target
+            (0, QHeaderView.Interactive, 100),  # Sensor
+            (1, QHeaderView.Interactive, 70),  # Status
+            (2, QHeaderView.Interactive, 80),  # Iteration
+            (3, QHeaderView.Interactive, 80),  # Elapsed
+            (4, QHeaderView.Interactive, 110),  # Progress (bar)
+            (5, QHeaderView.Interactive, 70),  # Init
+            (6, QHeaderView.Interactive, 70),  # Current
+            (7, QHeaderView.Interactive, 70),  # Best
         ]
         for col, mode, default_width in modes:
             header.setSectionResizeMode(col, mode)
             header.resizeSection(col, default_width)
 
-    def _on_item_double_clicked(self, item: QTreeWidgetItem, column: int) -> None:
-        if column == 8:
-            self.sensor_progress_tree.setEditTriggers(QTreeWidget.EditTrigger.DoubleClicked)
-            self.sensor_progress_tree.editItem(item, column)
-            self.sensor_progress_tree.setEditTriggers(QTreeWidget.EditTrigger.NoEditTriggers)
-
-    def _on_cell_changed(self, item: QTreeWidgetItem, column: int) -> None:
-        if column != 8:
-            return
-        camera_name = item.text(0).strip()
-        if not camera_name:
-            return
-        config_path = self._target_config_paths.get(camera_name)
-        if config_path is None:
-            return
-        raw = item.text(8).strip()
-        try:
-            new_target = float(raw) if raw else None
-        except ValueError:
-            return
-        try:
-            cfg = json.loads(config_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return
-        if new_target is not None:
-            cfg["target_score"] = new_target
-        else:
-            cfg.pop("target_score", None)
-        config_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=4), encoding="utf-8")
-
     def reset_sensor_progress(
         self,
         cameras: list[str],
-        *,
-        target_scores: Optional[dict[str, float]] = None,
-        target_config_paths: Optional[dict[str, Path]] = None,
     ) -> None:
-        self.sensor_progress_tree.blockSignals(True)
         self.sensor_progress_tree.clear()
         self._sensor_progress_items.clear()
         self._sensor_progress_bars.clear()
-        self._target_config_paths = dict(target_config_paths) if target_config_paths else {}
         for camera_name in cameras:
-            self._ensure_sensor_progress_item(camera_name, target_scores=target_scores)
-        self.sensor_progress_tree.blockSignals(False)
+            self._ensure_sensor_progress_item(camera_name)
         self.set_overall_progress(
             current_camera=None,
             completed_count=0,
@@ -193,10 +147,7 @@ class SensorProgressPanel(QGroupBox):
         )
 
     def _ensure_sensor_progress_item(
-        self,
-        camera_name: str,
-        *,
-        target_scores: Optional[dict[str, float]] = None,
+        self, camera_name: str
     ) -> QTreeWidgetItem:
         item = self._sensor_progress_items.get(camera_name)
         if item is not None:
@@ -210,13 +161,6 @@ class SensorProgressPanel(QGroupBox):
         item.setText(5, "")
         item.setText(6, "")
         item.setText(7, "")
-        # Target column: show configured value, default 5.0 as fallback
-        target_val = (target_scores or {}).get(camera_name)
-        if target_val is not None:
-            item.setText(8, f"{target_val:.1f}")
-        else:
-            item.setText(8, "5.0")
-        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
         progress_bar = QProgressBar(self.sensor_progress_tree)
         progress_bar.setRange(0, 100)
         progress_bar.setValue(0)

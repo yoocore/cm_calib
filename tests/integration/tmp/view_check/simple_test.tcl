@@ -1,0 +1,1 @@
+set fp [open "E:/Coding/VibeCoding/cm_calib/tests/integration/tmp/view_check/simple_result.txt" w]; puts $fp "step1"; flush $fp; package require dde; puts $fp "step2"; flush $fp; set rc [catch { dde execute TclEval CarMaker { winfo exists . } } msg]; puts $fp "dde_rc=$rc"; puts $fp "dde_msg=$msg"; flush $fp; close $fp

@@ -151,6 +151,70 @@ def _ensure_cm_bin_on_path(paths: list[Path], cm_install: Path) -> None:
             os.environ["PATH"] = os.pathsep.join(new_parts) + os.pathsep + current
 
 
+def _import_cmapi_direct(paths: list[Path]) -> bool:
+    """Load cmapi directly from discovered filesystem paths.
+
+    In frozen (PyInstaller) builds, ``import cmapi`` goes through the custom
+    FrozenImporter which may raise ``ModuleNotFoundError`` even though the
+    module exists on ``sys.path`` (e.g. because ``--exclude-module cmapi``
+    was used at build time).  This function bypasses the meta-path entirely
+    by using ``importlib.util.spec_from_file_location`` with the actual file
+    path, so PyInstaller's importer never sees the request.
+    """
+    import importlib.util
+
+    for search_path in paths:
+        resolved = search_path.resolve()
+        # 1) Directory package: cmapi/__init__.py
+        pkg_dir = resolved / "cmapi"
+        if pkg_dir.is_dir():
+            init_file = pkg_dir / "__init__.py"
+            if init_file.exists():
+                spec = importlib.util.spec_from_file_location(
+                    "cmapi", str(init_file),
+                    submodule_search_locations=[str(pkg_dir)],
+                )
+                if spec is not None and spec.loader is not None:
+                    mod = importlib.util.module_from_spec(spec)
+                    sys.modules["cmapi"] = mod
+                    try:
+                        spec.loader.exec_module(mod)
+                        return True
+                    except Exception:
+                        del sys.modules["cmapi"]
+                        continue
+
+        # 2) Compiled extension: cmapi.pyd
+        pyd_file = resolved / "cmapi.pyd"
+        if pyd_file.exists():
+            spec = importlib.util.spec_from_file_location("cmapi", str(pyd_file))
+            if spec is not None and spec.loader is not None:
+                mod = importlib.util.module_from_spec(spec)
+                sys.modules["cmapi"] = mod
+                try:
+                    spec.loader.exec_module(mod)
+                    return True
+                except Exception:
+                    del sys.modules["cmapi"]
+                    continue
+
+        # 3) Single-file module: cmapi.py
+        py_file = resolved / "cmapi.py"
+        if py_file.exists():
+            spec = importlib.util.spec_from_file_location("cmapi", str(py_file))
+            if spec is not None and spec.loader is not None:
+                mod = importlib.util.module_from_spec(spec)
+                sys.modules["cmapi"] = mod
+                try:
+                    spec.loader.exec_module(mod)
+                    return True
+                except Exception:
+                    del sys.modules["cmapi"]
+                    continue
+
+    return False
+
+
 def apply_cmapi_to_current_process(
     cm_install: Path | None = None,
     *,
@@ -178,6 +242,9 @@ def apply_cmapi_to_current_process(
         import cmapi  # noqa: F401
     except ImportError:
         if getattr(sys, "frozen", False):
+            # PyInstaller's FrozenImporter may block the import even when the
+            # module is on sys.path.  Try loading it via importlib directly.
+            _import_cmapi_direct(paths)
             return paths
         whls = list(Path(paths[0]).glob("cmapi-*.whl"))
         if whls:

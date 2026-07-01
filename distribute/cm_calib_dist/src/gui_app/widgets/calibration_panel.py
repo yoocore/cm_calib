@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from src.gui_app import bundled_path
+
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -14,18 +16,6 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QVBoxLayout,
     QWidget,
-)
-
-
-_ARROW_UP_DATA = (
-    "data:image/svg+xml,"
-    "%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E"
-    "%3Cpath d='M8 5l-4 4h8z' fill='%23475569'/%3E%3C/svg%3E"
-)
-_ARROW_DOWN_DATA = (
-    "data:image/svg+xml,"
-    "%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E"
-    "%3Cpath d='M4 7l4 4 4-4z' fill='%23475569'/%3E%3C/svg%3E"
 )
 
 
@@ -98,12 +88,12 @@ _CONTROL_STYLE = (
     "background: #f1f5f9;"
     "}"
     "QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {"
-    f"image: url({_ARROW_UP_DATA});"
+    f"image: url({bundled_path('arrow_up.svg')});"
     "width: 8px;"
     "height: 8px;"
     "}"
     "QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {"
-    f"image: url({_ARROW_DOWN_DATA});"
+    f"image: url({bundled_path('arrow_down.svg')});"
     "width: 8px;"
     "height: 8px;"
     "}"

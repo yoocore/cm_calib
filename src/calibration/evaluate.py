@@ -91,9 +91,11 @@ class EvaluateMixin:
 
         board_scores: List[BoardScoreDetail] = []
         t_detect_start = time.perf_counter()
+        self._last_sim_detections = {}
         for board in self.boards:
             real_detection = self.real_detections[board.board_id]
             sim_detection = self._detect_board(sim_prepared, board)
+            self._last_sim_detections[board.board_id] = sim_detection
             board_scores.append(self._score_board(board, real_detection, sim_detection, sim_prepared))
 
         t_detect = time.perf_counter() - t_detect_start

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt, Signal
@@ -16,8 +17,18 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-_ARROW_UP_SVG = (Path(__file__).resolve().parent.parent / "arrow_up.svg").as_posix()
-_ARROW_DOWN_SVG = (Path(__file__).resolve().parent.parent / "arrow_down.svg").as_posix()
+
+
+
+def _svg_path(filename: str) -> str:
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return str(Path(sys._MEIPASS) / "src" / "gui_app" / filename)
+    return str(Path(__file__).resolve().parent.parent / filename)
+
+
+_ARROW_UP_SVG = _svg_path("arrow_up.svg")
+_ARROW_DOWN_SVG = _svg_path("arrow_down.svg")
+
 
 _SECTION_GROUP_STYLE = (
     "QGroupBox {"

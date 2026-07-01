@@ -33,6 +33,10 @@ echo [1/2] Building EXE (this may take several minutes)...
     --workpath "%TEMP%\pyibuild" ^
     --specpath "%TEMP%\pyispec" ^
     --add-data "%SCRIPT_DIR%\..\src\gui_app\icon.svg;src\gui_app" ^
+    --add-data "%SCRIPT_DIR%\..\src\gui_app\checkbox_checked.svg;src\gui_app" ^
+    --add-data "%SCRIPT_DIR%\..\src\gui_app\dropdown_arrow.svg;src\gui_app" ^
+    --add-data "%SCRIPT_DIR%\..\src\gui_app\arrow_up.svg;src\gui_app" ^
+    --add-data "%SCRIPT_DIR%\..\src\gui_app\arrow_down.svg;src\gui_app" ^
     --collect-all PySide6 ^
     --exclude-module cmapi ^
     --exclude-module apoc ^

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
@@ -30,6 +31,19 @@ from src.gui_app.widgets.calibration_panel import detect_cm_versions
 _DEFAULT_BROWSE_ROOT = "C:/CM_Projects"
 _GREEN = QBrush(QColor("#4caf50"))
 _RED = QBrush(QColor("#e53935"))
+
+
+def _svg_path(filename: str) -> str:
+    """Resolve path to a bundled SVG, works in dev and PyInstaller exe."""
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return str(Path(sys._MEIPASS) / "src" / "gui_app" / filename)
+    return str(Path(__file__).resolve().parent.parent / filename)
+
+
+_CHECKBOX_SVG = _svg_path("checkbox_checked.svg")
+_DROPDOWN_ARROW_SVG = _svg_path("dropdown_arrow.svg")
+
+
 _SECTION_GROUP_STYLE = (
     "QGroupBox {"
     "border: 1px solid #d0d7de;"
@@ -123,11 +137,12 @@ _CONTROL_STYLE = (
     "border-radius: 6px;"
     "background-color: #ffffff;"
     "}"
+    "QListWidget::item:selected {"
+    "background-color: #e8f0fe;"
+    "}"
 )
 
 
-_CHECKBOX_SVG = (Path(__file__).resolve().parent.parent / "checkbox_checked.svg").as_posix()
-_DROPDOWN_ARROW_SVG = (Path(__file__).resolve().parent.parent / "dropdown_arrow.svg").as_posix()
 _CHECKBOX_STYLE = (
     "QListWidget::indicator {"
     "    width: 16px;"
@@ -376,14 +391,14 @@ class CmSettingsPanel(QGroupBox):
             row_layout.addWidget(sep)
 
             wizard_btn = QPushButton("Wizard")
-            wizard_btn.setFixedWidth(60)
+            wizard_btn.setFixedWidth(70)
             wizard_btn.clicked.connect(
                 lambda checked, cn=camera_name: self.wizard_for_camera_clicked.emit(cn)
             )
             row_layout.addWidget(wizard_btn)
 
             open_btn = QPushButton("Config")
-            open_btn.setFixedWidth(60)
+            open_btn.setFixedWidth(70)
             open_btn.setEnabled(False)
             open_btn.setToolTip("No config generated yet")
             open_btn.clicked.connect(

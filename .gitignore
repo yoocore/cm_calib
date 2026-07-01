@@ -10,3 +10,4 @@ SimOutput/
 tmp/
 .qoder/
 stress_test_summary.json
+build_cache/

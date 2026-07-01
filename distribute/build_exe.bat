@@ -30,8 +30,8 @@ echo [1/2] Building EXE (this may take several minutes)...
     --windowed ^
     --name "CameraCalibration" ^
     --distpath "%BUILD_DIR%" ^
-    --workpath "%TEMP%\pyibuild" ^
-    --specpath "%TEMP%\pyispec" ^
+    --workpath "%SCRIPT_DIR%\..\build_cache\pyibuild" ^
+    --specpath "%SCRIPT_DIR%\..\build_cache\pyispec" ^
     --add-data "%SCRIPT_DIR%\..\src\gui_app\icon.svg;src\gui_app" ^
     --add-data "%SCRIPT_DIR%\..\src\gui_app\checkbox_checked.svg;src\gui_app" ^
     --add-data "%SCRIPT_DIR%\..\src\gui_app\dropdown_arrow.svg;src\gui_app" ^
@@ -63,8 +63,6 @@ if exist "%DIST_DIR%" rmdir /s /q "%DIST_DIR%" 2>nul
 mkdir "%DIST_DIR%" 2>nul
 move "%BUILD_DIR%\CameraCalibration" "%DIST_DIR%\CameraCalibration" >nul
 rmdir /s /q "%BUILD_DIR%" 2>nul
-rmdir /s /q "%TEMP%\pyibuild" 2>nul
-rmdir /s /q "%TEMP%\pyispec" 2>nul
 
 :: Create README
 (

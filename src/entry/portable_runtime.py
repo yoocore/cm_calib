@@ -21,11 +21,17 @@ CM_INSTALL_SEARCH_ROOTS = (
 
 
 def _debug(msg: str, *args: object) -> None:
-    """Print diagnostic message to stderr for frozen-mode troubleshooting."""
+    """Append diagnostic message to a temp log file for frozen-mode troubleshooting."""
     if getattr(sys, "frozen", False):
-        import sys as _sys
+        import tempfile
         formatted = msg % args if args else msg
-        print(f"[cm_calib_dbg] {formatted}", file=_sys.stderr, flush=True)
+        log_path = Path(tempfile.gettempdir()) / "cm_calib_dispatch_debug.log"
+        try:
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(f"[cm_calib_dbg] {formatted}\n")
+                f.flush()
+        except Exception:
+            pass
 _LEGACY_CMAPI_SUBDIRS = (
     "Python/Lib/site-packages",
     "Python/Lib",

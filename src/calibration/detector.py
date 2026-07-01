@@ -455,13 +455,13 @@ class DetectorMixin:
         sim_detection: DetectionResult,
         sim_eval_image: Optional[np.ndarray],
     ) -> float:
-        """Pure geometric structure penalty — no pixel comparison.
+        """Combined geometric + blob centroid residual penalty.
 
-        Only uses homography consistency checks:
-        1. RANSAC outlier fraction — structural mismatch
-        2. SVD condition number — perspective distortion
+        1. Homography consistency: RANSAC outlier fraction + SVD condition
+        2. Blob centroid residual: Otsu threshold → connected components →
+           gray-weighted centroids → nearest-neighbor match → translation-adjusted RMS
 
-        Suitable for all board types. Returns additive penalty in pixel units.
+        Both components are additive. Suitable for all board types.
         """
         if sim_eval_image is None:
             return 0.0
@@ -491,7 +491,67 @@ class DetectorMixin:
         cond = s.max() / max(s.min(), 1e-10)
         cond_penalty = max(0.0, (cond - 5.0)) * 0.3
 
-        return outlier_frac * 5.0 + cond_penalty
+        pure_geometric_penalty = outlier_frac * 5.0 + cond_penalty
+
+        # ---- Blob centroid residual ----
+        centroid_penalty = 0.0
+        roi = board.template_source_roi or board.roi
+        if roi is not None:
+            x, y, w, h = [int(v) for v in roi]
+            if w > 10 and h > 10:
+                real_roi = self.real_img[y : y + h, x : x + w]
+                sim_roi = sim_eval_image[y : y + h, x : x + w]
+
+                def _detect_blobs(gray: np.ndarray, min_area=8, max_area=5000):
+                    _, bin = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                    num, labels, stats, centroids = cv2.connectedComponentsWithStats(bin, connectivity=8)
+                    blobs = []
+                    gray_f = gray.astype(np.float32)
+                    for i in range(1, num):
+                        area = stats[i, cv2.CC_STAT_AREA]
+                        if area < min_area or area > max_area:
+                            continue
+                        mask = (labels == i)
+                        ys, xs = np.where(mask)
+                        if len(xs) < 3:
+                            continue
+                        weights = gray_f[mask]
+                        total_w = weights.sum()
+                        if total_w > 0:
+                            cx = float((xs * weights).sum() / total_w)
+                            cy = float((ys * weights).sum() / total_w)
+                        else:
+                            cx, cy = float(centroids[i][0]), float(centroids[i][1])
+                        blobs.append((cx, cy, area))
+                    return blobs
+
+                real_blobs = _detect_blobs(real_roi)
+                sim_blobs = _detect_blobs(sim_roi)
+
+                if len(real_blobs) >= 4 and len(sim_blobs) >= 4:
+                    sim_arr = np.array([[b[0], b[1]] for b in sim_blobs])
+                    real_arr = np.array([[b[0], b[1]] for b in real_blobs])
+
+                    matches = []
+                    used = set()
+                    for si, (sx, sy, _) in enumerate(sim_blobs):
+                        dists = np.sqrt((real_arr[:, 0] - sx) ** 2 + (real_arr[:, 1] - sy) ** 2)
+                        min_idx = int(np.argmin(dists))
+                        min_dist = float(dists[min_idx])
+                        if min_dist < 60 and min_idx not in used:
+                            matches.append((si, min_idx))
+                            used.add(min_idx)
+
+                    if len(matches) >= 4:
+                        src = np.array([[sim_blobs[si][0], sim_blobs[si][1]] for si, _ in matches], dtype=np.float32)
+                        dst = np.array([[real_blobs[ri][0], real_blobs[ri][1]] for _, ri in matches], dtype=np.float32)
+                        mean_disp = np.mean(src - dst, axis=0)
+                        corrected = src - mean_disp
+                        errors = np.linalg.norm(corrected - dst, axis=1)
+                        rms = float(np.sqrt(np.mean(np.square(errors))))
+                        centroid_penalty = rms * 1.0
+
+        return pure_geometric_penalty + centroid_penalty
 
     def _prepare_eval_image(self, image: np.ndarray) -> np.ndarray:
         source_h, source_w = image.shape[:2]

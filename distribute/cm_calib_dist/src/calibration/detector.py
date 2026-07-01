@@ -246,7 +246,7 @@ class DetectorMixin:
         return abs(det_cx - ref_cx) <= tolerance and abs(det_cy - ref_cy) <= tolerance
 
     def _detect_roi_padding_attempts(self, board: BoardProfile) -> List[int]:
-        attempts = [0]
+        attempts: List[int] = []
         configured_padding = max(0, int(board.detect_roi_padding))
         if configured_padding > 0:
             attempts.append(configured_padding)
@@ -259,6 +259,7 @@ class DetectorMixin:
             auto_paddings: List[int] = []
 
             if board.board_type == "checkerboard" or _is_aruco_family_board_type(board.board_type) or _is_apriltag_board_type(board.board_type) or _is_circle_grid_board_type(board.board_type) or _is_aruco_grid_board_type(board.board_type):
+                attempts.append(0)
                 auto_paddings.extend(
                     [
                         max(120, int(round(base_span * 1.5))),
@@ -266,15 +267,15 @@ class DetectorMixin:
                     ]
                 )
             elif _is_custom_marker_board_type(board.board_type):
-                # Template matching on sim images produces false positives when
-                # the search extends beyond the expected ROI (a random texture
-                # elsewhere in the image can coincidentally match the template).
-                # Unlike checkerboard/aruco (geometric constraints prevent false
-                # positives), template_match has no such safeguards, so it must
-                # search only the ROI region itself.  A board whose sim position
-                # is completely outside the ROI will score high (fail penalty)
-                # and the optimizer will iteratively pull it back into view.
-                auto_paddings = []
+                # Start from a moderate padding so the full-template response
+                # map has spatial extent (when template == ROI size, padding=0
+                # collapses to a 1x1 response).  Raw gray matching (NCC 0.9+)
+                # keeps false-positive risk low even with larger paddings.
+                auto_paddings = [
+                    max(40, int(round(base_span * 0.10))),
+                    max(80, int(round(base_span * 0.20))),
+                    max(140, int(round(base_span * 0.35))),
+                ]
 
             for padding_value in auto_paddings:
                 attempts.append(min(max_auto_padding, padding_value))
@@ -454,13 +455,13 @@ class DetectorMixin:
         sim_detection: DetectionResult,
         sim_eval_image: Optional[np.ndarray],
     ) -> float:
-        """Pure geometric structure penalty — no pixel comparison.
+        """Combined geometric + blob centroid residual penalty.
 
-        Only uses homography consistency checks:
-        1. RANSAC outlier fraction — structural mismatch
-        2. SVD condition number — perspective distortion
+        1. Homography consistency: RANSAC outlier fraction + SVD condition
+        2. Blob centroid residual: Otsu threshold → connected components →
+           gray-weighted centroids → nearest-neighbor match → translation-adjusted RMS
 
-        Suitable for all board types. Returns additive penalty in pixel units.
+        Both components are additive. Suitable for all board types.
         """
         if sim_eval_image is None:
             return 0.0
@@ -490,7 +491,67 @@ class DetectorMixin:
         cond = s.max() / max(s.min(), 1e-10)
         cond_penalty = max(0.0, (cond - 5.0)) * 0.3
 
-        return outlier_frac * 5.0 + cond_penalty
+        pure_geometric_penalty = outlier_frac * 5.0 + cond_penalty
+
+        # ---- Blob centroid residual ----
+        centroid_penalty = 0.0
+        roi = board.template_source_roi or board.roi
+        if roi is not None:
+            x, y, w, h = [int(v) for v in roi]
+            if w > 10 and h > 10:
+                real_roi = self.real_img[y : y + h, x : x + w]
+                sim_roi = sim_eval_image[y : y + h, x : x + w]
+
+                def _detect_blobs(gray: np.ndarray, min_area=8, max_area=5000):
+                    _, bin = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                    num, labels, stats, centroids = cv2.connectedComponentsWithStats(bin, connectivity=8)
+                    blobs = []
+                    gray_f = gray.astype(np.float32)
+                    for i in range(1, num):
+                        area = stats[i, cv2.CC_STAT_AREA]
+                        if area < min_area or area > max_area:
+                            continue
+                        mask = (labels == i)
+                        ys, xs = np.where(mask)
+                        if len(xs) < 3:
+                            continue
+                        weights = gray_f[mask]
+                        total_w = weights.sum()
+                        if total_w > 0:
+                            cx = float((xs * weights).sum() / total_w)
+                            cy = float((ys * weights).sum() / total_w)
+                        else:
+                            cx, cy = float(centroids[i][0]), float(centroids[i][1])
+                        blobs.append((cx, cy, area))
+                    return blobs
+
+                real_blobs = _detect_blobs(real_roi)
+                sim_blobs = _detect_blobs(sim_roi)
+
+                if len(real_blobs) >= 4 and len(sim_blobs) >= 4:
+                    sim_arr = np.array([[b[0], b[1]] for b in sim_blobs])
+                    real_arr = np.array([[b[0], b[1]] for b in real_blobs])
+
+                    matches = []
+                    used = set()
+                    for si, (sx, sy, _) in enumerate(sim_blobs):
+                        dists = np.sqrt((real_arr[:, 0] - sx) ** 2 + (real_arr[:, 1] - sy) ** 2)
+                        min_idx = int(np.argmin(dists))
+                        min_dist = float(dists[min_idx])
+                        if min_dist < 60 and min_idx not in used:
+                            matches.append((si, min_idx))
+                            used.add(min_idx)
+
+                    if len(matches) >= 4:
+                        src = np.array([[sim_blobs[si][0], sim_blobs[si][1]] for si, _ in matches], dtype=np.float32)
+                        dst = np.array([[real_blobs[ri][0], real_blobs[ri][1]] for _, ri in matches], dtype=np.float32)
+                        mean_disp = np.mean(src - dst, axis=0)
+                        corrected = src - mean_disp
+                        errors = np.linalg.norm(corrected - dst, axis=1)
+                        rms = float(np.sqrt(np.mean(np.square(errors))))
+                        centroid_penalty = rms * 1.0
+
+        return pure_geometric_penalty + centroid_penalty
 
     def _prepare_eval_image(self, image: np.ndarray) -> np.ndarray:
         source_h, source_w = image.shape[:2]
@@ -1123,14 +1184,25 @@ class DetectorMixin:
         )
         best_failure_message = "search roi smaller than template"
         best_failure_value: Optional[float] = None
+        best_failure_location: Optional[Tuple[int, int]] = None
+        best_failure_offset: Tuple[int, int] = (0, 0)
         match_x: Optional[float] = None
-        match_score_value: float = 0.0
         match_y: Optional[float] = None
         matched_crop: Tuple[int, int, int, int] = (0, 0, int(template_gray.shape[1]), int(template_gray.shape[0]))
         matched_template_shape: Tuple[int, int] = (int(template_gray.shape[0]), int(template_gray.shape[1]))
         offset = (0, 0)
 
-        sim_sourced = board.board_id in self._sim_sourced_board_ids
+        # For custom_maker boards, template matching is always on SIM images.
+        # Reference detection uses _reference_detection_from_board_geometry
+        # directly (no template matching), so THRESH_BINARY_INV is safe to
+        # skip. Real-image templates vs SIM renderings produce incompatible
+        # binary patterns (NCC ~ 0.1-0.3 vs 0.9+ with raw gray), so skip
+        # binarization entirely for this board type.
+        sim_sourced = (
+            True
+            if _is_custom_marker_board_type(board.board_type)
+            else board.board_id in self._sim_sourced_board_ids
+        )
 
         for padding in roi_attempts:
             roi_img, current_offset = self._extract_roi(eval_image, board.roi, padding=padding)
@@ -1158,6 +1230,8 @@ class DetectorMixin:
                 for threshold in threshold_attempts:
                     if best_failure_value is None or current_max_value > best_failure_value:
                         best_failure_value = float(current_max_value)
+                        best_failure_location = current_max_location
+                        best_failure_offset = current_offset
                         best_failure_message = (
                             f"template match below threshold: {current_max_value:.3f} < "
                             f"{threshold:.3f}"
@@ -1178,17 +1252,30 @@ class DetectorMixin:
                 break
 
         if match_x is None or match_y is None:
-            return DetectionResult(
-                board_id=board.board_id,
-                success=False,
-                point_count=0,
-                ordered_points=np.empty((0, 2), dtype=np.float32),
-                board_type=board.board_type,
-                roi_used=board.roi,
-                detector="template_match",
-                error_message=best_failure_message,
-                match_score=best_failure_value,
-            )
+            # No candidate passed the NCC threshold at any padding level.
+            # If we have a below-threshold match from the ROI-only search
+            # (padding=0), use it — the position within the ROI still gives
+            # a valid (dx, dy) offset for the optimizer, and unlike larger
+            # paddings it cannot be a false positive from elsewhere in the
+            # image.
+            if best_failure_location is not None and best_failure_value is not None:
+                bfl = best_failure_location
+                bfo = best_failure_offset
+                match_x = float(bfo[0] + bfl[0])
+                match_y = float(bfo[1] + bfl[1])
+                match_score_value = float(best_failure_value)
+            else:
+                return DetectionResult(
+                    board_id=board.board_id,
+                    success=False,
+                    point_count=0,
+                    ordered_points=np.empty((0, 2), dtype=np.float32),
+                    board_type=board.board_type,
+                    roi_used=board.roi,
+                    detector="template_match",
+                    error_message=best_failure_message,
+                    match_score=best_failure_value,
+                )
 
         template_h, template_w = matched_template_shape
         anchor_x = match_x
@@ -1216,20 +1303,15 @@ class DetectorMixin:
             ],
             dtype=np.float32,
         )
-
-        # Reject detections too far from expected ROI when padding expands the
-        # search region (prevents false positives on sim images where the
-        # template doesn't match the ROI content well at padding > 0).
-        if match_x is not None and match_y is not None:
-            return DetectionResult(
-                board_id=board.board_id,
-                success=True,
-                point_count=int(anchors.shape[0]),
-                ordered_points=anchors,
-                board_type=board.board_type,
-                roi_used=board.roi,
-                detector="template_match",
-            )
+        return DetectionResult(
+            board_id=board.board_id,
+            success=True,
+            point_count=int(anchors.shape[0]),
+            ordered_points=anchors,
+            board_type=board.board_type,
+            roi_used=board.roi,
+            detector="template_match",
+        )
 
     def _detect_custom_groundmaker(
         self, gray_image: np.ndarray, board: BoardProfile
@@ -1383,18 +1465,9 @@ class DetectorMixin:
         detections: Dict[str, DetectionResult] = {}
         visible_count = 0
         for board in self.boards:
-            if _is_custom_marker_board_type(board.board_type):
-                # Custom boards: use template matching on the real image for
-                # accurate reference detection.  The template was created FROM
-                # the real image's ROI, so matching is reliable.  Fall back to
-                # geometry anchors if template matching fails.
+            detection = self._reference_detection_from_board_geometry(board)
+            if detection is None:
                 detection = self._detect_board(self.real_img, board)
-                if not detection.success:
-                    detection = self._reference_detection_from_board_geometry(board)
-            else:
-                detection = self._reference_detection_from_board_geometry(board)
-                if detection is None:
-                    detection = self._detect_board(self.real_img, board)
             if self._is_visible(detection, self._effective_detection_min_points(board, detection)):
                 visible_count += 1
             detections[board.board_id] = detection

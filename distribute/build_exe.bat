@@ -47,6 +47,10 @@ echo [1/2] Building EXE (this may take several minutes)...
     --hidden-import PySide6.QtCore ^
     --hidden-import PySide6.QtGui ^
     --hidden-import PySide6.QtWidgets ^
+    --exclude-module PySide6.QtQml ^
+    --exclude-module PySide6.QtQuick ^
+    --exclude-module PySide6.QtQuickWidgets ^
+    --exclude-module PySide6.QtWebEngineCore ^
     --exclude-module cmapi ^
     --exclude-module apoc ^
     --exclude-module infofiles ^

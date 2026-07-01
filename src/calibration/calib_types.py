@@ -29,6 +29,7 @@ class BoardProfile:
     square_size: float = 1.0
     alpha: float = 100.0
     beta: float = 0.1
+    geom_weight: float = 0.5
     fail_penalty: float = 1e6
     min_detected_points: int = 1
     degrade_threshold_rmse: float = float("inf")
@@ -75,6 +76,7 @@ class BoardScoreDetail:
     miss_rate: float
     matched_point_count: int
     failed_reason: Optional[str] = None
+    geometric_penalty: float = 0.0
 
 
 @dataclass

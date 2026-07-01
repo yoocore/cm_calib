@@ -201,7 +201,7 @@ class CameraCalibrator(DetectorMixin, ScoringMixin, AnnotationMixin, ScriptContr
         self.params = self._load_params(cfg["parameters"])
         self.params = self._order_params(self.params, cfg.get("optimization_order"))
 
-        self.settle_sec = float(cfg.get("settle_sec", 0.3))
+        self.settle_sec = float(cfg.get("settle_sec", 0.1))
         self.target_score = float(cfg.get("target_score", 5.0))
         acceptance_cfg = cfg.get("acceptance_criteria", {})
         self.bottleneck_board_score_max_threshold = float(
@@ -211,8 +211,8 @@ class CameraCalibrator(DetectorMixin, ScoringMixin, AnnotationMixin, ScriptContr
             acceptance_cfg.get("bottleneck_board_score_avg_threshold", 2.5)
         )
         self.max_iters = int(cfg.get("max_iters", 100))
-        self.min_improve = float(cfg.get("min_improve", 1e-4))
-        self.step_decay = float(cfg.get("step_decay", 0.6))
+        self.min_improve = float(cfg.get("min_improve", 0.02))
+        self.step_decay = float(cfg.get("step_decay", 0.85))
         self.settings_input_mode = str(cfg.get("settings_input_mode", "script_control")).lower()
         if self.settings_input_mode != "script_control":
             raise ValueError("Only settings_input_mode='script_control' is supported")
@@ -360,11 +360,13 @@ class CameraCalibrator(DetectorMixin, ScoringMixin, AnnotationMixin, ScriptContr
                 "optimizer_mode must be 'coordinate_descent', 'bayesian', 'auto', or 'hybrid'"
             )
         self.use_gauss_newton = bool(cfg.get("use_gauss_newton", True))
+        self.early_stop_patience = int(cfg.get("early_stop_patience", 30))
+        self.freeze_timeout = int(cfg.get("freeze_timeout", 15))
         self.strategy_adaptation = bool(cfg.get("strategy_adaptation", True))
         self.jitter_eps = float(cfg.get("jitter_eps", 0.01))
         self.jitter_decay = float(cfg.get("jitter_decay", 0.98))
-        self.hybrid_phase1_iters = int(cfg.get("hybrid_phase1_iters", 15))
-        self.curriculum_annealing = bool(cfg.get("curriculum_annealing", False))
+        self.hybrid_phase1_iters = int(cfg.get("hybrid_phase1_iters", 40))
+        self.hybrid_search_box_sigma = float(cfg.get("hybrid_search_box_sigma", 5.0))
         self.parabolic_refinement = bool(cfg.get("parabolic_refinement", False))
         self.keep_aspect_resize = bool(cfg.get("keep_aspect_resize", True))
         self.auto_generate_best_score_image = bool(
@@ -828,6 +830,7 @@ class CameraCalibrator(DetectorMixin, ScoringMixin, AnnotationMixin, ScriptContr
                     square_size=self._read_float(board.get("square_size"), 1.0),
                     alpha=self._read_float(board.get("alpha"), 100.0),
                     beta=self._read_float(board.get("beta"), 0.1),
+                    geom_weight=self._read_float(board.get("geom_weight"), 0.5),
                     fail_penalty=self._read_float(board.get("fail_penalty"), 1e6),
                     min_detected_points=self._read_int(
                         board.get("min_detected_points"), min_points_default
@@ -2412,6 +2415,8 @@ class CameraCalibrator(DetectorMixin, ScoringMixin, AnnotationMixin, ScriptContr
             return False, "no_comparable_boards"
         if candidate_detail.has_critical_degrade:
             return False, "critical_degrade"
+        if candidate_score <= self.target_score:
+            return True, "target_score_reached"
         if candidate_score + self.min_improve < baseline_score:
             return True, "total_score_improved"
 
@@ -2505,15 +2510,6 @@ class CameraCalibrator(DetectorMixin, ScoringMixin, AnnotationMixin, ScriptContr
                 self.param_order_index.get(param.name, len(self.param_order_index)),
             ),
         )
-        if (hasattr(self, 'curriculum_enabled') and self.curriculum_enabled
-                and len(self.params) > 6):
-            progress = self._total_iteration_count / max(1, self.max_iters)
-            for phase in self.curriculum_phases:
-                if progress <= phase.get("progress_max", 1.0):
-                    active = phase.get("active_params")
-                    if active is not None:
-                        params = [p for p in params if p.name in active]
-                    break
         return params
 
 

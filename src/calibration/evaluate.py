@@ -121,8 +121,8 @@ class EvaluateMixin:
 
     def _optimize_hybrid(self) -> dict:
         """P5: CD then Bayesian in a tight search box."""
-        phase1_iters = getattr(self, 'hybrid_phase1_iters', 15)
-        search_sigma = getattr(self, 'hybrid_search_box_sigma', 3.0)
+        phase1_iters = getattr(self, 'hybrid_phase1_iters', 40)
+        search_sigma = getattr(self, 'hybrid_search_box_sigma', 5.0)
         total = self.max_iters
         cd_iters = min(phase1_iters, total - max(3, total // 4))
         if cd_iters < 3:

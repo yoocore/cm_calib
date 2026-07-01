@@ -11,57 +11,117 @@ from src.calibration.sensitivity import build_geometric_sensitivity
 
 
 
-class JacobianAccumulator:
-    """Accumulates single-param trial results for Gauss-Newton gradient estimation."""
+class GaussNewtonAccumulator:
+    """Per-point Gauss-Newton step from CD single-param trial data.
+
+    Each CD iteration perturbs every parameter by ±δ, re-renders, and detects
+    points.  This class captures the per-board detection positions at each
+    perturbation to build a proper Jacobian via central differences.
+
+    Key insight:  J ∈ ℝ^(2K × N) captures param coupling (e.g. yaw ↔ pos_x)
+    that 1D coordinate descent cannot.  Since existing CD trial renders are
+    reused, the GN step costs zero extra renderings.
+
+    The GN solve uses Levenberg-Marquardt damping:
+        (J^T J + λ·diag(J^T J))·Δ = -J^T r
+    """
 
     def __init__(self):
-        self._param_names: List[str] = []
-        self._gradients: Dict[str, float] = {}
+        # {param_name: {board_id: ndarray (N, 2)}}  — positions at ±δ
+        self._pos_plus: Dict[str, Dict[str, np.ndarray]] = {}
+        self._pos_minus: Dict[str, Dict[str, np.ndarray]] = {}
         self._deltas: Dict[str, float] = {}
-        self._trial_scores: Dict[str, float] = {}
-        self._base_score: float = 0.0
+        self._param_names: List[str] = []
 
-    def record_base(self, score: float, values: Dict[str, float]):
-        self._base_score = score
-
-    def record_trial(self, param_name: str, base_value: float, trial_value: float,
-                     base_score: float, trial_score: float):
-        delta = trial_value - base_value
-        if abs(delta) < 1e-12:
-            self._gradients[param_name] = 0.0
-            self._deltas[param_name] = 0.0
-        else:
-            self._gradients[param_name] = (trial_score - base_score) / delta
-            self._deltas[param_name] = delta
-        self._trial_scores[param_name] = trial_score
+    def record_trial(self, param_name: str, direction: float, delta: float,
+                     board_points: Dict[str, np.ndarray]) -> None:
+        """Store per-board detection positions from a single-param trial."""
         if param_name not in self._param_names:
             self._param_names.append(param_name)
+            self._pos_plus[param_name] = {}
+            self._pos_minus[param_name] = {}
+        store = self._pos_plus if direction > 0 else self._pos_minus
+        store[param_name] = {bid: pts.copy() for bid, pts in board_points.items()}
+        self._deltas[param_name] = abs(delta)
 
-    def compute_gauss_newton_step(self, params: List, best_values: Dict[str, float],
-                                   damping: float = 1.0) -> Optional[Dict[str, float]]:
-        n = len(self._param_names)
-        if n == 0:
+    def compute_gn_step(
+        self,
+        params: List,
+        best_values: Dict[str, float],
+        best_sim_positions: Dict[str, np.ndarray],
+        real_detections: Dict,
+        damping: float = 1.0,
+    ) -> Optional[Dict[str, float]]:
+        """Compute LM-regularised GN step from accumulated trial data.
+
+        The step Δ solves  min_Δ  ||J·Δ + r||²  with LM damping.
+        """
+        # Only params with both +δ and -δ recorded
+        valid = [n for n in self._param_names
+                 if n in self._pos_plus and n in self._pos_minus]
+        if not valid:
             return None
-        J = np.zeros((n, n))
-        r = np.zeros(n)
-        for i, name in enumerate(self._param_names):
-            grad = self._gradients.get(name, 0.0)
-            delta = self._deltas.get(name, 1.0)
-            J[i, i] = grad * abs(delta) if abs(delta) > 1e-12 else 0.0
-            r[i] = max(0.0, self._trial_scores.get(name, self._base_score))
-        JTJ = J.T @ J + np.eye(n) * damping
+
+        # Build residual r = best_sim - real, point by point
+        r_vals: List[float] = []
+        point_keys: List[tuple] = []  # (board_id, point_idx) per 2D row pair
+        for bid in sorted(best_sim_positions.keys() & set(real_detections.keys())):
+            sim = best_sim_positions[bid]
+            real = real_detections[bid].ordered_points
+            n = min(len(sim), len(real))
+            if n < 4:
+                continue
+            for i in range(n):
+                r_vals.append(float(sim[i, 0] - real[i, 0]))
+                r_vals.append(float(sim[i, 1] - real[i, 1]))
+                point_keys.append((bid, i))
+
+        K = len(point_keys)
+        if K < 4:
+            return None
+
+        r = np.array(r_vals, dtype=np.float64)
+        m = len(valid)
+        J = np.zeros((2 * K, m), dtype=np.float64)
+
+        # Fill Jacobian via central differences
+        for j, pname in enumerate(valid):
+            pp = self._pos_plus[pname]
+            pm = self._pos_minus[pname]
+            delta_p = max(abs(self._deltas.get(pname, 1.0)), 1e-12)
+            denom = 2.0 * delta_p
+            for row, (bid, i) in enumerate(point_keys):
+                pts_p = pp.get(bid)
+                pts_m = pm.get(bid)
+                if pts_p is None or pts_m is None or i >= min(len(pts_p), len(pts_m)):
+                    continue
+                J[2 * row,     j] = (pts_p[i, 0] - pts_m[i, 0]) / denom
+                J[2 * row + 1, j] = (pts_p[i, 1] - pts_m[i, 1]) / denom
+
+        # LM: (J^T J + λ·diag(J^T J))·Δ = -J^T r
+        JTJ = J.T @ J
+        JTr = J.T @ r
+        diag_JTJ = np.diag(np.abs(JTJ))
+        lambda_eff = max(damping, 1e-8)
         try:
-            delta_x = -np.linalg.solve(JTJ, J.T @ r)
+            delta_x = np.linalg.solve(JTJ + lambda_eff * np.diag(diag_JTJ), -JTr)
         except np.linalg.LinAlgError:
             return None
+
+        # Step magnitude clamp (prevent divergence on noisy Jacobian)
+        step_norm = np.linalg.norm(delta_x)
+        max_step = 5.0
+        if step_norm > max_step:
+            delta_x = delta_x * (max_step / step_norm)
+
         result: Dict[str, float] = {}
-        for i, name in enumerate(self._param_names):
-            p = next((pp for pp in params if pp.name == name), None)
+        for j, pname in enumerate(valid):
+            p = next((pp for pp in params if pp.name == pname), None)
             if p is None:
                 continue
-            new_val = best_values[name] + delta_x[i]
+            new_val = best_values[pname] + delta_x[j]
             new_val = max(p.min_value, min(p.max_value, new_val))
-            result[name] = new_val
+            result[pname] = new_val
         return result if result else None
 
 class CoordinateDescentMixin:
@@ -412,8 +472,16 @@ class CoordinateDescentMixin:
         limit = max_iters if max_iters is not None else self.max_iters
         self._ensure_live_log()
         self._historical_best_snapshot = None
+        if not hasattr(self, '_pref_dir_stagnation'):
+            self._pref_dir_stagnation = {}
+        if not hasattr(self, '_param_freeze_count'):
+            self._param_freeze_count = {}
+        if not hasattr(self, '_frozen_params'):
+            self._frozen_params = set()
+        if not hasattr(self, '_freeze_timers'):
+            self._freeze_timers = {}
         if getattr(self, 'use_gauss_newton', False):
-            self._gn_acc = JacobianAccumulator()
+            self._gn_acc = GaussNewtonAccumulator()
         if self.real_detections is None:
             self.real_detections = self._detect_reference_boards()
 
@@ -432,8 +500,11 @@ class CoordinateDescentMixin:
         best_score = best_total_detail.total_score
         best_baseline = self._as_baseline_metrics(best_total_detail)
         best_values = {p.name: p.value for p in self.params}
-        if getattr(self, 'use_gauss_newton', False) and hasattr(self, '_gn_acc'):
-            self._gn_acc.record_base(best_score, best_values)
+        if getattr(self, 'use_gauss_newton', False):
+            self._best_sim_detections = {
+                bid: det.ordered_points.copy()
+                for bid, det in self._last_sim_detections.items()
+            }
         self._remember_historical_best_snapshot(
             score=best_score,
             values=best_values,
@@ -469,6 +540,7 @@ class CoordinateDescentMixin:
                         "max_error": s.max_error,
                         "miss_rate": s.miss_rate,
                         "matched_point_count": s.matched_point_count,
+                        "geometric_penalty": s.geometric_penalty,
                         "failed_reason": s.failed_reason,
                     }
                     for s in best_total_detail.board_scores
@@ -498,11 +570,14 @@ class CoordinateDescentMixin:
         )
 
         it = 1
+        consecutive_no_improve = 0
         while it <= limit:
             improved_in_iter = False
             self._total_iteration_count += 1
             base_values = self._snapshot_values()
             base_score = best_score
+            if getattr(self, 'use_gauss_newton', False):
+                self._gn_acc = GaussNewtonAccumulator()
             candidate_moves: List[Dict[str, object]] = []
             ordered_params = self._ordered_params_for_iteration()
             iteration_strategy_stats = self._new_strategy_iteration_stats()
@@ -536,11 +611,18 @@ class CoordinateDescentMixin:
                 )
 
             for p in ordered_params:
+                if p.name in self._frozen_params:
+                    continue
                 preferred_direction = self.preferred_directions.get(p.name, 1.0)
+                if self._pref_dir_stagnation.get(p.name, 0) >= 3:
+                    preferred_direction = -preferred_direction
+                    self.preferred_directions[p.name] = preferred_direction
+                    self._pref_dir_stagnation[p.name] = 0
                 trial_directions: List[float] = [preferred_direction, -preferred_direction]
                 best_param_move: Optional[Dict[str, object]] = None
                 seen_trial_values: set[float] = set()
                 stop_param_search = False
+                any_accepted = False
                 effective_step = self._strategy_effective_step(p)
 
                 if getattr(self, "jitter_eps", 0.0) > 0:
@@ -599,10 +681,15 @@ class CoordinateDescentMixin:
                         accepted_reason = trial_result.accepted_reason
                         joint_candidate_reason = trial_result.joint_candidate_reason
 
-                        if getattr(self, 'use_gauss_newton', False) and hasattr(self, '_gn_acc'):
+                        if getattr(self, 'use_gauss_newton', False):
+                            sim_dets = getattr(self, '_last_sim_detections', {})
+                            board_points = {
+                                bid: det.ordered_points
+                                for bid, det in sim_dets.items()
+                            }
+                            delta = abs(trial_value - base_values[p.name])
                             self._gn_acc.record_trial(
-                                p.name, base_values[p.name], trial_value,
-                                base_score, score,
+                                p.name, direction, delta, board_points,
                             )
 
                         eligible_for_joint = accepted or joint_candidate_reason is not None
@@ -629,26 +716,32 @@ class CoordinateDescentMixin:
 
                         if accepted:
                             self.preferred_directions[p.name] = direction
+                            any_accepted = True
 
                         it += 1
                         if it > limit:
                             stop_param_search = True
                             break
-                        if (
-                            accepted
-                            and self.stop_after_first_accepted_direction
-                            and not self._is_joint_exploration_param(p.name)
-                        ):
-                            stop_param_search = True
-                            break
+
+                    if any_accepted and self.stop_after_first_accepted_direction and not self._is_joint_exploration_param(p.name):
+                        stop_param_search = True
 
                     if stop_param_search:
                         break
 
                 if best_param_move is None:
                     p.step = max(p.min_step, p.step * self.step_decay)
+                    self._pref_dir_stagnation[p.name] = self._pref_dir_stagnation.get(p.name, 0) + 1
+                    if p.step <= p.min_step + 1e-12:
+                        self._param_freeze_count[p.name] = self._param_freeze_count.get(p.name, 0) + 1
+                        if self._param_freeze_count[p.name] >= 3:
+                            self._frozen_params.add(p.name)
+                    else:
+                        self._param_freeze_count[p.name] = 0
                 else:
                     candidate_moves.append(best_param_move)
+                    self._pref_dir_stagnation[p.name] = 0
+                    self._param_freeze_count[p.name] = 0
 
                 if it > limit:
                     break
@@ -732,6 +825,11 @@ class CoordinateDescentMixin:
                     best_baseline = joint_baseline
                     best_img = joint_img
                     best_values = joint_values.copy()
+                    if getattr(self, 'use_gauss_newton', False):
+                        self._best_sim_detections = {
+                            bid: det.ordered_points.copy()
+                            for bid, det in self._last_sim_detections.items()
+                        }
                     self._remember_historical_best_snapshot(
                         score=best_score,
                         values=best_values,
@@ -802,32 +900,39 @@ class CoordinateDescentMixin:
                     f"joint_update accepted_params={joined} best_score={best_score:.6f} "
                     f"{self._top_board_summary(best_total_detail)}"
                 )
-            # P0: Gauss-Newton step
+            # Gauss-Newton step (captures parameter coupling, e.g. yaw↔pos_x)
             if getattr(self, 'use_gauss_newton', False) and it >= 2:
-                gn = self._gn_acc.compute_gauss_newton_step(
-                    self.params, best_values
-                )
-                if gn:
-                    self._apply_value_map_or_recover(
-                        gn, "Failed to apply GN step",
+                best_positions = getattr(self, '_best_sim_detections', None)
+                if best_positions is not None and self.real_detections is not None:
+                    gn = self._gn_acc.compute_gn_step(
+                        self.params, best_values,
+                        best_positions, self.real_detections,
+                        damping=getattr(self, 'gn_damping', 1.0),
                     )
-                    gn_detail, gn_img = self.evaluate(f"gn_{it}", best_baseline)
-                    gn_score = gn_detail.total_score
-                    if gn_score + self.min_improve < best_score:
-                        best_score = gn_score
-                        best_total_detail = gn_detail
-                        best_img = gn_img
-                        best_values = gn.copy()
-                        improved_in_iter = True
-                        print(
-                            f"gauss_newton accepted best_score={best_score:.6f} "
-                            f"{self._top_board_summary(best_total_detail)}"
-                        )
-                    else:
+                    if gn:
                         self._apply_value_map_or_recover(
-                            best_values, "Failed to restore after GN rejection",
+                            gn, "Failed to apply GN step",
                         )
-                    self._gn_acc.record_base(best_score, best_values)
+                        gn_detail, gn_img = self.evaluate(f"gn_{it}", best_baseline)
+                        gn_score = gn_detail.total_score
+                        if gn_score + self.min_improve < best_score:
+                            best_score = gn_score
+                            best_total_detail = gn_detail
+                            best_img = gn_img
+                            best_values = gn.copy()
+                            self._best_sim_detections = {
+                                bid: det.ordered_points.copy()
+                                for bid, det in self._last_sim_detections.items()
+                            }
+                            improved_in_iter = True
+                            print(
+                                f"gauss_newton accepted best_score={best_score:.6f} "
+                                f"{self._top_board_summary(best_total_detail)}"
+                            )
+                        else:
+                            self._apply_value_map_or_recover(
+                                best_values, "Failed to restore after GN rejection",
+                            )
 
 
 
@@ -846,6 +951,28 @@ class CoordinateDescentMixin:
                 stop_reason = "all_steps_minimum"
                 print("No further improvement and all steps at min_step. Stop.")
                 break
+
+            # Early stop: N consecutive iterations without any improvement
+            if improved_in_iter:
+                consecutive_no_improve = 0
+            else:
+                consecutive_no_improve += 1
+            early_stop_patience = getattr(self, 'early_stop_patience', 30)
+            if consecutive_no_improve >= early_stop_patience:
+                stop_reason = "early_stop"
+                print(f"No improvement for {consecutive_no_improve} iterations (patience={early_stop_patience}). Stop.")
+                break
+
+            # Freeze timeout: auto-unfreeze params frozen for too many iterations
+            freeze_timeout = getattr(self, 'freeze_timeout', 15)
+            for fp in list(self._frozen_params):
+                self._freeze_timers[fp] = self._freeze_timers.get(fp, 0) + 1
+                if self._freeze_timers[fp] >= freeze_timeout:
+                    self._frozen_params.discard(fp)
+                    self._freeze_timers[fp] = 0
+                    self._param_freeze_count[fp] = 0
+                    self._pref_dir_stagnation[fp] = 0
+                    print(f"  freeze_timeout: {fp} unfrozen after {freeze_timeout} iterations")
 
         final_best_score, final_best_values, final_best_total_detail, final_best_img = (
             self._resolve_best_snapshot_state(

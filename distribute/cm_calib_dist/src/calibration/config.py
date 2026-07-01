@@ -31,9 +31,6 @@ _ANNOTATION_OCR_ENGINE = None
 
 def _default_bootstrap_template_path() -> Path:
     calibration_dir = Path(__file__).resolve().parent
-    preferred = calibration_dir / "configs" / "bootstrap.template.json"
-    if preferred.exists():
-        return preferred
     legacy_preferred = calibration_dir / "bootstrap.template.json"
     if legacy_preferred.exists():
         return legacy_preferred
@@ -132,15 +129,16 @@ def _default_bootstrap_config() -> dict:
         "verify_all_coordinate_fields": False,
         "stop_after_first_accepted_direction": True,
         "progress_flush_every": 1,
-        "settle_sec": 0.35,
+        "settle_sec": 0.1,
         "target_score": 5.0,
         "acceptance_criteria": {
             "bottleneck_board_score_max_threshold": 4.0,
             "bottleneck_board_score_avg_threshold": 2.5,
         },
         "max_iters": 180,
-        "min_improve": 5e-05,
-        "step_decay": 0.7,
+        "min_improve": 0.05,
+        "early_stop_patience": 30,
+        "step_decay": 0.85,
         "priority_board_acceptance": {
             "board_ids": [],
             "min_board_score_improvement": 0.75,
@@ -196,14 +194,6 @@ def _default_bootstrap_config() -> dict:
         },
         "optimization_order": _default_parameter_order(),
         "parameters": _default_parameter_config(),
-        "curriculum": {
-            "enabled": True,
-            "phases": [
-                {"progress_max": 0.50, "active_params": ["lens_fov", "lens_offset_x", "lens_offset_y"]},
-                {"progress_max": 0.80, "active_params": ["lens_fov", "lens_offset_x", "lens_offset_y", "yaw", "pitch"]},
-                {"progress_max": 1.00, "active_params": None},
-            ],
-        }
     }
 
 

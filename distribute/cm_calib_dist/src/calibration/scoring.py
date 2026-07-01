@@ -138,6 +138,7 @@ class ScoringMixin:
         rmse = float(np.sqrt(np.mean(np.square(distances))))
         mean_error = float(np.mean(distances))
         max_error = float(np.max(distances))
+        geometric_penalty = 0.0
         if _is_custom_marker_board_type(board.board_type):
             geometric_penalty = self._custom_board_geometric_penalty(
                 board,
@@ -145,15 +146,12 @@ class ScoringMixin:
                 sim_detection,
                 sim_eval_image,
             )
-            # Additive geometric penalty: rewards structure alignment after
-            # homography warping. Unlike old max(image_penalty, rmse) which
-            # conflated pixel content with geometry, this correctly correlates
-            # with overlay quality: good alignment → low penalty → low score.
-            rmse = rmse + geometric_penalty
-            mean_error = mean_error + geometric_penalty
-            max_error = max(max_error, mean_error + geometric_penalty)
+            # geometric_penalty is a separate term in total_score, NOT added to
+            # rmse/mean_error/max_error — those stay as pure pixel-distance metrics.
+            # Its contribution is scaled by board.geom_weight to keep board scores
+            # comparable across board types with different point counts.
         miss_rate = 1.0 - (matched_points / max(1, real_detection.point_count))
-        total_score = rmse + board.alpha * miss_rate + board.beta * max_error
+        total_score = rmse + board.geom_weight * geometric_penalty + board.alpha * miss_rate + board.beta * max_error
 
         return BoardScoreDetail(
             board_id=board.board_id,
@@ -168,6 +166,7 @@ class ScoringMixin:
             max_error=max_error,
             miss_rate=miss_rate,
             matched_point_count=matched_points,
+            geometric_penalty=geometric_penalty,
         )
 
     def _aggregate_scores(

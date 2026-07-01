@@ -478,6 +478,8 @@ class CoordinateDescentMixin:
             self._param_freeze_count = {}
         if not hasattr(self, '_frozen_params'):
             self._frozen_params = set()
+        if not hasattr(self, '_freeze_timers'):
+            self._freeze_timers = {}
         if getattr(self, 'use_gauss_newton', False):
             self._gn_acc = GaussNewtonAccumulator()
         if self.real_detections is None:
@@ -538,6 +540,7 @@ class CoordinateDescentMixin:
                         "max_error": s.max_error,
                         "miss_rate": s.miss_rate,
                         "matched_point_count": s.matched_point_count,
+                        "geometric_penalty": s.geometric_penalty,
                         "failed_reason": s.failed_reason,
                     }
                     for s in best_total_detail.board_scores
@@ -567,6 +570,7 @@ class CoordinateDescentMixin:
         )
 
         it = 1
+        consecutive_no_improve = 0
         while it <= limit:
             improved_in_iter = False
             self._total_iteration_count += 1
@@ -947,6 +951,28 @@ class CoordinateDescentMixin:
                 stop_reason = "all_steps_minimum"
                 print("No further improvement and all steps at min_step. Stop.")
                 break
+
+            # Early stop: N consecutive iterations without any improvement
+            if improved_in_iter:
+                consecutive_no_improve = 0
+            else:
+                consecutive_no_improve += 1
+            early_stop_patience = getattr(self, 'early_stop_patience', 30)
+            if consecutive_no_improve >= early_stop_patience:
+                stop_reason = "early_stop"
+                print(f"No improvement for {consecutive_no_improve} iterations (patience={early_stop_patience}). Stop.")
+                break
+
+            # Freeze timeout: auto-unfreeze params frozen for too many iterations
+            freeze_timeout = getattr(self, 'freeze_timeout', 15)
+            for fp in list(self._frozen_params):
+                self._freeze_timers[fp] = self._freeze_timers.get(fp, 0) + 1
+                if self._freeze_timers[fp] >= freeze_timeout:
+                    self._frozen_params.discard(fp)
+                    self._freeze_timers[fp] = 0
+                    self._param_freeze_count[fp] = 0
+                    self._pref_dir_stagnation[fp] = 0
+                    print(f"  freeze_timeout: {fp} unfrozen after {freeze_timeout} iterations")
 
         final_best_score, final_best_values, final_best_total_detail, final_best_img = (
             self._resolve_best_snapshot_state(

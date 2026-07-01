@@ -164,6 +164,7 @@ class OrchestrationMixin:
                     "max_error": s.max_error,
                     "miss_rate": s.miss_rate,
                     "matched_point_count": s.matched_point_count,
+                    "geometric_penalty": s.geometric_penalty,
                     "failed_reason": s.failed_reason,
                 }
                 for s in total_detail.board_scores

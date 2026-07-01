@@ -360,10 +360,13 @@ class CameraCalibrator(DetectorMixin, ScoringMixin, AnnotationMixin, ScriptContr
                 "optimizer_mode must be 'coordinate_descent', 'bayesian', 'auto', or 'hybrid'"
             )
         self.use_gauss_newton = bool(cfg.get("use_gauss_newton", True))
+        self.early_stop_patience = int(cfg.get("early_stop_patience", 30))
+        self.freeze_timeout = int(cfg.get("freeze_timeout", 15))
         self.strategy_adaptation = bool(cfg.get("strategy_adaptation", True))
         self.jitter_eps = float(cfg.get("jitter_eps", 0.01))
         self.jitter_decay = float(cfg.get("jitter_decay", 0.98))
-        self.hybrid_phase1_iters = int(cfg.get("hybrid_phase1_iters", 15))
+        self.hybrid_phase1_iters = int(cfg.get("hybrid_phase1_iters", 40))
+        self.hybrid_search_box_sigma = float(cfg.get("hybrid_search_box_sigma", 5.0))
         self.parabolic_refinement = bool(cfg.get("parabolic_refinement", False))
         self.keep_aspect_resize = bool(cfg.get("keep_aspect_resize", True))
         self.auto_generate_best_score_image = bool(
@@ -827,6 +830,7 @@ class CameraCalibrator(DetectorMixin, ScoringMixin, AnnotationMixin, ScriptContr
                     square_size=self._read_float(board.get("square_size"), 1.0),
                     alpha=self._read_float(board.get("alpha"), 100.0),
                     beta=self._read_float(board.get("beta"), 0.1),
+                    geom_weight=self._read_float(board.get("geom_weight"), 0.5),
                     fail_penalty=self._read_float(board.get("fail_penalty"), 1e6),
                     min_detected_points=self._read_int(
                         board.get("min_detected_points"), min_points_default

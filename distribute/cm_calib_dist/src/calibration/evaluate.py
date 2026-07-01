@@ -91,9 +91,11 @@ class EvaluateMixin:
 
         board_scores: List[BoardScoreDetail] = []
         t_detect_start = time.perf_counter()
+        self._last_sim_detections = {}
         for board in self.boards:
             real_detection = self.real_detections[board.board_id]
             sim_detection = self._detect_board(sim_prepared, board)
+            self._last_sim_detections[board.board_id] = sim_detection
             board_scores.append(self._score_board(board, real_detection, sim_detection, sim_prepared))
 
         t_detect = time.perf_counter() - t_detect_start
@@ -119,8 +121,8 @@ class EvaluateMixin:
 
     def _optimize_hybrid(self) -> dict:
         """P5: CD then Bayesian in a tight search box."""
-        phase1_iters = getattr(self, 'hybrid_phase1_iters', 15)
-        search_sigma = getattr(self, 'hybrid_search_box_sigma', 3.0)
+        phase1_iters = getattr(self, 'hybrid_phase1_iters', 40)
+        search_sigma = getattr(self, 'hybrid_search_box_sigma', 5.0)
         total = self.max_iters
         cd_iters = min(phase1_iters, total - max(3, total // 4))
         if cd_iters < 3:
@@ -159,7 +161,7 @@ class EvaluateMixin:
 
         sampler = optuna.samplers.TPESampler(
             multivariate=True,
-            n_startup_trials=max(2, min(bayes_iters // 2, 15)),
+            n_startup_trials=max(2, min(5, bayes_iters // 5)),
             seed=42,
         )
         study = optuna.create_study(direction="minimize", sampler=sampler)

@@ -66,6 +66,7 @@ class BayesianOptimizerMixin:
                         "max_error": s.max_error,
                         "miss_rate": s.miss_rate,
                         "matched_point_count": s.matched_point_count,
+                        "geometric_penalty": s.geometric_penalty,
                         "failed_reason": s.failed_reason,
                     }
                     for s in best_total_detail.board_scores
@@ -196,7 +197,7 @@ class BayesianOptimizerMixin:
 
         sampler = optuna.samplers.TPESampler(
             seed=int(cfg.get("bayesian_seed", 42)),
-            n_startup_trials=min(self.max_iters // 2, 10),
+            n_startup_trials=min(5, max(2, self.max_iters // 10)),
         )
         study = optuna.create_study(
             direction="minimize",

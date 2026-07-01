@@ -137,6 +137,7 @@ def _default_bootstrap_config() -> dict:
         },
         "max_iters": 180,
         "min_improve": 0.05,
+        "early_stop_patience": 30,
         "step_decay": 0.85,
         "priority_board_acceptance": {
             "board_ids": [],

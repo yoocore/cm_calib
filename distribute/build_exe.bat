@@ -45,6 +45,34 @@ echo [1/2] Building EXE (this may take several minutes)...
     --add-data "%SCRIPT_DIR%\..\src\calibration\cli.py;src\calibration" ^
     --add-data "%SCRIPT_DIR%\..\src\orchestration\calibration_orchestrator.py;src\orchestration" ^
     --collect-all PySide6 ^
+    --exclude-module PySide6.QtWebEngineCore ^
+    --exclude-module PySide6.QtWebEngineWidgets ^
+    --exclude-module PySide6.QtWebEngineQuick ^
+    --exclude-module PySide6.QtWebChannel ^
+    --exclude-module PySide6.QtQml ^
+    --exclude-module PySide6.QtQuick ^
+    --exclude-module PySide6.QtQuickWidgets ^
+    --exclude-module PySide6.QtCharts ^
+    --exclude-module PySide6.QtDataVisualization ^
+    --exclude-module PySide6.QtMultimedia ^
+    --exclude-module PySide6.QtMultimediaWidgets ^
+    --exclude-module PySide6.QtSpatialAudio ^
+    --exclude-module PySide6.QtHttpServer ^
+    --exclude-module PySide6.QtDesigner ^
+    --exclude-module PySide6.QtHelp ^
+    --exclude-module PySide6.Qt3DCore ^
+    --exclude-module PySide6.Qt3DRender ^
+    --exclude-module PySide6.Qt3DInput ^
+    --exclude-module PySide6.Qt3DLogic ^
+    --exclude-module PySide6.Qt3DExtras ^
+    --exclude-module PySide6.QtBluetooth ^
+    --exclude-module PySide6.QtNfc ^
+    --exclude-module PySide6.QtPositioning ^
+    --exclude-module PySide6.QtSensors ^
+    --exclude-module PySide6.QtWebSockets ^
+    --exclude-module PySide6.QtWebView ^
+    --exclude-module PySide6.QtTextToSpeech ^
+    --exclude-module PySide6.QtSerialPort ^
     --exclude-module cmapi ^
     --exclude-module apoc ^
     --exclude-module infofiles ^

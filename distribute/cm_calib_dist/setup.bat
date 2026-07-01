@@ -421,7 +421,7 @@ if not defined CM_PYTHON_DIR (
 exit /b 0
 
 :check_cm_compat
-setlocal
+setlocal enabledelayedexpansion
 set "TAG=cp%CM_PY_VER:.=%"
 set "COMPATIBLE=0"
 set "VERSIONS="

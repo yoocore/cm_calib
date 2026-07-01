@@ -57,6 +57,7 @@ class SensorProgressPanel(QGroupBox):
         self._sensor_progress_items: dict[str, QTreeWidgetItem] = {}
         self._sensor_progress_bars: dict[str, QProgressBar] = {}
         self._target_config_paths: dict[str, Path] = {}
+        self._user_target_cache: dict[str, float] = {}
 
         self.sensor_progress_tree.setEditTriggers(QTreeWidget.EditTrigger.NoEditTriggers)
         self.sensor_progress_tree.itemDoubleClicked.connect(self._on_item_double_clicked)
@@ -119,8 +120,10 @@ class SensorProgressPanel(QGroupBox):
             return
         if new_target is not None:
             cfg["target_score"] = new_target
+            self._user_target_cache[camera_name] = new_target
         else:
             cfg.pop("target_score", None)
+            self._user_target_cache.pop(camera_name, None)
         config_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=4), encoding="utf-8")
 
     def reset_sensor_progress(
@@ -214,6 +217,8 @@ class SensorProgressPanel(QGroupBox):
         target_val = (target_scores or {}).get(camera_name)
         if target_val is not None:
             item.setText(8, f"{target_val:.1f}")
+        elif camera_name in self._user_target_cache:
+            item.setText(8, f"{self._user_target_cache[camera_name]:.1f}")
         else:
             item.setText(8, "5.0")
         item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)

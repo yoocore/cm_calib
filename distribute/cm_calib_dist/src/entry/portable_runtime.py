@@ -248,7 +248,101 @@ def _import_cmapi_direct(paths: list[Path]) -> bool:
             _debug("    has .whl(s): %s", [w.name for w in whls])
 
     _debug("  → all paths exhausted, cmapi NOT loaded")
-    return False
+
+    # Last resort: extract .whl files and import via temp path
+    _debug("  trying .whl extraction as last resort")
+    return _import_cmapi_from_wheels(paths)
+
+
+_whl_extract_dirs: list[Path] = []
+_whl_imported_ok = False
+
+
+def _import_cmapi_from_wheels(paths: list[Path]) -> bool:
+    """Extract cmapi and related .whl files, then import cmapi.
+
+    CarMaker ships cmapi, apoc, and infofiles as ``.whl`` files in the
+    ``Python/`` directory.  In frozen (PyInstaller) builds only the wheel
+    files exist — they were never pip-installed.  This function extracts
+    all relevant wheels to a temp directory, temporarily removes
+    ``FrozenImporter`` from ``sys.meta_path`` so that ``import cmapi``
+    goes through the normal ``PathFinder``, then restores the original
+    meta-path once cmapi is loaded.
+    """
+    global _whl_imported_ok
+    if _whl_imported_ok:
+        return True
+    import zipfile
+    import tempfile
+    import shutil
+    import importlib
+    import atexit
+
+    # Collect all .whl files from all paths
+    all_whls: list[Path] = []
+    for p in paths:
+        resolved = p.resolve()
+        if not resolved.is_dir():
+            continue
+        for whl in sorted(resolved.glob("*.whl")):
+            # Only extract wheels likely needed by cmapi
+            name_lower = whl.name.lower()
+            if any(k in name_lower for k in ("cmapi-", "apoc-", "infofiles-", "ipg-")):
+                all_whls.append(whl)
+    if not all_whls:
+        _debug("    no relevant .whl files found")
+        return False
+    if not any(w.name.lower().startswith("cmapi-") for w in all_whls):
+        _debug("    no cmapi-.whl found among %d wheels", len(all_whls))
+        return False
+
+    extract_dir = Path(tempfile.mkdtemp(prefix="cm_calib_cmapi_"))
+    _debug("    extracting %d wheels to %s", len(all_whls), extract_dir)
+    for whl in all_whls:
+        try:
+            with zipfile.ZipFile(str(whl), "r") as zf:
+                zf.extractall(str(extract_dir))
+            _debug("      ✓ %s", whl.name)
+        except Exception as exc:
+            _debug("      ✗ %s: %s", whl.name, exc)
+
+    if not (extract_dir / "cmapi").is_dir():
+        _debug("    cmapi/ not found in extracted wheels, cleanup")
+        shutil.rmtree(extract_dir, ignore_errors=True)
+        return False
+
+    # Add to sys.path for sub-module resolution
+    sys.path.insert(0, str(extract_dir))
+    _whl_extract_dirs.append(extract_dir)
+    atexit.register(lambda: shutil.rmtree(extract_dir, ignore_errors=True))
+
+    # Temporarily remove FrozenImporter so import cmapi uses PathFinder
+    saved_meta_path = list(sys.meta_path)
+    sys.meta_path = [mp for mp in sys.meta_path
+                     if not type(mp).__name__.startswith("FrozenImporter")]
+    importlib.invalidate_caches()
+
+    try:
+        import cmapi  # noqa: F401
+        _whl_imported_ok = True
+        _debug("    ✓ import cmapi from extracted wheels OK")
+        return True
+    except ImportError as exc:
+        _debug("    ✗ import cmapi from wheels failed: %s", exc)
+        # Clean up sys.path entry
+        try:
+            sys.path.remove(str(extract_dir))
+        except ValueError:
+            pass
+        try:
+            _whl_extract_dirs.remove(extract_dir)
+        except ValueError:
+            pass
+        shutil.rmtree(extract_dir, ignore_errors=True)
+        return False
+    finally:
+        sys.meta_path[:] = saved_meta_path
+        importlib.invalidate_caches()
 
 
 def apply_cmapi_to_current_process(

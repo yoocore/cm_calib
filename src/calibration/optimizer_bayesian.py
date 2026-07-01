@@ -5,6 +5,12 @@ except ImportError:
     _OPTUNA_AVAILABLE = False
 
 
+def _fmt_params(params: dict) -> str:
+    """Format parameter dict with 4 decimal places for display."""
+    items = ", ".join(f"'{k}': {v:.4f}" for k, v in params.items())
+    return "{" + items + "}"
+
+
 class BayesianOptimizerMixin:
     """Bayesian (Optuna) optimization methods for CameraCalibrator."""
 
@@ -168,6 +174,8 @@ class BayesianOptimizerMixin:
                         in_progress=True,
                     )
 
+                print(f"Trial {trial.number + 1}: score={score:.4f} params={_fmt_params(trial_values)}")
+
                 return score
             except RuntimeError as exc:
                 print(f"iter={trial.number + 1} phase=bayesian runtime_error={exc}")
@@ -194,6 +202,9 @@ class BayesianOptimizerMixin:
                     failed_reason=str(exc),
                 )
                 return float("inf")
+
+        # Suppress optuna's noisy per-trial log and print our own formatted version
+        optuna.logging.set_verbosity(optuna.logging.WARNING)
 
         sampler = optuna.samplers.TPESampler(
             seed=int(cfg.get("bayesian_seed", 42)),

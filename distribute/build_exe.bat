@@ -32,7 +32,6 @@ echo [1/2] Building EXE (this may take several minutes)...
     --noconfirm ^
     --onedir ^
     --windowed ^
-    --strip ^
     --name "CameraCalibration" ^
     --distpath "%BUILD_DIR%" ^
     --workpath "%CACHE_DIR%\pyibuild" ^

@@ -365,7 +365,8 @@ def main() -> None:
                 "WARNING: Vehicle writeback will NOT be available — "
                 f"vehicle path probe returned {runtime_context}. "
                 "Calibration results will not be saved to the vehicle file. "
-                "Next calibration will start from original vehicle defaults."
+                "Next calibration will start from the vehicle file's current values, "
+                "not from this run's best."
             )
         print(f"Config initial values AFTER vehicle DDE read for {camera_name}:")
         for name, param in sorted(cfg.get("parameters", {}).items()):
@@ -440,7 +441,8 @@ def main() -> None:
             if wb_result is None:
                 print(
                     "WARNING: Vehicle writeback failed — results will NOT persist. "
-                    "Next calibration will start from original vehicle defaults."
+                    "Next calibration will start from the vehicle file's current values, "
+                "not from this run's best."
                 )
             else:
                 _verify_vehicle_writeback(
@@ -589,7 +591,8 @@ def main() -> None:
         if wb_result is None:
             print(
                 "WARNING: Vehicle writeback failed — results will NOT persist. "
-                "Next calibration will start from original vehicle defaults."
+                "Next calibration will start from the vehicle file's current values, "
+                "not from this run's best."
             )
         else:
             _verify_vehicle_writeback(

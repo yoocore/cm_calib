@@ -1674,7 +1674,7 @@ def _resolve_vehicle_writeback_context(config_path: Path, cfg: dict) -> Optional
             f"vehicle path could not be resolved (config={config_path}, "
             f"probe={runtime_context}). "
             "The best calibration results will NOT be saved to the vehicle file. "
-            "Next calibration will start from the original vehicle defaults, "
+            "Next calibration will start from the vehicle file's current values, "
             "not from this run's best values."
         )
         return None

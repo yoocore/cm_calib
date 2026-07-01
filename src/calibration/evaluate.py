@@ -161,7 +161,7 @@ class EvaluateMixin:
 
         sampler = optuna.samplers.TPESampler(
             multivariate=True,
-            n_startup_trials=max(2, min(bayes_iters // 2, 15)),
+            n_startup_trials=max(2, min(5, bayes_iters // 5)),
             seed=42,
         )
         study = optuna.create_study(direction="minimize", sampler=sampler)

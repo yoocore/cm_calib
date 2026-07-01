@@ -196,7 +196,7 @@ class BayesianOptimizerMixin:
 
         sampler = optuna.samplers.TPESampler(
             seed=int(cfg.get("bayesian_seed", 42)),
-            n_startup_trials=min(self.max_iters // 2, 10),
+            n_startup_trials=min(5, max(2, self.max_iters // 10)),
         )
         study = optuna.create_study(
             direction="minimize",

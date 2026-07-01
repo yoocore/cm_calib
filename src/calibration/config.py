@@ -129,15 +129,15 @@ def _default_bootstrap_config() -> dict:
         "verify_all_coordinate_fields": False,
         "stop_after_first_accepted_direction": True,
         "progress_flush_every": 1,
-        "settle_sec": 0.35,
+        "settle_sec": 0.1,
         "target_score": 5.0,
         "acceptance_criteria": {
             "bottleneck_board_score_max_threshold": 4.0,
             "bottleneck_board_score_avg_threshold": 2.5,
         },
         "max_iters": 180,
-        "min_improve": 5e-05,
-        "step_decay": 0.7,
+        "min_improve": 0.05,
+        "step_decay": 0.85,
         "priority_board_acceptance": {
             "board_ids": [],
             "min_board_score_improvement": 0.75,

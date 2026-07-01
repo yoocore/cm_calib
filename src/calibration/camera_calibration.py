@@ -211,8 +211,8 @@ class CameraCalibrator(DetectorMixin, ScoringMixin, AnnotationMixin, ScriptContr
             acceptance_cfg.get("bottleneck_board_score_avg_threshold", 2.5)
         )
         self.max_iters = int(cfg.get("max_iters", 100))
-        self.min_improve = float(cfg.get("min_improve", 1e-4))
-        self.step_decay = float(cfg.get("step_decay", 0.6))
+        self.min_improve = float(cfg.get("min_improve", 0.02))
+        self.step_decay = float(cfg.get("step_decay", 0.85))
         self.settings_input_mode = str(cfg.get("settings_input_mode", "script_control")).lower()
         if self.settings_input_mode != "script_control":
             raise ValueError("Only settings_input_mode='script_control' is supported")

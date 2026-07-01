@@ -37,6 +37,8 @@ echo [1/2] Building EXE (this may take several minutes)...
     --add-data "%SCRIPT_DIR%\..\src\gui_app\dropdown_arrow.svg;src\gui_app" ^
     --add-data "%SCRIPT_DIR%\..\src\gui_app\arrow_up.svg;src\gui_app" ^
     --add-data "%SCRIPT_DIR%\..\src\gui_app\arrow_down.svg;src\gui_app" ^
+    --add-data "%SCRIPT_DIR%\..\src\health\precheck_cli.py;src\health" ^
+    --add-data "%SCRIPT_DIR%\..\src\calibration\cli.py;src\calibration" ^
     --collect-all PySide6 ^
     --exclude-module cmapi ^
     --exclude-module apoc ^

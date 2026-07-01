@@ -16,7 +16,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 import src.cmapi.cmapi_testrun_control as cmctrl
-from src.entry.portable_runtime import build_python_subprocess_command
+from src.entry.portable_runtime import build_python_subprocess_command, resolve_tool_root
 from src.scripts.runtime_config_bootstrap import load_movie_view_size_from_real_image
 from src.cmapi.cmapi_testrun_control import (
     start_simulation_via_tcl,
@@ -32,7 +32,6 @@ ORCHESTRATION_EVENT_PREFIX = "ORCHESTRATION_EVENT_JSON:"
 ORCHESTRATION_SUMMARY_PREFIX = "ORCHESTRATION_SUMMARY_JSON:"
 
 DEFAULT_PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_CONFIG_DIR = Path(__file__).resolve().parents[2] / "configs"
 
 
 _STOP_REQUESTED = False
@@ -99,7 +98,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--config-dir",
         type=Path,
-        default=DEFAULT_CONFIG_DIR,
+        required=True,
         help="Directory containing camera.<name>.json runtime configs.",
     )
     parser.add_argument(
@@ -211,7 +210,7 @@ def _append_optional_arg(command: list[str], name: str, value: Optional[object])
 
 
 def _build_camera_command(args: argparse.Namespace, config_path: Path) -> list[str]:
-    script_path = Path(__file__).resolve().parents[1] / "calibration" / "cli.py"
+    script_path = resolve_tool_root() / "src" / "calibration" / "cli.py"
     command = build_python_subprocess_command(
         script_path,
         [
@@ -620,7 +619,7 @@ def main() -> None:
             project_root=project_root,
             camera_names=cameras,
             config_dir=config_dir,
-            template_path=(config_dir / "bootstrap.template.json") if (config_dir / "bootstrap.template.json").exists() else (Path(__file__).resolve().parent / "configs" / "bootstrap.template.json"),
+            template_path=config_dir / "bootstrap.template.json",
             movie_dir=project_root / "Movie",
             overwrite_existing=False,
             capture_current_params=False,

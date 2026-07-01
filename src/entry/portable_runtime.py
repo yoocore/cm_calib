@@ -179,6 +179,13 @@ def apply_cmapi_to_current_process(
 
 
 def resolve_tool_root() -> Path:
+    """Return the calibration tool root directory.
+
+    In dev mode:  parents[2] from this file (src/entry/ -> src/ -> repo root)
+    In exe mode:  sys._MEIPASS (_internal/ directory where bundled data lives)
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS).resolve()
     return Path(__file__).resolve().parents[2]
 
 def ensure_calibration_root_on_sys_path(project_root: Path | None = None) -> Path:

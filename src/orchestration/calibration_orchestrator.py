@@ -16,7 +16,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 import src.cmapi.cmapi_testrun_control as cmctrl
-from src.entry.portable_runtime import build_python_subprocess_command
+from src.entry.portable_runtime import build_python_subprocess_command, resolve_tool_root
 from src.scripts.runtime_config_bootstrap import load_movie_view_size_from_real_image
 from src.cmapi.cmapi_testrun_control import (
     start_simulation_via_tcl,
@@ -210,7 +210,7 @@ def _append_optional_arg(command: list[str], name: str, value: Optional[object])
 
 
 def _build_camera_command(args: argparse.Namespace, config_path: Path) -> list[str]:
-    script_path = Path(__file__).resolve().parents[1] / "calibration" / "cli.py"
+    script_path = resolve_tool_root() / "src" / "calibration" / "cli.py"
     command = build_python_subprocess_command(
         script_path,
         [

@@ -202,7 +202,8 @@ class CameraCalibrator(DetectorMixin, ScoringMixin, AnnotationMixin, ScriptContr
         self.params = self._order_params(self.params, cfg.get("optimization_order"))
 
         self.settle_sec = float(cfg.get("settle_sec", 0.1))
-        self.target_score = float(cfg.get("target_score", 5.0))
+        raw_target = cfg.get("target_score")
+        self.target_score = float(raw_target) if raw_target is not None else None
         acceptance_cfg = cfg.get("acceptance_criteria", {})
         self.bottleneck_board_score_max_threshold = float(
             acceptance_cfg.get("bottleneck_board_score_max_threshold", 4.0)
@@ -556,6 +557,10 @@ class CameraCalibrator(DetectorMixin, ScoringMixin, AnnotationMixin, ScriptContr
         self.boards = self._load_boards(cfg.get("boards", []))
         if not self.boards:
             raise ValueError("boards must be a non-empty array")
+
+        # Auto-compute target_score: 0.3 per board when not explicitly configured
+        if not self.target_score:
+            self.target_score = 0.3 * len(self.boards)
 
         self._materialize_custom_maker_templates()
 
@@ -1079,7 +1084,7 @@ class CameraCalibrator(DetectorMixin, ScoringMixin, AnnotationMixin, ScriptContr
             if compared_scores
             else None
         )
-        target_score_reached = total_detail.total_score <= self.target_score
+        target_score_reached = self.target_score is not None and total_detail.total_score <= self.target_score
 
         if not total_detail.success:
             return AcceptanceDecision(
@@ -2415,7 +2420,7 @@ class CameraCalibrator(DetectorMixin, ScoringMixin, AnnotationMixin, ScriptContr
             return False, "no_comparable_boards"
         if candidate_detail.has_critical_degrade:
             return False, "critical_degrade"
-        if candidate_score <= self.target_score:
+        if self.target_score is not None and candidate_score <= self.target_score:
             return True, "target_score_reached"
         if candidate_score + self.min_improve < baseline_score:
             return True, "total_score_improved"

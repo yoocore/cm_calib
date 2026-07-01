@@ -4216,7 +4216,9 @@ def _run_plain_optimize_rounds(
 
     rounds_root = _build_isolated_output_dir("rounds", camera_parent=camera_name, project_root=project_root)
     active_cfg = copy.deepcopy(cfg)
-    target_score = float(cfg.get("target_score", 5.0))
+    target_score = cfg.get("target_score")
+    if target_score is not None:
+        target_score = float(target_score)
     round_seed_policy = _resolve_round_seed_policy(cfg)
     anchor_values, anchor_score, anchor_source = _resolve_round_seed_anchor(
         config_path,
@@ -4319,7 +4321,7 @@ def _run_plain_optimize_rounds(
         if autotune_event is not None:
             round_entry["strategy_autotune"] = autotune_event
             strategy_autotune_events.append(autotune_event)
-        if float(result["best_score"]) <= target_score:
+        if target_score is not None and float(result["best_score"]) <= target_score:
             print(
                 f"Plain optimize rounds: stop early at round {round_no} because target_score was reached"
             )
@@ -4358,7 +4360,9 @@ def _run_explore_then_refine_rounds(
     overall_total_iters = round_count * (start_count * explore_max_iters + _refine_max_iters)
     rounds_root = _build_isolated_output_dir("rounds", camera_parent=camera_name, project_root=project_root)
     active_cfg = copy.deepcopy(cfg)
-    target_score = float(cfg.get("target_score", 5.0))
+    target_score = cfg.get("target_score")
+    if target_score is not None:
+        target_score = float(target_score)
     round_seed_policy = _resolve_round_seed_policy(cfg)
     anchor_values, anchor_score, anchor_source = _resolve_round_seed_anchor(
         config_path,
@@ -4502,7 +4506,7 @@ def _run_explore_then_refine_rounds(
         if autotune_event is not None:
             round_entry["strategy_autotune"] = autotune_event
             strategy_autotune_events.append(autotune_event)
-        if float(best_run["best_score"]) <= target_score:
+        if target_score is not None and float(best_run["best_score"]) <= target_score:
             print(
                 f"Explore-then-refine rounds: stop early at round {round_no} because target_score was reached"
             )

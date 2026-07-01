@@ -259,7 +259,24 @@ class MainWindow(QMainWindow):
 
     def _rebuild_sensor_progress_plan(self) -> None:
         cameras = self.cm_settings_panel.selected_cameras()
-        self.sensor_progress_panel.reset_sensor_progress(cameras)
+        target_scores: dict[str, float] = {}
+        target_config_paths: dict[str, Path] = {}
+        for cam in cameras:
+            cfg_path = self.config_service.resolve_config_path(cam)
+            target_config_paths[cam] = cfg_path
+            if cfg_path.exists():
+                try:
+                    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+                    ts = cfg.get("target_score")
+                    if ts is not None:
+                        target_scores[cam] = float(ts)
+                except (OSError, json.JSONDecodeError):
+                    pass
+        self.sensor_progress_panel.reset_sensor_progress(
+            cameras,
+            target_scores=target_scores,
+            target_config_paths=target_config_paths,
+        )
 
     def _set_camera_progress_state(
         self,
@@ -367,7 +384,7 @@ class MainWindow(QMainWindow):
         else:
             elapsed_total_seconds = int(round(sum(self._camera_elapsed_final.values())))
         overall_percent = int(round((total_iter_current / total_iter_max) * 100)) if total_iter_max > 0 else 0
-        if overall_percent < 100 and any(self._camera_progress_status.get(c) not in {"finished"} for c in cameras):
+        if any(self._camera_progress_status.get(c) not in {"finished"} for c in cameras):
             overall_percent = min(99, overall_percent)
         self.sensor_progress_panel.set_overall_progress(
             current_camera=running_camera or preparing_camera or ready_camera,
@@ -458,8 +475,11 @@ class MainWindow(QMainWindow):
             cm_install = self.calibration_panel.cm_install_path
             if cm_install is None:
                 raise ValueError("CM version is not selected. Choose a CM version first.")
+            maker_type = self.calibration_panel.maker_type
+            if maker_type is None:
+                raise ValueError("Maker type is not selected. Choose a Maker Type first.")
             self.calibration_service.set_cm_install(cm_install)
-            self.calibration_service.set_maker_type(self.calibration_panel.maker_type)
+            self.calibration_service.set_maker_type(maker_type)
             if self.calibration_service.is_running:
                 self.output_panel.append_log(
                     f"calibration_service already running; stopping first",
@@ -504,7 +524,11 @@ class MainWindow(QMainWindow):
             cm_install = self.calibration_panel.cm_install_path
             if cm_install is None:
                 raise ValueError("CM version is not selected. Choose a CM version first.")
+            maker_type = self.calibration_panel.maker_type
+            if maker_type is None:
+                raise ValueError("Maker type is not selected. Choose a Maker Type first.")
             self.calibration_service.set_cm_install(cm_install)
+            self.calibration_service.set_maker_type(maker_type)
 
             if self.calibration_service.is_running:
                 self.output_panel.append_log(

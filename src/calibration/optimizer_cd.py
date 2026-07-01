@@ -942,7 +942,7 @@ class CoordinateDescentMixin:
                 improved_in_iter=improved_in_iter,
             )
 
-            if best_score <= self.target_score:
+            if self.target_score is not None and best_score <= self.target_score:
                 stop_reason = "target_score"
                 print(f"Target score reached: {best_score:.6f} <= {self.target_score:.6f}.")
                 break

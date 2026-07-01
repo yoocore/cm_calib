@@ -117,7 +117,7 @@ def generate_config(
     cfg.setdefault("max_iters", 180)
     cfg.setdefault("min_improve", 5e-5)
     cfg.setdefault("step_decay", 0.7)
-    cfg.setdefault("target_score", 5.0)
+    cfg.setdefault("target_score", None)  # auto: 0.3 * board_count at runtime
     cfg.setdefault("optimization_order", _DEFAULT_OPTIMIZATION_ORDER)
     cfg.setdefault("parameters", _DEFAULT_PARAMETERS)
     cfg["output_dir"] = str(output_dir)

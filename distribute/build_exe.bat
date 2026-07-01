@@ -23,17 +23,14 @@ if not exist "!PYTHON!" (
 :: Build cache in distribute/build_cache/
 if not exist "%CACHE_DIR%" mkdir "%CACHE_DIR%"
 
-:: Use temp dist path to avoid locked-file conflicts
-set "BUILD_DIR=%TEMP%\cm_calib_build_%RANDOM%"
-
-:: Build with PyInstaller (onedir mode - more reliable)
-echo [1/2] Building EXE (this may take several minutes)...
+:: Build directly to dist_exe (PyInstaller incremental update)
+echo [1/3] Building EXE (this may take several minutes)...
 "%PYTHON%" -OO -m PyInstaller ^
     --noconfirm ^
     --onedir ^
     --windowed ^
     --name "CameraCalibration" ^
-    --distpath "%BUILD_DIR%" ^
+    --distpath "%DIST_DIR%" ^
     --workpath "%CACHE_DIR%\pyibuild" ^
     --specpath "%CACHE_DIR%\pyispec" ^
     --add-data "%SCRIPT_DIR%\..\src\gui_app\icon.svg;src\gui_app" ^
@@ -68,28 +65,12 @@ if !ERRORLEVEL! neq 0 (
     exit /b 1
 )
 
-:: Deploy to final location (flatten — no intermediate CameraCalibration dir)
-echo [2/2] Deploying to %DIST_DIR%...
-:: Remove old EXE + _internal (in case locked, rename first)
-if exist "%DIST_DIR%\CameraCalibration.exe" (
-    del "%DIST_DIR%\CameraCalibration.exe" 2>nul
-    if exist "%DIST_DIR%\CameraCalibration.exe" (
-        ren "%DIST_DIR%\CameraCalibration.exe" "CameraCalibration.exe.old" 2>nul
-    )
+:: Flatten — PyInstaller --name 多建一层 CameraCalibration\
+if exist "%DIST_DIR%\CameraCalibration\_internal" (
+    echo [2/2] Flattening output...
+    robocopy "%DIST_DIR%\CameraCalibration\_internal" "%DIST_DIR%\_internal" /e /is /it /njh /njs /ndl /nfl >nul
+    rmdir /s /q "%DIST_DIR%\CameraCalibration" 2>nul
 )
-if exist "%DIST_DIR%\_internal" (
-    rmdir /s /q "%DIST_DIR%\_internal" 2>nul
-    if exist "%DIST_DIR%\_internal" (
-        ren "%DIST_DIR%\_internal" "_internal.old" 2>nul
-    )
-)
-mkdir "%DIST_DIR%" 2>nul
-move "%BUILD_DIR%\CameraCalibration\CameraCalibration.exe" "%DIST_DIR%\CameraCalibration.exe" >nul
-move "%BUILD_DIR%\CameraCalibration\_internal" "%DIST_DIR%\_internal" >nul
-:: Clean up stale + temp
-if exist "%DIST_DIR%\CameraCalibration.exe.old" del "%DIST_DIR%\CameraCalibration.exe.old" 2>nul
-if exist "%DIST_DIR%\_internal.old" rmdir /s /q "%DIST_DIR%\_internal.old" 2>nul
-rmdir /s /q "%BUILD_DIR%" 2>nul
 
 :: Post-build cleanup — remove unnecessary native binaries
 echo [3/3] Post-build cleanup...

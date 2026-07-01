@@ -7,7 +7,6 @@ set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
 set "VENV=%SCRIPT_DIR%\cm_calib_dist\.venv"
 set "PYTHON=%VENV%\Scripts\python.exe"
 set "DIST_DIR=%SCRIPT_DIR%\dist_exe"
-set "UPX_DIR=%SCRIPT_DIR%\..\build_cache\upx"
 
 echo ============================================
 echo  Building Camera Calibration EXE
@@ -18,29 +17,6 @@ if not exist "!PYTHON!" (
     echo [ERR] venv not found, run setup.bat first
     pause
     exit /b 1
-)
-
-:: --- UPX setup (auto-download if missing) ---
-set "UPX_BIN=%UPX_DIR%\upx.exe"
-if not exist "!UPX_BIN!" (
-    echo [SETUP] UPX not found, downloading...
-    if not exist "%UPX_DIR%" mkdir "%UPX_DIR%"
-    curl -sL "https://github.com/upx/upx/releases/download/v4.2.4/upx-4.2.4-win64.zip" -o "%UPX_DIR%\upx.zip"
-    if exist "!UPX_DIR!\upx.zip" (
-        powershell -NoProfile -Command "Expand-Archive '%UPX_DIR%\upx.zip' '%UPX_DIR%\upx_tmp' -Force" >nul
-        if exist "!UPX_DIR!\upx_tmp\upx-4.2.4-win64\upx.exe" (
-            move "%UPX_DIR%\upx_tmp\upx-4.2.4-win64\upx.exe" "%UPX_DIR%\upx.exe" >nul
-            rmdir /s /q "%UPX_DIR%\upx_tmp" 2>nul
-            del "%UPX_DIR%\upx.zip" 2>nul
-            echo [SETUP] UPX ready at !UPX_BIN!
-        ) else (
-            echo [SETUP] UPX download failed, proceeding without compression
-        )
-    ) else (
-        echo [SETUP] UPX download failed, proceeding without compression
-    )
-) else (
-    echo [SETUP] UPX found at !UPX_BIN!
 )
 
 :: Use temp dist path to avoid locked-file conflicts
@@ -64,7 +40,6 @@ echo [1/2] Building EXE (this may take several minutes)...
     --add-data "%SCRIPT_DIR%\..\src\health\precheck_cli.py;src\health" ^
     --add-data "%SCRIPT_DIR%\..\src\calibration\cli.py;src\calibration" ^
     --add-data "%SCRIPT_DIR%\..\src\orchestration\calibration_orchestrator.py;src\orchestration" ^
-    --collect-all PySide6 ^
     --exclude-module cmapi ^
     --exclude-module apoc ^
     --exclude-module infofiles ^
@@ -74,8 +49,7 @@ echo [1/2] Building EXE (this may take several minutes)...
     --hidden-import src.gui_app.app ^
     --hidden-import src.gui_app.main_window ^
     --hidden-import src.health.verify_runtime_chain_baseline ^
-    "%SCRIPT_DIR%\..\src\entry\launch_gui.py" ^
-    --upx-dir "%UPX_DIR%"
+    "%SCRIPT_DIR%\..\src\entry\launch_gui.py"
 
 if !ERRORLEVEL! neq 0 (
     echo [ERR] Build failed

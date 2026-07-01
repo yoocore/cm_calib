@@ -18,6 +18,14 @@ CM_INSTALL_SEARCH_ROOTS = (
     "D:/Program Files/CarMaker",
     "C:/Program Files/CarMaker",
 )
+
+
+def _debug(msg: str, *args: object) -> None:
+    """Print diagnostic message to stderr for frozen-mode troubleshooting."""
+    if getattr(sys, "frozen", False):
+        import sys as _sys
+        formatted = msg % args if args else msg
+        print(f"[cm_calib_dbg] {formatted}", file=_sys.stderr, flush=True)
 _LEGACY_CMAPI_SUBDIRS = (
     "Python/Lib/site-packages",
     "Python/Lib",
@@ -152,23 +160,28 @@ def _ensure_cm_bin_on_path(paths: list[Path], cm_install: Path) -> None:
 
 
 def _import_cmapi_direct(paths: list[Path]) -> bool:
-    """Load cmapi directly from discovered filesystem paths.
-
-    In frozen (PyInstaller) builds, ``import cmapi`` goes through the custom
-    FrozenImporter which may raise ``ModuleNotFoundError`` even though the
-    module exists on ``sys.path`` (e.g. because ``--exclude-module cmapi``
-    was used at build time).  This function bypasses the meta-path entirely
-    by using ``importlib.util.spec_from_file_location`` with the actual file
-    path, so PyInstaller's importer never sees the request.
-    """
+    """Load cmapi directly from discovered filesystem paths."""
     import importlib.util
+    import traceback
 
-    for search_path in paths:
+    _debug("_import_cmapi_direct: checking %d paths", len(paths))
+    for i, search_path in enumerate(paths):
         resolved = search_path.resolve()
+        _debug("  path[%d]: %s", i, resolved)
+        if not resolved.is_dir():
+            _debug("    → not a directory, skipping")
+            continue
+        try:
+            entries = [e.name for e in resolved.iterdir() if not e.name.startswith(".")]
+        except PermissionError:
+            entries = ["<PERM DENIED>"]
+        _debug("    children: %s", entries)
+
         # 1) Directory package: cmapi/__init__.py
         pkg_dir = resolved / "cmapi"
         if pkg_dir.is_dir():
             init_file = pkg_dir / "__init__.py"
+            _debug("    trying pkg: %s init=%s", pkg_dir, init_file.exists())
             if init_file.exists():
                 spec = importlib.util.spec_from_file_location(
                     "cmapi", str(init_file),
@@ -179,13 +192,17 @@ def _import_cmapi_direct(paths: list[Path]) -> bool:
                     sys.modules["cmapi"] = mod
                     try:
                         spec.loader.exec_module(mod)
+                        _debug("    ✓ pkg OK")
                         return True
-                    except Exception:
+                    except Exception as exc:
+                        _debug("    ✗ pkg fail: %s", exc)
+                        _debug("    trace:\n%s", "".join(traceback.format_exception_only(type(exc), exc)))
                         del sys.modules["cmapi"]
                         continue
 
         # 2) Compiled extension: cmapi.pyd
         pyd_file = resolved / "cmapi.pyd"
+        _debug("    trying .pyd: %s exists=%s", pyd_file, pyd_file.exists())
         if pyd_file.exists():
             spec = importlib.util.spec_from_file_location("cmapi", str(pyd_file))
             if spec is not None and spec.loader is not None:
@@ -193,13 +210,17 @@ def _import_cmapi_direct(paths: list[Path]) -> bool:
                 sys.modules["cmapi"] = mod
                 try:
                     spec.loader.exec_module(mod)
+                    _debug("    ✓ .pyd OK")
                     return True
-                except Exception:
+                except Exception as exc:
+                    _debug("    ✗ .pyd fail: %s", exc)
+                    _debug("    trace:\n%s", "".join(traceback.format_exception_only(type(exc), exc)))
                     del sys.modules["cmapi"]
                     continue
 
         # 3) Single-file module: cmapi.py
         py_file = resolved / "cmapi.py"
+        _debug("    trying .py: %s exists=%s", py_file, py_file.exists())
         if py_file.exists():
             spec = importlib.util.spec_from_file_location("cmapi", str(py_file))
             if spec is not None and spec.loader is not None:
@@ -207,11 +228,20 @@ def _import_cmapi_direct(paths: list[Path]) -> bool:
                 sys.modules["cmapi"] = mod
                 try:
                     spec.loader.exec_module(mod)
+                    _debug("    ✓ .py OK")
                     return True
-                except Exception:
+                except Exception as exc:
+                    _debug("    ✗ .py fail: %s", exc)
+                    _debug("    trace:\n%s", "".join(traceback.format_exception_only(type(exc), exc)))
                     del sys.modules["cmapi"]
                     continue
 
+        # 4) cmapi-*.whl (needs pip install — just note for diagnostics)
+        whls = list(resolved.glob("cmapi-*.whl"))
+        if whls:
+            _debug("    has .whl(s): %s", [w.name for w in whls])
+
+    _debug("  → all paths exhausted, cmapi NOT loaded")
     return False
 
 
@@ -230,6 +260,7 @@ def apply_cmapi_to_current_process(
         if as_text not in sys.path:
             sys.path.insert(0, as_text)
     if not paths:
+        _debug("apply_cmapi: no cmapi paths discovered, cm_install=%s", cm_install)
         return paths
 
     # In frozen mode, PyInstaller changes the DLL search path, so CarMaker's
@@ -238,13 +269,19 @@ def apply_cmapi_to_current_process(
     if getattr(sys, "frozen", False) and cm_install is not None:
         _ensure_cm_bin_on_path(paths, cm_install)
 
+    frozen = getattr(sys, "frozen", False)
+    _debug("apply_cmapi: frozen=%s paths=%s", frozen, [str(p) for p in paths])
     try:
         import cmapi  # noqa: F401
+        _debug("apply_cmapi: direct import cmapi OK")
     except ImportError:
-        if getattr(sys, "frozen", False):
-            # PyInstaller's FrozenImporter may block the import even when the
-            # module is on sys.path.  Try loading it via importlib directly.
-            _import_cmapi_direct(paths)
+        _debug("apply_cmapi: direct import cmapi FAILED")
+        if frozen:
+            ok = _import_cmapi_direct(paths)
+            _debug("apply_cmapi: _import_cmapi_direct returned %s", ok)
+            if ok:
+                import cmapi  # noqa: F401
+                _debug("apply_cmapi: re-import after direct load OK")
             return paths
         whls = list(Path(paths[0]).glob("cmapi-*.whl"))
         if whls:

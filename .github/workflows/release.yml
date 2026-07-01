@@ -1,0 +1,38 @@
+name: Release Pipeline
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: [self-hosted, windows, carmaker]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run full release pipeline
+        run: distribute\pipeline.bat
+        shell: cmd
+
+      - name: Upload EXE artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: CameraCalibration-EXE
+          path: distribute\dist_exe\
+          retention-days: 30
+
+      - name: Create GitHub Release
+        if: success()
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Camera Calibration ${{ github.ref_name }}
+          body_path: distribute\RELEASE_NOTES.md
+          files: |
+            distribute\dist_exe\CameraCalibration.exe
+            distribute\cm_calib_dist\
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

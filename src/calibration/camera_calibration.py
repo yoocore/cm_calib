@@ -201,7 +201,7 @@ class CameraCalibrator(DetectorMixin, ScoringMixin, AnnotationMixin, ScriptContr
         self.params = self._load_params(cfg["parameters"])
         self.params = self._order_params(self.params, cfg.get("optimization_order"))
 
-        self.settle_sec = float(cfg.get("settle_sec", 0.3))
+        self.settle_sec = float(cfg.get("settle_sec", 0.1))
         self.target_score = float(cfg.get("target_score", 5.0))
         acceptance_cfg = cfg.get("acceptance_criteria", {})
         self.bottleneck_board_score_max_threshold = float(

@@ -135,12 +135,26 @@ class ScoreCurveWindow(QWidget):
             candidate = seed
             for _ in range(depth):
                 candidate = candidate.parent
-            explore_dir = candidate / "explore"
+            if not candidate.is_dir():
+                continue
+
+            # New structure: explore_XX/ dirs directly under round dir
+            new_explore_dirs = sorted(
+                child for child in candidate.iterdir()
+                if child.is_dir() and child.name.startswith("explore_")
+            )
             refine_dir = candidate / "refine"
-            if explore_dir.is_dir() or refine_dir.is_dir():
+
+            # Old structure: explore/ dir containing start_XX/ subdirs
+            old_explore_dir = candidate / "explore"
+
+            if new_explore_dirs or refine_dir.is_dir() or old_explore_dir.is_dir():
                 results: list[Path] = []
-                if explore_dir.is_dir():
-                    for run_dir in sorted(explore_dir.iterdir()):
+                if new_explore_dirs:
+                    for run_dir in new_explore_dirs:
+                        self._add_result_jsons(run_dir, results)
+                elif old_explore_dir.is_dir():
+                    for run_dir in sorted(old_explore_dir.iterdir()):
                         if run_dir.is_dir() and run_dir.name.startswith("start_"):
                             self._add_result_jsons(run_dir, results)
                 if refine_dir.is_dir():

@@ -243,6 +243,50 @@ class OrchestrationMixin:
     def _camera_summary_name(self) -> str:
         return _camera_name_from_output_dir(self.output_dir)
 
+    def _build_score_statistics(
+        self,
+        best_total_detail: TotalScoreDetail,
+    ) -> Dict[str, object]:
+        """Build quick score statistics for summary."""
+        compared_scores = [
+            s.total_score
+            for s in best_total_detail.board_scores
+            if s.compared
+        ]
+
+        if not compared_scores:
+            return {
+                "min_board_score": None,
+                "max_board_score": None,
+                "avg_board_score": None,
+                "median_board_score": None,
+                "best_board_id": None,
+                "worst_board_id": None,
+            }
+
+        min_score = min(compared_scores)
+        max_score = max(compared_scores)
+        avg_score = sum(compared_scores) / len(compared_scores)
+        median_score = float(np.median(np.array(compared_scores)))
+
+        best_board = next(
+            s for s in best_total_detail.board_scores
+            if s.compared and s.total_score == max_score
+        )
+        worst_board = next(
+            s for s in best_total_detail.board_scores
+            if s.compared and s.total_score == min_score
+        )
+
+        return {
+            "min_board_score": min_score,
+            "max_board_score": max_score,
+            "avg_board_score": avg_score,
+            "median_board_score": median_score,
+            "best_board_id": best_board.board_id,
+            "worst_board_id": worst_board.board_id,
+        }
+
     def _build_calibration_summary(
         self,
         *,
@@ -288,6 +332,7 @@ class OrchestrationMixin:
             "compared_board_count": best_total_detail.compared_board_count,
             "best_image": str(best_img),
             "best_score_image": str(best_score_image) if best_score_image else None,
+            "score_statistics": self._build_score_statistics(best_total_detail),
         }
 
     def _print_calibration_summary(self, summary: Dict[str, object]) -> None:
@@ -302,6 +347,19 @@ class OrchestrationMixin:
             f"stop_reason={summary['stop_reason']} "
             f"passed={summary['passed']}"
         )
+
+        score_stats = summary.get('score_statistics', {})
+        if score_stats and score_stats.get('max_board_score') is not None:
+            print(
+                "Score statistics: "
+                f"min={float(score_stats['min_board_score']):.2f} "
+                f"max={float(score_stats['max_board_score']):.2f} "
+                f"avg={float(score_stats['avg_board_score']):.2f} "
+                f"median={float(score_stats['median_board_score']):.2f} "
+                f"best_board={score_stats['best_board_id']} "
+                f"worst_board={score_stats['worst_board_id']}"
+            )
+
         print(
             "Start values:",
             _format_scalar_value_map(dict(summary["start_values"])),
@@ -310,6 +368,55 @@ class OrchestrationMixin:
             "Final values:",
             _format_scalar_value_map(dict(summary["final_values"])),
         )
+
+    def _build_score_breakdown(
+        self,
+        best_total_detail: TotalScoreDetail,
+        best_score: float,
+    ) -> Dict[str, object]:
+        """Build detailed score breakdown for user transparency."""
+        board_map = {b.board_id: b for b in self.boards}
+        weighted_scores: Dict[str, Dict[str, object]] = {}
+        total_weight = 0.0
+        weighted_sum = 0.0
+        isolated_outlier_set = set(best_total_detail.isolated_outlier_boards)
+
+        for score in best_total_detail.board_scores:
+            if not score.compared:
+                continue
+
+            board = board_map.get(score.board_id)
+            if board is None:
+                continue
+
+            weight = board.weight
+            effective_weight = weight
+            weighted_contribution = effective_weight * score.total_score
+
+            weighted_scores[score.board_id] = {
+                "raw_score": score.total_score,
+                "weight": weight,
+                "effective_weight": effective_weight,
+                "weighted_contribution": weighted_contribution,
+                "is_isolated_outlier": score.board_id in isolated_outlier_set,
+            }
+
+            total_weight += effective_weight
+            if score.board_id not in isolated_outlier_set:
+                weighted_sum += weighted_contribution
+
+        weighted_average = weighted_sum / total_weight if total_weight > 0 else 0.0
+        degrade_contribution = best_total_detail.degrade_penalty
+
+        return {
+            "weighted_scores": weighted_scores,
+            "total_weight": total_weight,
+            "weighted_average": weighted_average,
+            "degrade_contribution": degrade_contribution,
+            "final_total_score": best_score,
+            "isolated_outlier_boards": best_total_detail.isolated_outlier_boards,
+            "degraded_boards": best_total_detail.degraded_boards,
+        }
 
     def _build_result_payload(
         self,
@@ -385,6 +492,7 @@ class OrchestrationMixin:
                     }
                     for s in best_total_detail.board_scores
                 ],
+                "score_breakdown": self._build_score_breakdown(best_total_detail, best_score),
             },
             "best_image": str(best_img),
             "best_score_image": str(best_score_image) if best_score_image else None,
@@ -3315,7 +3423,7 @@ def _build_multi_start_run_configs(
 
     for start_index in range(start_count):
         run_cfg = copy.deepcopy(cfg)
-        run_output_dir = root_output_dir / f"start_{start_index:02d}"
+        run_output_dir = root_output_dir / f"explore_{start_index:02d}"
         run_cfg["output_dir"] = str(run_output_dir)
         _set_run_local_script_control_result_path(run_cfg, run_output_dir)
         if max_iters_override is not None:
@@ -3740,10 +3848,10 @@ def _run_explore_then_refine_campaign(
     if explore_max_iters < 0:
         raise ValueError("explore-then-refine mode requires positive explore iterations")
 
-    campaign_root = output_root_dir or _build_isolated_output_dir(
-        "campaign", camera_parent=camera_name, project_root=project_root
+    round_dir = output_root_dir or _build_isolated_output_dir(
+        "round", camera_parent=camera_name, project_root=project_root
     )
-    campaign_root.mkdir(parents=True, exist_ok=True)
+    round_dir.mkdir(parents=True, exist_ok=True)
 
     print(
         "Explore-then-refine campaign: "
@@ -3752,7 +3860,7 @@ def _run_explore_then_refine_campaign(
         f"refine_iters={refine_max_iters or int(cfg.get('max_iters', 0))}, "
         f"jitter_steps={jitter_steps}, "
         f"seed={seed}, "
-        f"campaign_dir={campaign_root}"
+        f"round_dir={round_dir}"
     )
 
     explore_summary = _run_multi_start_campaign(
@@ -3764,7 +3872,7 @@ def _run_explore_then_refine_campaign(
         jitter_steps=jitter_steps,
         seed=seed,
         max_iters_override=explore_max_iters,
-        output_root_dir=campaign_root / "explore",
+        output_root_dir=round_dir,
         round_index=round_index,
         round_count=round_count,
         overall_total_iters=overall_total_iters,
@@ -3783,7 +3891,7 @@ def _run_explore_then_refine_campaign(
     if skip_refine_payload is not None:
         summary = {
             "config": str(config_path),
-            "campaign_output_dir": str(campaign_root),
+            "campaign_output_dir": str(round_dir),
             "explore": {
                 "output_dir": str(explore_summary["output_dir"]),
                 "summary_json": str(Path(explore_summary["output_dir"]) / "multistart_summary.json"),
@@ -3804,7 +3912,7 @@ def _run_explore_then_refine_campaign(
         }
         summary["best_run"] = dict(best_run)
         summary["best_run"]["stage"] = "explore"
-        summary_path = campaign_root / "campaign_summary.json"
+        summary_path = round_dir / "campaign_summary.json"
         summary_path.write_text(json.dumps(_round_floats(summary, skip_keys={"best_values", "seed_values"}), ensure_ascii=False, indent=2), encoding="utf-8")
         print(
             "Refine skipped: "
@@ -3820,7 +3928,7 @@ def _run_explore_then_refine_campaign(
         return summary
 
     refine_cfg = _cfg_with_initial_values(cfg, best_values)
-    refine_output_dir = campaign_root / "refine"
+    refine_output_dir = round_dir / "refine"
     refine_cfg["output_dir"] = str(refine_output_dir)
     _set_run_local_script_control_result_path(refine_cfg, refine_output_dir)
     if refine_max_iters is not None:
@@ -3846,7 +3954,7 @@ def _run_explore_then_refine_campaign(
 
     summary = {
         "config": str(config_path),
-        "campaign_output_dir": str(campaign_root),
+        "campaign_output_dir": str(round_dir),
         "explore": {
             "output_dir": str(explore_summary["output_dir"]),
             "summary_json": str(Path(explore_summary["output_dir"]) / "multistart_summary.json"),
@@ -3872,7 +3980,7 @@ def _run_explore_then_refine_campaign(
         },
     }
     summary["best_run"] = _select_campaign_best_run(best_run, summary["refine"])
-    summary_path = campaign_root / "campaign_summary.json"
+    summary_path = round_dir / "campaign_summary.json"
     summary_path.write_text(json.dumps(_round_floats(summary, skip_keys={"best_values", "seed_values"}), ensure_ascii=False, indent=2), encoding="utf-8")
 
     best_run_overall = summary["best_run"]
@@ -4141,7 +4249,7 @@ def _run_plain_optimize_rounds(
 
     for round_index in range(round_count):
         round_no = round_index + 1
-        round_output_dir = rounds_root / f"round_{round_no:02d}" / "run"
+        round_output_dir = rounds_root / f"round_{round_no:02d}"
         print(
             f"Plain optimize rounds: round={round_no}/{round_count} "
             f"output_dir={round_output_dir}"
@@ -4286,7 +4394,7 @@ def _run_explore_then_refine_rounds(
 
     for round_index in range(round_count):
         round_no = round_index + 1
-        round_output_dir = rounds_root / f"round_{round_no:02d}" / "campaign"
+        round_output_dir = rounds_root / f"round_{round_no:02d}"
         round_seed = int(seed) + round_index
         print(
             f"Explore-then-refine rounds: round={round_no}/{round_count} "

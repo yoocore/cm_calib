@@ -3423,7 +3423,7 @@ def _build_multi_start_run_configs(
 
     for start_index in range(start_count):
         run_cfg = copy.deepcopy(cfg)
-        run_output_dir = root_output_dir / f"start_{start_index:02d}"
+        run_output_dir = root_output_dir / f"explore_{start_index:02d}"
         run_cfg["output_dir"] = str(run_output_dir)
         _set_run_local_script_control_result_path(run_cfg, run_output_dir)
         if max_iters_override is not None:
@@ -3848,10 +3848,10 @@ def _run_explore_then_refine_campaign(
     if explore_max_iters < 0:
         raise ValueError("explore-then-refine mode requires positive explore iterations")
 
-    campaign_root = output_root_dir or _build_isolated_output_dir(
-        "campaign", camera_parent=camera_name, project_root=project_root
+    round_dir = output_root_dir or _build_isolated_output_dir(
+        "round", camera_parent=camera_name, project_root=project_root
     )
-    campaign_root.mkdir(parents=True, exist_ok=True)
+    round_dir.mkdir(parents=True, exist_ok=True)
 
     print(
         "Explore-then-refine campaign: "
@@ -3860,7 +3860,7 @@ def _run_explore_then_refine_campaign(
         f"refine_iters={refine_max_iters or int(cfg.get('max_iters', 0))}, "
         f"jitter_steps={jitter_steps}, "
         f"seed={seed}, "
-        f"campaign_dir={campaign_root}"
+        f"round_dir={round_dir}"
     )
 
     explore_summary = _run_multi_start_campaign(
@@ -3872,7 +3872,7 @@ def _run_explore_then_refine_campaign(
         jitter_steps=jitter_steps,
         seed=seed,
         max_iters_override=explore_max_iters,
-        output_root_dir=campaign_root / "explore",
+        output_root_dir=round_dir,
         round_index=round_index,
         round_count=round_count,
         overall_total_iters=overall_total_iters,
@@ -3891,7 +3891,7 @@ def _run_explore_then_refine_campaign(
     if skip_refine_payload is not None:
         summary = {
             "config": str(config_path),
-            "campaign_output_dir": str(campaign_root),
+            "campaign_output_dir": str(round_dir),
             "explore": {
                 "output_dir": str(explore_summary["output_dir"]),
                 "summary_json": str(Path(explore_summary["output_dir"]) / "multistart_summary.json"),
@@ -3912,7 +3912,7 @@ def _run_explore_then_refine_campaign(
         }
         summary["best_run"] = dict(best_run)
         summary["best_run"]["stage"] = "explore"
-        summary_path = campaign_root / "campaign_summary.json"
+        summary_path = round_dir / "campaign_summary.json"
         summary_path.write_text(json.dumps(_round_floats(summary, skip_keys={"best_values", "seed_values"}), ensure_ascii=False, indent=2), encoding="utf-8")
         print(
             "Refine skipped: "
@@ -3928,7 +3928,7 @@ def _run_explore_then_refine_campaign(
         return summary
 
     refine_cfg = _cfg_with_initial_values(cfg, best_values)
-    refine_output_dir = campaign_root / "refine"
+    refine_output_dir = round_dir / "refine"
     refine_cfg["output_dir"] = str(refine_output_dir)
     _set_run_local_script_control_result_path(refine_cfg, refine_output_dir)
     if refine_max_iters is not None:
@@ -3954,7 +3954,7 @@ def _run_explore_then_refine_campaign(
 
     summary = {
         "config": str(config_path),
-        "campaign_output_dir": str(campaign_root),
+        "campaign_output_dir": str(round_dir),
         "explore": {
             "output_dir": str(explore_summary["output_dir"]),
             "summary_json": str(Path(explore_summary["output_dir"]) / "multistart_summary.json"),
@@ -3980,7 +3980,7 @@ def _run_explore_then_refine_campaign(
         },
     }
     summary["best_run"] = _select_campaign_best_run(best_run, summary["refine"])
-    summary_path = campaign_root / "campaign_summary.json"
+    summary_path = round_dir / "campaign_summary.json"
     summary_path.write_text(json.dumps(_round_floats(summary, skip_keys={"best_values", "seed_values"}), ensure_ascii=False, indent=2), encoding="utf-8")
 
     best_run_overall = summary["best_run"]
@@ -4249,7 +4249,7 @@ def _run_plain_optimize_rounds(
 
     for round_index in range(round_count):
         round_no = round_index + 1
-        round_output_dir = rounds_root / f"round_{round_no:02d}" / "run"
+        round_output_dir = rounds_root / f"round_{round_no:02d}"
         print(
             f"Plain optimize rounds: round={round_no}/{round_count} "
             f"output_dir={round_output_dir}"
@@ -4394,7 +4394,7 @@ def _run_explore_then_refine_rounds(
 
     for round_index in range(round_count):
         round_no = round_index + 1
-        round_output_dir = rounds_root / f"round_{round_no:02d}" / "campaign"
+        round_output_dir = rounds_root / f"round_{round_no:02d}"
         round_seed = int(seed) + round_index
         print(
             f"Explore-then-refine rounds: round={round_no}/{round_count} "

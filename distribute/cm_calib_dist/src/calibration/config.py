@@ -130,7 +130,7 @@ def _default_bootstrap_config() -> dict:
         "stop_after_first_accepted_direction": True,
         "progress_flush_every": 1,
         "settle_sec": 0.1,
-        "target_score": None,  # auto: 0.3 * board_count at runtime
+        "target_score": 5.0,
         "acceptance_criteria": {
             "bottleneck_board_score_max_threshold": 4.0,
             "bottleneck_board_score_avg_threshold": 2.5,

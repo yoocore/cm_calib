@@ -4,7 +4,7 @@ setlocal enabledelayedexpansion
 
 set "SCRIPT_DIR=%~dp0"
 set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
-set "DIST_DIR=%SCRIPT_DIR%\dist"
+set "DIST_DIR=%SCRIPT_DIR%\cm_calib_dist"
 set "LOG_FILE=%SCRIPT_DIR%\package.log"
 set "DIST_SRC=%SCRIPT_DIR%"
 set "PROJECT_DIR=%SCRIPT_DIR%\.."

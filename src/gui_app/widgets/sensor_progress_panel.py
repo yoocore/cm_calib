@@ -81,7 +81,7 @@ class SensorProgressPanel(QGroupBox):
         header = self.sensor_progress_tree.header()
         modes = [
             (0, QHeaderView.Interactive, 90),  # Sensor
-            (1, QHeaderView.Interactive, 60),   # Status
+            (1, QHeaderView.Interactive, 65),   # Status
             (2, QHeaderView.Interactive, 80),   # Iteration
             (3, QHeaderView.Interactive, 70),   # Elapsed
             (4, QHeaderView.Interactive, 90),  # Progress (bar)

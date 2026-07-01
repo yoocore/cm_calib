@@ -1,12 +1,33 @@
+# Python
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# Build artifacts
+distribute/dist_exe/
+distribute/build_cache/
+distribute/cm_calib_dist/
+distribute/package.log
+
+# Git patch rejects
+*.rej
+
+# Backup
 *.bak.json
+
+# Data / simulation output
 data/
-.codegraph/daemon.pid
+SimOutput/
+stress_test_summary.json
+
+# AI tools (local only)
+.codegraph/
+.opencode/
+.qoder/
 .mimocode/
 .omo/
-SimOutput/
-.qoder/
-stress_test_summary.json
-distribute/build_cache/
+.claude/
+
+# OS
+Thumbs.db
+.DS_Store

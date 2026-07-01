@@ -2411,6 +2411,8 @@ class CameraCalibrator(DetectorMixin, ScoringMixin, AnnotationMixin, ScriptContr
             return False, "no_comparable_boards"
         if candidate_detail.has_critical_degrade:
             return False, "critical_degrade"
+        if candidate_score <= self.target_score:
+            return True, "target_score_reached"
         if candidate_score + self.min_improve < baseline_score:
             return True, "total_score_improved"
 

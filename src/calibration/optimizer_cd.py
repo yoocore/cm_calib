@@ -472,6 +472,12 @@ class CoordinateDescentMixin:
         limit = max_iters if max_iters is not None else self.max_iters
         self._ensure_live_log()
         self._historical_best_snapshot = None
+        if not hasattr(self, '_pref_dir_stagnation'):
+            self._pref_dir_stagnation = {}
+        if not hasattr(self, '_param_freeze_count'):
+            self._param_freeze_count = {}
+        if not hasattr(self, '_frozen_params'):
+            self._frozen_params = set()
         if getattr(self, 'use_gauss_newton', False):
             self._gn_acc = GaussNewtonAccumulator()
         if self.real_detections is None:
@@ -601,11 +607,18 @@ class CoordinateDescentMixin:
                 )
 
             for p in ordered_params:
+                if p.name in self._frozen_params:
+                    continue
                 preferred_direction = self.preferred_directions.get(p.name, 1.0)
+                if self._pref_dir_stagnation.get(p.name, 0) >= 3:
+                    preferred_direction = -preferred_direction
+                    self.preferred_directions[p.name] = preferred_direction
+                    self._pref_dir_stagnation[p.name] = 0
                 trial_directions: List[float] = [preferred_direction, -preferred_direction]
                 best_param_move: Optional[Dict[str, object]] = None
                 seen_trial_values: set[float] = set()
                 stop_param_search = False
+                any_accepted = False
                 effective_step = self._strategy_effective_step(p)
 
                 if getattr(self, "jitter_eps", 0.0) > 0:
@@ -699,26 +712,32 @@ class CoordinateDescentMixin:
 
                         if accepted:
                             self.preferred_directions[p.name] = direction
+                            any_accepted = True
 
                         it += 1
                         if it > limit:
                             stop_param_search = True
                             break
-                        if (
-                            accepted
-                            and self.stop_after_first_accepted_direction
-                            and not self._is_joint_exploration_param(p.name)
-                        ):
-                            stop_param_search = True
-                            break
+
+                    if any_accepted and self.stop_after_first_accepted_direction and not self._is_joint_exploration_param(p.name):
+                        stop_param_search = True
 
                     if stop_param_search:
                         break
 
                 if best_param_move is None:
                     p.step = max(p.min_step, p.step * self.step_decay)
+                    self._pref_dir_stagnation[p.name] = self._pref_dir_stagnation.get(p.name, 0) + 1
+                    if p.step <= p.min_step + 1e-12:
+                        self._param_freeze_count[p.name] = self._param_freeze_count.get(p.name, 0) + 1
+                        if self._param_freeze_count[p.name] >= 3:
+                            self._frozen_params.add(p.name)
+                    else:
+                        self._param_freeze_count[p.name] = 0
                 else:
                     candidate_moves.append(best_param_move)
+                    self._pref_dir_stagnation[p.name] = 0
+                    self._param_freeze_count[p.name] = 0
 
                 if it > limit:
                     break

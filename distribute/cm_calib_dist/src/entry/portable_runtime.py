@@ -136,6 +136,21 @@ def build_cmapi_pythonpath(
     return combined, paths
 
 
+def _ensure_cm_bin_on_path(paths: list[Path], cm_install: Path) -> None:
+    """Add CarMaker Python + bin directories to PATH for DLL resolution in frozen mode."""
+    extra: list[str] = []
+    for p in paths:
+        extra.append(str(p))
+    bin_dir = cm_install / "bin"
+    if bin_dir.is_dir():
+        extra.append(str(bin_dir))
+    if extra:
+        current = os.environ.get("PATH", "")
+        new_parts = [e for e in extra if e.casefold() not in current.casefold()]
+        if new_parts:
+            os.environ["PATH"] = os.pathsep.join(new_parts) + os.pathsep + current
+
+
 def apply_cmapi_to_current_process(
     cm_install: Path | None = None,
     *,
@@ -152,12 +167,16 @@ def apply_cmapi_to_current_process(
             sys.path.insert(0, as_text)
     if not paths:
         return paths
+
+    # In frozen mode, PyInstaller changes the DLL search path, so CarMaker's
+    # .pyd modules may fail to load because their DLL dependencies (in bin/)
+    # aren't found. Add both the Python directory and bin/ to PATH.
+    if getattr(sys, "frozen", False) and cm_install is not None:
+        _ensure_cm_bin_on_path(paths, cm_install)
+
     try:
         import cmapi  # noqa: F401
     except ImportError:
-        # In frozen (PyInstaller) builds, sys.executable points to the exe
-        # itself, not python.exe. Running pip with it would recursively
-        # launch the exe again, causing an infinite restart loop.
         if getattr(sys, "frozen", False):
             return paths
         whls = list(Path(paths[0]).glob("cmapi-*.whl"))

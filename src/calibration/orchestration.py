@@ -1647,6 +1647,7 @@ def _resolve_vehicle_writeback_context(config_path: Path, cfg: dict) -> Optional
     vehicle_path: Optional[Path] = None
     testrun_name = str(payload.get("testrun", "")).strip() or None
     sensor_name = str(payload.get("sensor_name", "")).strip() or None
+    runtime_context: Optional[dict] = None
 
     if vehicle_key:
         candidate = Path(vehicle_key.replace("\\", "/"))
@@ -1668,8 +1669,14 @@ def _resolve_vehicle_writeback_context(config_path: Path, cfg: dict) -> Optional
             testrun_name = testrun_name or runtime_context.get("testrun")
 
     if vehicle_path is None:
-        print(f"[writeback] SKIPPED: vehicle_path is None, probe result was: {runtime_context}")
-        print(f"Skipped vehicle writeback: unable to resolve vehicle path for {config_path}")
+        print(
+            "WARNING: Vehicle writeback skipped — "
+            f"vehicle path could not be resolved (config={config_path}, "
+            f"probe={runtime_context}). "
+            "The best calibration results will NOT be saved to the vehicle file. "
+            "Next calibration will start from the original vehicle defaults, "
+            "not from this run's best values."
+        )
         return None
 
     context = {
@@ -2014,6 +2021,73 @@ def _write_best_values_to_vehicle_config(
         "testrun": context.get("testrun"),
         "vehicle_key": context.get("vehicle_key"),
     }
+
+def _verify_vehicle_writeback(
+    config_path: Path,
+    cfg: dict,
+    camera_name: str,
+    wb_result: dict,
+    expected_values: Dict[str, float],
+    project_root: Optional[Path] = None,
+) -> None:
+    """Read back from the vehicle file and verify writeback values are readable.
+
+    Prints WARNING with details if readback fails or values differ.
+    Does NOT raise (best-effort verification).
+    """
+    vehicle_path = Path(wb_result["vehicle_path"])
+    sensor_name = wb_result.get("sensor_name")
+    if not vehicle_path.exists():
+        print(
+            f"WARNING: Vehicle writeback readback FAILED — "
+            f"vehicle file disappeared after write: {vehicle_path}"
+        )
+        return
+
+    try:
+        read_values = _read_sensor_values_from_vehicle(
+            vehicle_path, camera_name,
+            sensor_name_override=sensor_name or None,
+        )
+    except Exception as exc:
+        print(
+            f"WARNING: Vehicle writeback readback FAILED — "
+            f"could not read back from {vehicle_path}: {exc}"
+        )
+        return
+
+    if read_values is None:
+        print(
+            f"WARNING: Vehicle writeback readback FAILED — "
+            f"_read_sensor_values_from_vehicle returned None for {vehicle_path}"
+        )
+        return
+
+    mismatches = []
+    for name in ("yaw", "pitch", "roll", "pos_x", "pos_y", "pos_z",
+                  "lens_fov", "lens_scale", "lens_offset_x", "lens_offset_y"):
+        if name not in expected_values:
+            continue
+        if name not in read_values:
+            mismatches.append(f"{name}: written={expected_values[name]}, not found in readback")
+            continue
+        expected = round(expected_values[name], 4)
+        actual = round(read_values[name], 4)
+        if abs(actual - expected) > 1e-9:
+            mismatches.append(f"{name}: written={expected}, readback={actual}")
+
+    if mismatches:
+        print(
+            f"WARNING: Vehicle writeback readback MISMATCH — "
+            f"path={vehicle_path}, sensor={sensor_name}: "
+            f"{'; '.join(mismatches)}"
+        )
+    else:
+        print(
+            f"Vehicle writeback readback OK: path={vehicle_path}, "
+            f"sensor={sensor_name}, values={len(expected_values)}"
+        )
+
 
 def _resolve_round_strategy_autotune_policy(cfg: dict) -> dict:
     default_unlock_parameter_step_multipliers = {

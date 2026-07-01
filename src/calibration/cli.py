@@ -25,6 +25,7 @@ from src.calibration.orchestration import (
     _resolve_config_output_dir,
     _run_explore_then_refine_rounds,
     _run_plain_optimize_rounds,
+    _verify_vehicle_writeback,
     _write_best_values_to_vehicle_config,
     _write_camera_history_summary,
     _write_camera_history_summary_compact,
@@ -360,7 +361,12 @@ def main() -> None:
             cfg.setdefault("vehicle_writeback", {}).setdefault("vehicle", str(runtime_context["vehicle_path"]))
             print(f"[writeback] Vehicle path cached from probe: {runtime_context['vehicle_path']}")
         else:
-            print(f"[writeback] Vehicle path NOT cached: probe returned {runtime_context}")
+            print(
+                "WARNING: Vehicle writeback will NOT be available — "
+                f"vehicle path probe returned {runtime_context}. "
+                "Calibration results will not be saved to the vehicle file. "
+                "Next calibration will start from original vehicle defaults."
+            )
         print(f"Config initial values AFTER vehicle DDE read for {camera_name}:")
         for name, param in sorted(cfg.get("parameters", {}).items()):
             if "initial" in param:
@@ -425,12 +431,23 @@ def main() -> None:
             )
 
         if best_run:
-            _write_best_values_to_vehicle_config(
+            wb_result = _write_best_values_to_vehicle_config(
                 config_path, cfg, camera_name,
                 float(best_run.get("best_score", 999)),
                 best_run.get("best_values", {}),
                 project_root=root,
             )
+            if wb_result is None:
+                print(
+                    "WARNING: Vehicle writeback failed — results will NOT persist. "
+                    "Next calibration will start from original vehicle defaults."
+                )
+            else:
+                _verify_vehicle_writeback(
+                    config_path, cfg, camera_name, wb_result,
+                    best_run.get("best_values", {}),
+                    project_root=root,
+                )
         return
 
 
@@ -561,7 +578,7 @@ def main() -> None:
             )
 
         result = calib.optimize()
-        _write_best_values_to_vehicle_config(
+        wb_result = _write_best_values_to_vehicle_config(
             config_path,
             cfg,
             camera_name,
@@ -569,6 +586,17 @@ def main() -> None:
             result["best_values"],
             project_root=root,
         )
+        if wb_result is None:
+            print(
+                "WARNING: Vehicle writeback failed — results will NOT persist. "
+                "Next calibration will start from original vehicle defaults."
+            )
+        else:
+            _verify_vehicle_writeback(
+                config_path, cfg, camera_name, wb_result,
+                result["best_values"],
+                project_root=root,
+            )
         if marker_path is not None and marker_payload is not None:
             marker_payload.update(
                 {

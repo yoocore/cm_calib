@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt, Signal
@@ -18,16 +17,16 @@ from PySide6.QtWidgets import (
 )
 
 
-
-
-def _svg_path(filename: str) -> str:
-    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-        return str(Path(sys._MEIPASS) / "src" / "gui_app" / filename)
-    return str(Path(__file__).resolve().parent.parent / filename)
-
-
-_ARROW_UP_SVG = _svg_path("arrow_up.svg")
-_ARROW_DOWN_SVG = _svg_path("arrow_down.svg")
+_ARROW_UP_DATA = (
+    "data:image/svg+xml,"
+    "%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E"
+    "%3Cpath d='M8 5l-4 4h8z' fill='%23475569'/%3E%3C/svg%3E"
+)
+_ARROW_DOWN_DATA = (
+    "data:image/svg+xml,"
+    "%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E"
+    "%3Cpath d='M4 7l4 4 4-4z' fill='%23475569'/%3E%3C/svg%3E"
+)
 
 
 _SECTION_GROUP_STYLE = (
@@ -99,12 +98,12 @@ _CONTROL_STYLE = (
     "background: #f1f5f9;"
     "}"
     "QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {"
-    f"image: url({_ARROW_UP_SVG});"
+    f"image: url({_ARROW_UP_DATA});"
     "width: 8px;"
     "height: 8px;"
     "}"
     "QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {"
-    f"image: url({_ARROW_DOWN_SVG});"
+    f"image: url({_ARROW_DOWN_DATA});"
     "width: 8px;"
     "height: 8px;"
     "}"

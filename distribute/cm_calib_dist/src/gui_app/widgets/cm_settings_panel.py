@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
@@ -32,16 +31,17 @@ _DEFAULT_BROWSE_ROOT = "C:/CM_Projects"
 _GREEN = QBrush(QColor("#4caf50"))
 _RED = QBrush(QColor("#e53935"))
 
-
-def _svg_path(filename: str) -> str:
-    """Resolve path to a bundled SVG, works in dev and PyInstaller exe."""
-    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-        return str(Path(sys._MEIPASS) / "src" / "gui_app" / filename)
-    return str(Path(__file__).resolve().parent.parent / filename)
-
-
-_CHECKBOX_SVG = _svg_path("checkbox_checked.svg")
-_DROPDOWN_ARROW_SVG = _svg_path("dropdown_arrow.svg")
+_CHECKBOX_CHECKED_DATA = (
+    "data:image/svg+xml,"
+    "%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E"
+    "%3Cpath d='M6 10.8L3.2 8l-1.1 1.1L6 13 14 5l-1.1-1.1z' fill='%23333'/%3E%3C/svg%3E"
+)
+_DROPDOWN_ARROW_DATA = (
+    "data:image/svg+xml,"
+    "%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E"
+    "%3Cpath d='M4 6l4 4 4-4' fill='none' stroke='%23475569' stroke-width='1.5'"
+    " stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"
+)
 
 
 _SECTION_GROUP_STYLE = (
@@ -112,7 +112,7 @@ _CONTROL_STYLE = (
     "border-bottom-right-radius: 6px;"
     "}"
     "QComboBox::down-arrow {"
-    f"image: url({_DROPDOWN_ARROW_SVG});"
+    f"image: url({_DROPDOWN_ARROW_DATA});"
     "width: 10px;"
     "height: 10px;"
     "}"
@@ -152,7 +152,7 @@ _CHECKBOX_STYLE = (
     "    background-color: #ffffff;"
     "}"
     "QListWidget::indicator:checked {"
-    f"    image: url({_CHECKBOX_SVG});"
+    f"    image: url({_CHECKBOX_CHECKED_DATA});"
     "    border: 2px solid #6b7280;"
     "    border-radius: 3px;"
     "    background-color: #ffffff;"

@@ -364,7 +364,6 @@ class CameraCalibrator(DetectorMixin, ScoringMixin, AnnotationMixin, ScriptContr
         self.jitter_eps = float(cfg.get("jitter_eps", 0.01))
         self.jitter_decay = float(cfg.get("jitter_decay", 0.98))
         self.hybrid_phase1_iters = int(cfg.get("hybrid_phase1_iters", 15))
-        self.curriculum_annealing = bool(cfg.get("curriculum_annealing", False))
         self.parabolic_refinement = bool(cfg.get("parabolic_refinement", False))
         self.keep_aspect_resize = bool(cfg.get("keep_aspect_resize", True))
         self.auto_generate_best_score_image = bool(
@@ -2505,15 +2504,6 @@ class CameraCalibrator(DetectorMixin, ScoringMixin, AnnotationMixin, ScriptContr
                 self.param_order_index.get(param.name, len(self.param_order_index)),
             ),
         )
-        if (hasattr(self, 'curriculum_enabled') and self.curriculum_enabled
-                and len(self.params) > 6):
-            progress = self._total_iteration_count / max(1, self.max_iters)
-            for phase in self.curriculum_phases:
-                if progress <= phase.get("progress_max", 1.0):
-                    active = phase.get("active_params")
-                    if active is not None:
-                        params = [p for p in params if p.name in active]
-                    break
         return params
 
 

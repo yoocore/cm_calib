@@ -193,14 +193,6 @@ def _default_bootstrap_config() -> dict:
         },
         "optimization_order": _default_parameter_order(),
         "parameters": _default_parameter_config(),
-        "curriculum": {
-            "enabled": True,
-            "phases": [
-                {"progress_max": 0.50, "active_params": ["lens_fov", "lens_offset_x", "lens_offset_y"]},
-                {"progress_max": 0.80, "active_params": ["lens_fov", "lens_offset_x", "lens_offset_y", "yaw", "pitch"]},
-                {"progress_max": 1.00, "active_params": None},
-            ],
-        }
     }
 
 

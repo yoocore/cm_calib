@@ -32,6 +32,7 @@ echo [1/2] Building EXE (this may take several minutes)...
     --noconfirm ^
     --onedir ^
     --windowed ^
+    --strip ^
     --name "CameraCalibration" ^
     --distpath "%BUILD_DIR%" ^
     --workpath "%CACHE_DIR%\pyibuild" ^
@@ -90,6 +91,35 @@ move "%BUILD_DIR%\CameraCalibration\_internal" "%DIST_DIR%\_internal" >nul
 if exist "%DIST_DIR%\CameraCalibration.exe.old" del "%DIST_DIR%\CameraCalibration.exe.old" 2>nul
 if exist "%DIST_DIR%\_internal.old" rmdir /s /q "%DIST_DIR%\_internal.old" 2>nul
 rmdir /s /q "%BUILD_DIR%" 2>nul
+
+:: Post-build cleanup — remove unnecessary native binaries
+echo [3/3] Post-build cleanup...
+
+:: QtQml/QtQuick native DLLs (not used by app, but hook collects them)
+del "%DIST_DIR%\_internal\PySide6\Qt6Quick.dll"    2>nul
+del "%DIST_DIR%\_internal\PySide6\Qt6Qml.dll"      2>nul
+del "%DIST_DIR%\_internal\PySide6\Qt6QmlMeta.dll"  2>nul
+del "%DIST_DIR%\_internal\PySide6\Qt6QmlModels.dll" 2>nul
+del "%DIST_DIR%\_internal\PySide6\Qt6QmlWorkerScript.dll" 2>nul
+del "%DIST_DIR%\_internal\PySide6\Qt6Pdf.dll"             2>nul
+del "%DIST_DIR%\_internal\PySide6\Qt6VirtualKeyboard.dll"  2>nul
+del "%DIST_DIR%\_internal\PySide6\Qt6Test.dll"             2>nul
+del "%DIST_DIR%\_internal\PySide6\QtTest.pyd"              2>nul
+
+:: Software OpenGL fallback (20MB) — not needed on modern GPUs
+del "%DIST_DIR%\_internal\PySide6\opengl32sw.dll" 2>nul
+
+:: Trim translations — keep only zh_CN + en (6.6MB→~200KB)
+if exist "%DIST_DIR%\_internal\PySide6\translations" (
+    set "KEEP_TRANS=%TEMP%\cm_calib_trans_%RANDOM%"
+    mkdir "!KEEP_TRANS!" 2>nul
+    move "%DIST_DIR%\_internal\PySide6\translations\*_zh_CN.qm" "!KEEP_TRANS!\" >nul 2>nul
+    move "%DIST_DIR%\_internal\PySide6\translations\*_en.qm"    "!KEEP_TRANS!\" >nul 2>nul
+    rmdir /s /q "%DIST_DIR%\_internal\PySide6\translations"
+    mkdir "%DIST_DIR%\_internal\PySide6\translations" 2>nul
+    move "!KEEP_TRANS!\*.qm" "%DIST_DIR%\_internal\PySide6\translations\" >nul 2>nul
+    rmdir /s /q "!KEEP_TRANS!" 2>nul
+)
 
 :: Create README
 (

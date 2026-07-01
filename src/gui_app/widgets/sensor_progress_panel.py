@@ -56,10 +56,11 @@ class SensorProgressPanel(QGroupBox):
         self.sensor_progress_tree.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._sensor_progress_items: dict[str, QTreeWidgetItem] = {}
         self._sensor_progress_bars: dict[str, QProgressBar] = {}
-        # Track config path per camera for target_score editing
         self._target_config_paths: dict[str, Path] = {}
 
-        self.sensor_progress_tree.itemChanged.connect(self._on_target_edited)
+        self.sensor_progress_tree.setEditTriggers(QTreeWidget.EditTrigger.NoEditTriggers)
+        self.sensor_progress_tree.itemDoubleClicked.connect(self._on_item_double_clicked)
+        self.sensor_progress_tree.itemChanged.connect(self._on_cell_changed)
 
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
@@ -78,21 +79,27 @@ class SensorProgressPanel(QGroupBox):
     def _setup_column_sizes(self) -> None:
         header = self.sensor_progress_tree.header()
         modes = [
-            (0, QHeaderView.Interactive, 100),  # Sensor
-            (1, QHeaderView.Interactive, 70),   # Status
+            (0, QHeaderView.Interactive, 90),  # Sensor
+            (1, QHeaderView.Interactive, 60),   # Status
             (2, QHeaderView.Interactive, 80),   # Iteration
-            (3, QHeaderView.Interactive, 80),   # Elapsed
-            (4, QHeaderView.Interactive, 110),  # Progress (bar)
-            (5, QHeaderView.Interactive, 70),   # Init
-            (6, QHeaderView.Interactive, 70),   # Current
-            (7, QHeaderView.Interactive, 70),   # Best
-            (8, QHeaderView.Interactive, 70),   # Target
+            (3, QHeaderView.Interactive, 70),   # Elapsed
+            (4, QHeaderView.Interactive, 90),  # Progress (bar)
+            (5, QHeaderView.Interactive, 65),   # Init
+            (6, QHeaderView.Interactive, 65),   # Current
+            (7, QHeaderView.Interactive, 65),   # Best
+            (8, QHeaderView.Interactive, 65),   # Target
         ]
         for col, mode, default_width in modes:
             header.setSectionResizeMode(col, mode)
             header.resizeSection(col, default_width)
 
-    def _on_target_edited(self, item: QTreeWidgetItem, column: int) -> None:
+    def _on_item_double_clicked(self, item: QTreeWidgetItem, column: int) -> None:
+        if column == 8:
+            self.sensor_progress_tree.setEditTriggers(QTreeWidget.EditTrigger.DoubleClicked)
+            self.sensor_progress_tree.editItem(item, column)
+            self.sensor_progress_tree.setEditTriggers(QTreeWidget.EditTrigger.NoEditTriggers)
+
+    def _on_cell_changed(self, item: QTreeWidgetItem, column: int) -> None:
         if column != 8:
             return
         camera_name = item.text(0).strip()
@@ -203,12 +210,12 @@ class SensorProgressPanel(QGroupBox):
         item.setText(5, "")
         item.setText(6, "")
         item.setText(7, "")
-        # Target column: editable, show configured value or auto default
+        # Target column: show configured value, default 5.0 as fallback
         target_val = (target_scores or {}).get(camera_name)
         if target_val is not None:
             item.setText(8, f"{target_val:.1f}")
         else:
-            item.setText(8, "auto")
+            item.setText(8, "5.0")
         item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
         progress_bar = QProgressBar(self.sensor_progress_tree)
         progress_bar.setRange(0, 100)

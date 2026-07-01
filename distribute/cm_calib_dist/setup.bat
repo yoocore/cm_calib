@@ -425,10 +425,12 @@ setlocal enabledelayedexpansion
 set "TAG=cp%CM_PY_VER:.=%"
 set "COMPATIBLE=0"
 set "VERSIONS="
+set "HAS_CMAPI_CONTENT=0"
 
 for %%r in (C:\IPG\carmaker D:\IPG\carmaker C:\IPG D:\IPG) do (
     if exist "%%r" for /f "delims=" %%d in ('dir "%%r\win64-*" /b /o-n 2^>nul') do (
         if exist "%%r\%%d\Python" (
+            set "HAS_CMAPI_CONTENT=1"
             for /f "delims=" %%v in ('dir "%%r\%%d\Python\python*" /b /ad 2^>nul') do (
                 set "DIRVER=%%v"
                 set "DIRVER=!DIRVER:python=!"
@@ -451,9 +453,17 @@ for %%r in (C:\IPG\carmaker D:\IPG\carmaker C:\IPG D:\IPG) do (
 )
 
 if "!COMPATIBLE!"=="0" (
-    echo %ERR%!%NC% CarMaker 不支持 Python !CM_PY_VER!
-    if defined VERSIONS (
-        echo %INFO%^|%NC% 支持的版本: !VERSIONS!
+    if "!HAS_CMAPI_CONTENT!"=="0" (
+        echo %ERR%!%NC% 未检测到 CarMaker CMAPI 扩展
+        echo %INFO%^|%NC% 请确保已安装 CarMaker CMAPI 扩展
+        echo %INFO%^|%NC% 安装方法：重新运行 CarMaker 安装程序，选择 "Custom" 安装类型
+        echo %INFO%^|%NC% 确保勾选 "CMAPI" / "Python API" 组件后继续安装
+    ) else (
+        echo %ERR%!%NC% CarMaker 不支持 Python !CM_PY_VER!
+        if defined VERSIONS (
+            echo %INFO%^|%NC% 支持的版本: !VERSIONS!
+        )
+        echo %INFO%^|%NC% 请在 setup.bat 中将 CM_PY_VER 改为兼容版本后重试
     )
     endlocal
     exit /b 1

@@ -53,6 +53,7 @@ if !ERRORLEVEL! neq 0 (
 
 :: Move to final location
 if exist "%DIST_DIR%" rmdir /s /q "%DIST_DIR%" 2>nul
+mkdir "%DIST_DIR%" 2>nul
 move "%BUILD_DIR%\CameraCalibration" "%DIST_DIR%\CameraCalibration" >nul
 rmdir /s /q "%BUILD_DIR%" 2>nul
 rmdir /s /q "%TEMP%\pyibuild" 2>nul

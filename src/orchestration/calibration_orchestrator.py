@@ -265,6 +265,7 @@ def _prepare_runtime_for_camera(
         subprocess.Popen(
             [str(executable), "-projectdir", str(project_root)],
             cwd=str(executable.parent),
+            creationflags=subprocess.CREATE_NO_WINDOW,
         )
         cmctrl.wait_for_carmaker_tcleval_ready(timeout_sec=60.0)
         print("CarMaker started and TclEval ready.")
@@ -300,7 +301,7 @@ def _prepare_runtime_for_camera(
             project_root,
             carmaker_pid,
         )
-        subprocess.Popen(cmd, cwd=str((args.cm_install.resolve() / "GUI").resolve()))
+        subprocess.Popen(cmd, cwd=str((args.cm_install.resolve() / "GUI").resolve()), creationflags=subprocess.CREATE_NO_WINDOW)
         new_gui_pid = cmctrl.wait_for_gui_movie_pid(existing_gui_pids)
         print(f"Started GUI Movie (PID {new_gui_pid}) alongside existing Movie stack")
         # --- Movie start re-registers CheckViewPort, re-guard ---

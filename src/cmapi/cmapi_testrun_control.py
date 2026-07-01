@@ -176,6 +176,7 @@ def _run_powershell_json(command: str, timeout_sec: float = 5.0) -> list[dict[st
             text=True,
             check=True,
             timeout=timeout_sec,
+            creationflags=subprocess.CREATE_NO_WINDOW,
         )
     except subprocess.TimeoutExpired:
         print(
@@ -311,6 +312,7 @@ def kill_gui_movie_processes() -> list[dict[str, Any]]:
             capture_output=True,
             text=True,
             check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW,
         )
     return gui_movies
 
@@ -326,6 +328,7 @@ def kill_gpusensor_movie_processes() -> list[dict[str, Any]]:
             capture_output=True,
             text=True,
             check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW,
         )
     return gpusensor_movies
 
@@ -352,6 +355,7 @@ def kill_all_movie_processes() -> list[dict[str, Any]]:
             capture_output=True,
             text=True,
             check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW,
         )
     return movie_processes
 

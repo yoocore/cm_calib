@@ -228,7 +228,10 @@ class _TeeStream:
         return written
 
     def flush(self) -> None:
-        self._primary.flush()
+        try:
+            self._primary.flush()
+        except Exception:
+            pass
         try:
             self._secondary.flush()
         except Exception:

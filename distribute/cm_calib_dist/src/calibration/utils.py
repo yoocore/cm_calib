@@ -196,9 +196,14 @@ def _build_explicit_parameter_config(param_cfg: dict, initial_value: float) -> d
     return explicit_param_cfg
 
 
-def _build_annotation_legend_lines(total_detail: TotalScoreDetail) -> List[str]:
+def _build_annotation_legend_lines(
+    total_detail: TotalScoreDetail,
+    boards: Optional[List] = None,
+) -> List[str]:
+    """Build legend lines showing each board's individual score."""
     isolated_outlier_board_set = set(total_detail.isolated_outlier_boards)
     lines: List[str] = []
+
     for score in total_detail.board_scores:
         if score.compared:
             line = f"{score.board_id}: {score.total_score:.3f}"
@@ -223,7 +228,10 @@ class _TeeStream:
         return written
 
     def flush(self) -> None:
-        self._primary.flush()
+        try:
+            self._primary.flush()
+        except Exception:
+            pass
         try:
             self._secondary.flush()
         except Exception:

@@ -506,6 +506,7 @@ def _run_single_camera_process(
         encoding="utf-8",
         errors="replace",
         bufsize=1,
+        creationflags=subprocess.CREATE_NO_WINDOW,
     )
     _ACTIVE_CHILD = process
     summary_payload: Optional[dict[str, Any]] = None

@@ -1125,6 +1125,15 @@ def bootstrap_config_from_annotation(
     from src.calibration.camera_calibration import CameraCalibrator
     bootstrap_calibrator = CameraCalibrator(cfg, config_path=output_file)
     _sync_materialized_board_fields_from_calibrator(cfg, bootstrap_calibrator)
+    # Preserve target_score from existing config (user-set value)
+    if output_file.exists():
+        try:
+            existing = json.loads(output_file.read_text(encoding="utf-8"))
+            existing_target = existing.get("target_score")
+            if existing_target is not None:
+                cfg["target_score"] = existing_target
+        except (OSError, json.JSONDecodeError):
+            pass
     with open(output_file, "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=4)
 

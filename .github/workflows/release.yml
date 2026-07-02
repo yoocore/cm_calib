@@ -32,7 +32,7 @@ jobs:
           name: Camera Calibration ${{ github.ref_name }}
           body_path: distribute\RELEASE_NOTES.md
           files: |
-            distribute\dist_exe\CameraCalibration.exe
             distribute\cm_calib_dist\
+            distribute\CameraCalibration_*.7z
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

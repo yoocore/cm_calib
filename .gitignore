@@ -5,6 +5,7 @@ __pycache__/
 
 # Build artifacts
 distribute/dist_exe/
+distribute/dist/
 distribute/build_cache/
 distribute/cm_calib_dist/
 distribute/uv.exe

@@ -17,22 +17,21 @@ jobs:
         run: distribute\pipeline.bat
         shell: cmd
 
-      - name: Upload EXE artifact
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: CameraCalibration-EXE
-          path: distribute\dist_exe\
-          retention-days: 30
-
       - name: Create GitHub Release
         if: success()
-        uses: softprops/action-gh-release@v2
-        with:
-          name: Camera Calibration ${{ github.ref_name }}
-          body_path: distribute\RELEASE_NOTES.md
-          files: |
-            distribute\cm_calib_dist\
-            distribute\CameraCalibration_*.7z
+        shell: pwsh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $notes = "Camera Calibration $tag"
+          try { $notes = Get-Content -Raw distribute\RELEASE_NOTES.md } catch {}
+          $files = @()
+          if (Test-Path "distribute\cm_calib_dist") { $files += "distribute\cm_calib_dist\*" }
+          $archive = Get-Item "distribute\CameraCalibration_*.7z" -ErrorAction SilentlyContinue
+          if ($archive) { $files += $archive.FullName }
+          if ($files.Count -eq 0) {
+            gh release create $tag --title "Camera Calibration $tag" --notes "$notes"
+          } else {
+            gh release create $tag --title "Camera Calibration $tag" --notes "$notes" $files
+          }

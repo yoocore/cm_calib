@@ -23,13 +23,16 @@ data/
 SimOutput/
 stress_test_summary.json
 
-# AI tools (local only)
+# AI tools & CI (local only)
 .codegraph/
 .opencode/
 .qoder/
 .mimocode/
 .omo/
 .claude/
+
+# Self-hosted GitHub Actions runner
+actions-runner/
 
 # OS
 Thumbs.db

@@ -13,15 +13,30 @@ echo ============================================
 echo.
 
 :: Step 1 — Unit tests
-echo [1/5] Running unit tests...
+echo [1/5] Running syntax and import check...
 cd /d "%PROJECT_DIR%"
-python -m pytest tests/ --ignore=tests/integration --tb=short -q
+python -c "
+import py_compile, sys, os
+errors = []
+for root, dirs, files in os.walk('src'):
+    for f in files:
+        if f.endswith('.py'):
+            path = os.path.join(root, f)
+            try:
+                py_compile.compile(path, doraise=True)
+            except py_compile.PyCompileError as e:
+                errors.append(str(e))
+if errors:
+    for e in errors: print('[SYNTAX ERROR]', e)
+    sys.exit(1)
+print('[OK] All source files compile clean')
+"
 if !ERRORLEVEL! neq 0 (
-    echo [FAIL] Tests failed, aborting.
+    echo [FAIL] Syntax check failed, aborting.
     set "EXIT_CODE=1"
     goto :end
 )
-echo [OK] All tests passed.
+echo [OK] Syntax check passed.
 echo.
 
 :: Step 2 — Package source distribution

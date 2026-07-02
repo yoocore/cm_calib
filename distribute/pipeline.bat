@@ -15,7 +15,7 @@ echo.
 :: Step 1 — Unit tests
 echo [1/5] Running unit tests...
 cd /d "%PROJECT_DIR%"
-python -m pytest tests/ --tb=short -q
+python -m pytest tests/ --ignore=tests/integration --tb=short -q
 if !ERRORLEVEL! neq 0 (
     echo [FAIL] Tests failed, aborting.
     set "EXIT_CODE=1"

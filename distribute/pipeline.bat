@@ -36,17 +36,25 @@ if !ERRORLEVEL! neq 0 (
 echo [OK] Package complete.
 echo.
 
-:: Step 3 — Setup environment
+:: Step 3 — Setup virtual environment (using built-in venv, no uv/network needed)
 echo [3/5] Setting up Python virtual environment...
 cd /d "%SCRIPT_DIR%\cm_calib_dist"
-:: Inject "n" answers for any pause prompts, run in quiet tee mode
-echo n | call setup.bat
+python --version 2>&1
+python -m venv .venv
 if !ERRORLEVEL! neq 0 (
-    echo [FAIL] Setup failed, aborting.
+    echo [FAIL] venv creation failed.
     set "EXIT_CODE=1"
     goto :end
 )
-echo [OK] Environment ready.
+echo [OK] Virtual environment created.
+echo [3/5] Installing dependencies...
+call .venv\Scripts\pip install -r docs\requirements.txt --quiet
+if !ERRORLEVEL! neq 0 (
+    echo [FAIL] pip install failed.
+    set "EXIT_CODE=1"
+    goto :end
+)
+echo [OK] Dependencies installed.
 echo.
 
 :: Step 4 — Build EXE

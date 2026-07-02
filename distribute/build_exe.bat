@@ -24,7 +24,7 @@ if not exist "!PYTHON!" (
 if not exist "%CACHE_DIR%" mkdir "%CACHE_DIR%"
 
 :: Build directly to dist_exe (PyInstaller incremental update)
-echo [1/3] Building EXE (this may take several minutes)...
+echo [1/4] Building EXE (this may take several minutes)...
 "%PYTHON%" -OO -m PyInstaller ^
     --noconfirm ^
     --onedir ^
@@ -67,13 +67,16 @@ if !ERRORLEVEL! neq 0 (
 
 :: Flatten — PyInstaller --name 多建一层 CameraCalibration\
 if exist "%DIST_DIR%\CameraCalibration\_internal" (
-    echo [2/2] Flattening output...
+    echo [2/4] Flattening output...
     robocopy "%DIST_DIR%\CameraCalibration\_internal" "%DIST_DIR%\_internal" /e /is /it /njh /njs /ndl /nfl >nul
+    if exist "%DIST_DIR%\CameraCalibration\CameraCalibration.exe" (
+        move "%DIST_DIR%\CameraCalibration\CameraCalibration.exe" "%DIST_DIR%\" >nul
+    )
     rmdir /s /q "%DIST_DIR%\CameraCalibration" 2>nul
 )
 
 :: Post-build cleanup — remove unnecessary native binaries
-echo [3/3] Post-build cleanup...
+echo [3/4] Post-build cleanup...
 
 :: QtQml/QtQuick native DLLs (not used by app, but hook collects them)
 del "%DIST_DIR%\_internal\PySide6\Qt6Quick.dll"    2>nul
@@ -121,10 +124,44 @@ if exist "%DIST_DIR%\_internal\PySide6\translations" (
     echo To uninstall, simply delete this folder.
 ) > "%DIST_DIR%\README.txt"
 
+:: 7z compression — find 7z from common install paths
+echo [4/4] Creating distribution archive...
+
+set "SZIP="
+if exist "%ProgramFiles%\7-Zip\7z.exe"       set "SZIP=%ProgramFiles%\7-Zip\7z.exe"
+if exist "%ProgramW6432%\7-Zip\7z.exe"       set "SZIP=%ProgramW6432%\7-Zip\7z.exe"
+if exist "%ProgramFiles(x86)%\7-Zip\7z.exe"  set "SZIP=%ProgramFiles(x86)%\7-Zip\7z.exe"
+for %%X in (7z.exe) do if not defined SZIP set "SZIP=%%~$PATH:X"
+
+if defined SZIP (
+    for /f %%t in ('powershell -NoProfile "Get-Date -Format 'yyyyMMdd'"') do set "ARCHIVE_DATE=%%t"
+    set "ARCHIVE=%DIST_DIR%\..\CameraCalibration_!ARCHIVE_DATE!.7z"
+    del "!ARCHIVE!" 2>nul
+    "!SZIP!" a -t7z -mx=9 -mmt -bb0 "!ARCHIVE!" "%DIST_DIR%" >nul
+    if !ERRORLEVEL! equ 0 (
+        echo [OK] Archive created:
+        call :pretty_size "!ARCHIVE!"
+    ) else (
+        echo [WARN] 7z compression failed, skipping.
+    )
+) else (
+    echo [WARN] 7-Zip not found, skip compression.
+    echo       Install 7-Zip (https://7-zip.org) to enable auto-archive.
+)
+goto :end
+
+:pretty_size
+for %%f in (%~1) do set "SIZE_KB=%%~zf"
+set /a "SIZE_MB=!SIZE_KB! / 1048576"
+set /a "SIZE_REM=!SIZE_KB! / 1024"
+if !SIZE_MB! geq 1 ( echo       %~1 (!SIZE_MB! MB) ) else ( echo       %~1 (!SIZE_REM! KB) )
+exit /b 0
+
+:end
 echo.
 echo ============================================
 echo  Build Complete
 echo ============================================
 echo.
-echo Output: %DIST_DIR%\CameraCalibration.exe
+echo EXE:     %DIST_DIR%\CameraCalibration.exe
 dir "%DIST_DIR%\CameraCalibration.exe" | find "CameraCalibration.exe"

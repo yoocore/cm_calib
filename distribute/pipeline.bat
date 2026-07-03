@@ -5,6 +5,8 @@ setlocal enabledelayedexpansion
 set "SCRIPT_DIR=%~dp0"
 set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
 set "PROJECT_DIR=%SCRIPT_DIR%\.."
+set "TRACE_LOG=%SCRIPT_DIR%\pipeline_trace.log"
+echo Pipeline Trace > "%TRACE_LOG%"
 set "EXIT_CODE=0"
 
 echo ============================================
@@ -17,7 +19,7 @@ echo [1/5] Running syntax and import check...
 cd /d "%PROJECT_DIR%"
 python diagnostics/tmp_tools/syntax_check.py
 set "RC=!ERRORLEVEL!"
-echo [TRACE] step1 RC=!RC!
+echo [TRACE] step1 RC=!RC! >> "%TRACE_LOG%"
 if !RC! neq 0 (
     echo [FAIL] Syntax check failed, aborting.
     set "EXIT_CODE=1"
@@ -30,7 +32,7 @@ echo.
 echo [2/5] Packaging source distribution...
 call "%SCRIPT_DIR%\package.bat"
 set "RC=!ERRORLEVEL!"
-echo [TRACE] step2 RC=!RC!
+echo [TRACE] step2 RC=!RC! >> "%TRACE_LOG%"
 if !RC! neq 0 (
     echo [FAIL] Package failed, aborting.
     set "EXIT_CODE=1"
@@ -45,7 +47,7 @@ cd /d "%SCRIPT_DIR%\cm_calib_dist"
 python --version 2>&1
 python -m venv .venv --system-site-packages
 set "RC=!ERRORLEVEL!"
-echo [TRACE] venv RC=!RC!
+echo [TRACE] venv RC=!RC! >> "%TRACE_LOG%"
 if !RC! neq 0 (
     echo [FAIL] venv creation failed.
     set "EXIT_CODE=1"
@@ -80,7 +82,7 @@ echo.
 echo [4/5] Compiling EXE...
 call "%SCRIPT_DIR%\build_exe.bat"
 set "RC=!ERRORLEVEL!"
-echo [TRACE] step4 RC=!RC!
+echo [TRACE] step4 RC=!RC! >> "%TRACE_LOG%"
 if !RC! neq 0 (
     echo [FAIL] EXE build failed, aborting.
     set "EXIT_CODE=1"
@@ -94,7 +96,7 @@ echo [5/5] Running calibration smoke test...
 cd /d "%PROJECT_DIR%"
 "%SCRIPT_DIR%\cm_calib_dist\.venv\Scripts\python.exe" diagnostics/tmp_tools/smoke_test.py
 set "RC=!ERRORLEVEL!"
-echo [TRACE] step5 RC=!RC!
+echo [TRACE] step5 RC=!RC! >> "%TRACE_LOG%"
 if !RC! neq 0 (
     echo [FAIL] Smoke test failed.
     set "EXIT_CODE=1"
@@ -105,7 +107,7 @@ echo.
 
 :end
 echo ============================================
-echo [TRACE] EXIT_CODE=!EXIT_CODE! ERRORLEVEL=!ERRORLEVEL!
+echo [TRACE] EXIT_CODE=!EXIT_CODE! ERRORLEVEL=!ERRORLEVEL! >> "%TRACE_LOG%"
 if !EXIT_CODE! equ 0 (
     echo  Pipeline Complete - All steps passed!
 ) else (

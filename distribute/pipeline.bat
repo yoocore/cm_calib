@@ -16,7 +16,9 @@ echo.
 echo [1/5] Running syntax and import check...
 cd /d "%PROJECT_DIR%"
 python diagnostics/tmp_tools/syntax_check.py
-if !ERRORLEVEL! neq 0 (
+set "RC=!ERRORLEVEL!"
+echo [TRACE] step1 RC=!RC!
+if !RC! neq 0 (
     echo [FAIL] Syntax check failed, aborting.
     set "EXIT_CODE=1"
     goto :end
@@ -27,7 +29,9 @@ echo.
 :: Step 2 - Package source distribution
 echo [2/5] Packaging source distribution...
 call "%SCRIPT_DIR%\package.bat"
-if !ERRORLEVEL! neq 0 (
+set "RC=!ERRORLEVEL!"
+echo [TRACE] step2 RC=!RC!
+if !RC! neq 0 (
     echo [FAIL] Package failed, aborting.
     set "EXIT_CODE=1"
     goto :end
@@ -40,7 +44,9 @@ echo [3/5] Setting up Python virtual environment...
 cd /d "%SCRIPT_DIR%\cm_calib_dist"
 python --version 2>&1
 python -m venv .venv --system-site-packages
-if !ERRORLEVEL! neq 0 (
+set "RC=!ERRORLEVEL!"
+echo [TRACE] venv RC=!RC!
+if !RC! neq 0 (
     echo [FAIL] venv creation failed.
     set "EXIT_CODE=1"
     goto :end
@@ -73,7 +79,9 @@ echo.
 :: Step 4 - Build EXE
 echo [4/5] Compiling EXE...
 call "%SCRIPT_DIR%\build_exe.bat"
-if !ERRORLEVEL! neq 0 (
+set "RC=!ERRORLEVEL!"
+echo [TRACE] step4 RC=!RC!
+if !RC! neq 0 (
     echo [FAIL] EXE build failed, aborting.
     set "EXIT_CODE=1"
     goto :end
@@ -85,7 +93,9 @@ echo.
 echo [5/5] Running calibration smoke test...
 cd /d "%PROJECT_DIR%"
 "%SCRIPT_DIR%\cm_calib_dist\.venv\Scripts\python.exe" diagnostics/tmp_tools/smoke_test.py
-if !ERRORLEVEL! neq 0 (
+set "RC=!ERRORLEVEL!"
+echo [TRACE] step5 RC=!RC!
+if !RC! neq 0 (
     echo [FAIL] Smoke test failed.
     set "EXIT_CODE=1"
     goto :end
@@ -95,6 +105,7 @@ echo.
 
 :end
 echo ============================================
+echo [TRACE] EXIT_CODE=!EXIT_CODE! ERRORLEVEL=!ERRORLEVEL!
 if !EXIT_CODE! equ 0 (
     echo  Pipeline Complete - All steps passed!
 ) else (

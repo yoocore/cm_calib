@@ -129,10 +129,10 @@ set "SZIP="
 if exist "%ProgramFiles%\7-Zip\7z.exe"       set "SZIP=%ProgramFiles%\7-Zip\7z.exe"
 if exist "%ProgramW6432%\7-Zip\7z.exe"       set "SZIP=%ProgramW6432%\7-Zip\7z.exe"
 if exist "%ProgramFiles(x86)%\7-Zip\7z.exe"  set "SZIP=%ProgramFiles(x86)%\7-Zip\7z.exe"
-for %%X in (7z.exe) do if not defined SZIP set "SZIP=%%~$PATH:X"
+where 7z.exe >nul 2>nul && if not defined SZIP set "SZIP=7z.exe"
 
 if defined SZIP (
-    for /f %%t in ('powershell -NoProfile "Get-Date -Format 'yyyyMMdd'"') do set "ARCHIVE_DATE=%%t"
+    for /f %%t in ('powershell -NoProfile "Get-Date -Format yyyyMMdd"') do set "ARCHIVE_DATE=%%t"
     set "ARCHIVE=%DIST_DIR%\..\CameraCalibration_!ARCHIVE_DATE!.7z"
     del "!ARCHIVE!" 2>nul
     "!SZIP!" a -t7z -mx=9 -mmt -bb0 "!ARCHIVE!" "%DIST_DIR%" >nul
@@ -162,4 +162,6 @@ echo  Build Complete
 echo ============================================
 echo.
 echo EXE:     %DIST_DIR%\CameraCalibration.exe
-dir "%DIST_DIR%\CameraCalibration.exe" | find "CameraCalibration.exe"
+if exist "%DIST_DIR%\CameraCalibration.exe" (
+    for %%F in ("%DIST_DIR%\CameraCalibration.exe") do echo     Size: %%~zF bytes
+)

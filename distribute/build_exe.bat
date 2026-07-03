@@ -125,35 +125,28 @@ if exist "%DIST_DIR%\_internal\PySide6\translations" (
 :: 7z compression — find 7z from common install paths
 echo [4/4] Creating distribution archive...
 
+:: Use goto instead of parenthesized IF to avoid batch parsing issues
+:: in deep CALL chains (cmd.exe → temp.cmd → pipeline.bat)
 set "SZIP="
 if exist "%ProgramFiles%\7-Zip\7z.exe"       set "SZIP=%ProgramFiles%\7-Zip\7z.exe"
 if exist "%ProgramW6432%\7-Zip\7z.exe"       set "SZIP=%ProgramW6432%\7-Zip\7z.exe"
-if exist "%ProgramFiles(x86)%\7-Zip\7z.exe"  set "SZIP=%ProgramFiles(x86)%\7-Zip\7z.exe"
 where 7z.exe >nul 2>nul && if not defined SZIP set "SZIP=7z.exe"
 
-if defined SZIP (
-    for /f %%t in ('powershell -NoProfile "Get-Date -Format yyyyMMdd"') do set "ARCHIVE_DATE=%%t"
-    set "ARCHIVE=%DIST_DIR%\..\CameraCalibration_!ARCHIVE_DATE!.7z"
-    del "!ARCHIVE!" 2>nul
-    "!SZIP!" a -t7z -mx=9 -mmt -bb0 "!ARCHIVE!" "%DIST_DIR%" >nul
-    if !ERRORLEVEL! equ 0 (
-        echo [OK] Archive created:
-        call :pretty_size "!ARCHIVE!"
-    ) else (
-        echo [WARN] 7z compression failed, skipping.
-    )
-) else (
-    echo [WARN] 7-Zip not found, skip compression.
-    echo       Install 7-Zip (https://7-zip.org) to enable auto-archive.
-)
-goto :end
+if not defined SZIP goto :no_szip
+for /f %%t in ('powershell -NoProfile "Get-Date -Format yyyyMMdd"') do set "ARCHIVE_DATE=%%t"
+set "ARCHIVE=%DIST_DIR%\..\CameraCalibration_!ARCHIVE_DATE!.7z"
+del "!ARCHIVE!" 2>nul
+"!SZIP!" a -t7z -mx=9 -mmt -bb0 "!ARCHIVE!" "%DIST_DIR%"
+if !ERRORLEVEL! equ 0 echo [OK] Archive created.
+if !ERRORLEVEL! neq 0 echo [WARN] 7z compression failed, skipping.
+goto :archive_done
 
-:pretty_size
-for %%f in (%~1) do set "SIZE_KB=%%~zf"
-set /a "SIZE_MB=!SIZE_KB! / 1048576"
-set /a "SIZE_REM=!SIZE_KB! / 1024"
-if !SIZE_MB! geq 1 ( echo       %~1 (!SIZE_MB! MB) ) else ( echo       %~1 (!SIZE_REM! KB) )
-exit /b 0
+:no_szip
+echo [WARN] 7-Zip not found, skip compression.
+echo       Install 7-Zip (https://7-zip.org) to enable auto-archive.
+
+:archive_done
+goto :end
 
 :end
 echo.
@@ -165,3 +158,4 @@ echo EXE:     %DIST_DIR%\CameraCalibration.exe
 if exist "%DIST_DIR%\CameraCalibration.exe" (
     for %%F in ("%DIST_DIR%\CameraCalibration.exe") do echo     Size: %%~zF bytes
 )
+exit /b 0

@@ -66,8 +66,14 @@ if exist "%USER_SP%\PyInstaller" (
     xcopy /e /i /y "%USER_SP%\altgraph-*.dist-info" "%VENV_SP%\altgraph-*.dist-info\" >nul 2>nul
     copy /y "%USER_SP%\pefile.py" "%VENV_SP%\pefile.py" >nul 2>nul
     xcopy /e /i /y "%USER_SP%\pefile-*.dist-info" "%VENV_SP%\pefile-*.dist-info\" >nul 2>nul
+    :: ordlookup is required by pefile since PyInstaller 6.20
+    xcopy /e /i /y "%USER_SP%\ordlookup" "%VENV_SP%\ordlookup\" >nul 2>nul
     xcopy /e /i /y "%USER_SP%\win32ctypes" "%VENV_SP%\win32ctypes\" >nul 2>nul
     xcopy /e /i /y "%USER_SP%\pywin32_ctypes-*.dist-info" "%VENV_SP%\pywin32_ctypes-*.dist-info\" >nul 2>nul
+    :: packaging from Python 3.14 user site-packages (newer Python)
+    if exist "%APPDATA%\Python\Python314\site-packages\packaging" (
+        xcopy /e /i /y "%APPDATA%\Python\Python314\site-packages\packaging" "%VENV_SP%\packaging\" >nul 2>nul
+    )
     echo [OK] PyInstaller copied from user site-packages.
 ) else (
     echo [WARN] PyInstaller not found at user site-packages, trying pip install...

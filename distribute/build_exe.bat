@@ -16,7 +16,6 @@ echo.
 
 if not exist "!PYTHON!" (
     echo [ERR] venv not found, run setup.bat first
-    pause
     exit /b 1
 )
 
@@ -61,7 +60,6 @@ echo [1/4] Building EXE (this may take several minutes)...
 
 if !ERRORLEVEL! neq 0 (
     echo [ERR] Build failed
-    pause
     exit /b 1
 )
 

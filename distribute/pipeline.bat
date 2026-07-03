@@ -12,7 +12,7 @@ echo  Camera Calibration - Release Pipeline
 echo ============================================
 echo.
 
-:: Step 1 — Unit tests
+:: Step 1 - Unit tests
 echo [1/5] Running syntax and import check...
 cd /d "%PROJECT_DIR%"
 python diagnostics/tmp_tools/syntax_check.py
@@ -24,10 +24,9 @@ if !ERRORLEVEL! neq 0 (
 echo [OK] Syntax check passed.
 echo.
 
-:: Step 2 — Package source distribution
+:: Step 2 - Package source distribution
 echo [2/5] Packaging source distribution...
-cd /d "%SCRIPT_DIR%"
-call package.bat
+call "%SCRIPT_DIR%\package.bat"
 if !ERRORLEVEL! neq 0 (
     echo [FAIL] Package failed, aborting.
     set "EXIT_CODE=1"
@@ -36,7 +35,7 @@ if !ERRORLEVEL! neq 0 (
 echo [OK] Package complete.
 echo.
 
-:: Step 3 — Setup virtual environment (using built-in venv, no uv/network needed)
+:: Step 3 - Setup virtual environment (using built-in venv, no uv/network needed)
 echo [3/5] Setting up Python virtual environment...
 cd /d "%SCRIPT_DIR%\cm_calib_dist"
 python --version 2>&1
@@ -52,10 +51,9 @@ call .venv\Scripts\pip install --quiet "D:\IPG\carmaker\win64-15.1\Python\cmapi-
 echo [OK] Dependencies ready.
 echo.
 
-:: Step 4 — Build EXE
+:: Step 4 - Build EXE
 echo [4/5] Compiling EXE...
-cd /d "%SCRIPT_DIR%"
-call build_exe.bat
+call "%SCRIPT_DIR%\build_exe.bat"
 if !ERRORLEVEL! neq 0 (
     echo [FAIL] EXE build failed, aborting.
     set "EXIT_CODE=1"
@@ -64,7 +62,7 @@ if !ERRORLEVEL! neq 0 (
 echo [OK] EXE built.
 echo.
 
-:: Step 5 — Calibration smoke test
+:: Step 5 - Calibration smoke test
 echo [5/5] Running calibration smoke test...
 cd /d "%PROJECT_DIR%"
 python diagnostics/tmp_tools/smoke_test.py

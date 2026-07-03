@@ -75,6 +75,5 @@ echo Next steps:
 echo   - Test the package in a clean environment
 echo   - Zip the dist folder for distribution
 echo.
-pause
 
 endlocal

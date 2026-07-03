@@ -48,7 +48,7 @@ if !ERRORLEVEL! neq 0 (
 )
 echo [OK] Virtual environment created.
 echo [3/5] Installing dependencies...
-call .venv\Scripts\pip install -r docs\requirements.txt --quiet
+call .venv\Scripts\pip install -r docs\requirements.txt pyinstaller --quiet
 if !ERRORLEVEL! neq 0 (
     echo [FAIL] pip install failed.
     set "EXIT_CODE=1"

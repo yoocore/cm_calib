@@ -46,8 +46,27 @@ if !ERRORLEVEL! neq 0 (
     goto :end
 )
 echo [OK] Virtual environment created (with system packages).
+echo [3/5] Installing PyInstaller from user site-packages (no network)...
+set "USER_SP=%APPDATA%\Python\Python310\site-packages"
+set "VENV_SP=%SCRIPT_DIR%\cm_calib_dist\.venv\Lib\site-packages"
+if exist "%USER_SP%\PyInstaller" (
+    xcopy /e /i /y "%USER_SP%\PyInstaller" "%VENV_SP%\PyInstaller\" >nul 2>nul
+    xcopy /e /i /y "%USER_SP%\pyinstaller-*.dist-info" "%VENV_SP%\pyinstaller-*.dist-info\" >nul 2>nul
+    xcopy /e /i /y "%USER_SP%\_pyinstaller_hooks_contrib" "%VENV_SP%\_pyinstaller_hooks_contrib\" >nul 2>nul
+    xcopy /e /i /y "%USER_SP%\pyinstaller_hooks_contrib-*.dist-info" "%VENV_SP%\pyinstaller_hooks_contrib-*.dist-info\" >nul 2>nul
+    xcopy /e /i /y "%USER_SP%\altgraph" "%VENV_SP%\altgraph\" >nul 2>nul
+    xcopy /e /i /y "%USER_SP%\altgraph-*.dist-info" "%VENV_SP%\altgraph-*.dist-info\" >nul 2>nul
+    copy /y "%USER_SP%\pefile.py" "%VENV_SP%\pefile.py" >nul 2>nul
+    xcopy /e /i /y "%USER_SP%\pefile-*.dist-info" "%VENV_SP%\pefile-*.dist-info\" >nul 2>nul
+    xcopy /e /i /y "%USER_SP%\win32ctypes" "%VENV_SP%\win32ctypes\" >nul 2>nul
+    xcopy /e /i /y "%USER_SP%\pywin32_ctypes-*.dist-info" "%VENV_SP%\pywin32_ctypes-*.dist-info\" >nul 2>nul
+    echo [OK] PyInstaller copied from user site-packages.
+) else (
+    echo [WARN] PyInstaller not found at user site-packages, trying pip install...
+    call .venv\Scripts\pip install --quiet pyinstaller 2>nul || echo [WARN] pip install pyinstaller failed.
+)
 echo [3/5] Installing CarMaker wheels...
-call .venv\Scripts\pip install --quiet "D:\IPG\carmaker\win64-15.1\Python\cmapi-15.1.0-*-win_amd64.whl" 2>nul
+.venv\Scripts\python.exe -m pip install --quiet "D:\IPG\carmaker\win64-15.1\Python\cmapi-15.1.0-*-win_amd64.whl" 2>nul
 echo [OK] Dependencies ready.
 echo.
 

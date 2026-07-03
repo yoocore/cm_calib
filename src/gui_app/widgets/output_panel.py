@@ -23,6 +23,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+
+def _strip_status_for_display(status_text: str) -> str:
+    _strip_map = {
+        "failed": "fail",
+        "finished": "finish",
+        "stopped": "stop",
+        "prepared": "prepare",
+    }
+    return _strip_map.get(status_text, status_text)
+
 from src.gui_app.models.state import CameraResult
 from src.gui_app.widgets.score_curve_window import ScoreCurveWindow
 
@@ -309,7 +319,7 @@ class CameraResultCard(QGroupBox):
         )
 
     def update_result(self, result: CameraResult) -> None:
-        self.status_value.setText("fail" if result.status == "failed" else result.status)
+        self.status_value.setText(_strip_status_for_display(result.status))
         self.init_score_value.setText(_format_score(result.init_score))
         self.best_score_value.setText(_format_score(result.best_score))
         self.current_iter_value.setText(_format_score(result.current_iter_score))

@@ -267,26 +267,35 @@ def _prepare_runtime_for_camera(
             cwd=str(executable.parent),
             creationflags=subprocess.CREATE_NO_WINDOW,
         )
+        print("[prepare] waiting for CarMaker TclEval ready ...")
         cmctrl.wait_for_carmaker_tcleval_ready(timeout_sec=60.0)
         print("CarMaker started and TclEval ready.")
     else:
         print(f"CarMaker already running (PID {existing_pids[0]}), reusing existing instance.")
     # --- Step 2: Resolve vehicle path ---
+    print(f"[prepare] resolving vehicle path for {testrun_rel_path} ...")
     vehicle_path, vehicle_key = cmctrl.resolve_vehicle_path(project_root, testrun_rel_path)
     # --- Step 3: Activate sensor & sync TestRun in CarMaker GUI (before bootstrap) ---
+    print(f"[prepare] activating sensor {camera_name} in vehicle file ...")
     activation = cmctrl.activate_single_vehicle_sensor(vehicle_path, camera_name)
+    print(f"[prepare] sensor activated: index={activation['selected_sensor_index']} label={activation['ipgmovie_sensor_label']}")
+    print(f"[prepare] syncing TestRun selection in CarMaker GUI ...")
     selected_testrun = cmctrl.sync_gui_testrun_selection(project_root, testrun_rel_path)
+    print(f"[prepare] TestRun synced: {selected_testrun}")
     # --- sync_gui re-initializes IPG-MOVIE (re-registers CheckViewPort), so re-guard ---
     cmctrl.disable_checkviewport_recursion()
     # --- Step 4: StartSim / StopSim (bootstrap the TestRun for Movie) ---
+    print("[prepare] starting TestRun simulation (StartSim) ...")
     carmaker_pid, bootstrap_testrun = cmctrl.bootstrap_testrun_for_movie_via_cmapi_sync(
         project_root=project_root,
         testrun_rel_path=testrun_rel_path,
         running_timeout_sec=float(args.bootstrap_running_timeout_sec),
         idle_timeout_sec=float(args.bootstrap_idle_timeout_sec),
     )
+    print("[prepare] simulation running → stopping simulation (StopSim) ...")
     # --- bootstrap's internal sync_gui re-registers CheckViewPort, so re-guard ---
     cmctrl.disable_checkviewport_recursion()
+    print(f"[prepare] TestRun bootstrapped: carmaker_pid={carmaker_pid}")
     # --- Step 5: Ensure IPG-MOVIE GUI instance is running ---
     # The calibration flow sends Tcl commands via `send IPG-MOVIE`
     # (View widget, camera dialog, capture, etc.). A GPUSensor-only Movie
@@ -301,13 +310,18 @@ def _prepare_runtime_for_camera(
             project_root,
             carmaker_pid,
         )
+        print("[prepare] opening IPG-MOVIE GUI window ...")
         subprocess.Popen(cmd, cwd=str((args.cm_install.resolve() / "GUI").resolve()), creationflags=subprocess.CREATE_NO_WINDOW)
+        print("[prepare] waiting for IPG-MOVIE GUI process to appear ...")
         new_gui_pid = cmctrl.wait_for_gui_movie_pid(existing_gui_pids)
         print(f"Started GUI Movie (PID {new_gui_pid}) alongside existing Movie stack")
         # --- Movie start re-registers CheckViewPort, re-guard ---
         cmctrl.disable_checkviewport_recursion()
+    else:
+        print("[prepare] IPG-MOVIE GUI already running, reusing.")
     # --- Step 6: Wait for Movie scene ready ---
     _movie_settle = float(args.movie_settle_sec)
+    print(f"[prepare] waiting for Movie scene ready (timeout={_movie_settle:.0f}s) ...")
     movie_scene = cmctrl.wait_for_movie_scene_ready(
         cm_install=args.cm_install.resolve(),
         movie_apphost=str(args.movie_apphost),
@@ -316,27 +330,37 @@ def _prepare_runtime_for_camera(
         timeout_sec=_movie_settle,
         poll_interval_sec=float(args.movie_ready_poll_sec),
     )
+    print("[prepare] Movie scene ready, configuring view settings ...")
     # Disable render timer before View::SetSize (cancel only one instance, rename kills all)
     cmctrl.disable_movie_updateview_timer(timeout_sec=5.0)
     if movie_view_size is not None:
         view_width, view_height = movie_view_size
+        print(f"[prepare] setting Movie view size to {view_width}x{view_height} ...")
         applied_view = cmctrl.ensure_movie_view_size(view_width, view_height)
         movie_scene["width"] = str(view_width)
         movie_scene["height"] = str(view_height)
         movie_scene["view_widget"] = str(applied_view.get("widget") or "")
         movie_scene["mode"] = str(applied_view.get("mode") or movie_scene.get("mode") or "")
+        print(f"[prepare] view settings applied: widget={applied_view.get('widget')} mode={applied_view.get('mode')}")
+    print("[prepare] enabling ABRAXAS overlay ...")
     abraxas = cmctrl.ensure_movie_abraxas_enabled(timeout_sec=float(args.health_check_timeout_sec))
+    print(f"[prepare] ABRAXAS enabled: {abraxas}")
+    print(f"[prepare] ensuring camera widgets ...")
     camera_widgets = cmctrl.ensure_movie_camera_widgets(timeout_sec=float(args.health_check_timeout_sec))
+    print(f"[prepare] camera widgets: {camera_widgets}")
     # --- Select camera in IPG-MOVIE (sensor already activated before bootstrap) ---
+    print(f"[prepare] selecting camera {activation['ipgmovie_sensor_label']} in IPG-MOVIE ...")
     camera_selection = cmctrl.ensure_movie_camera_selected(
         activation["ipgmovie_sensor_label"],
         timeout_sec=float(args.health_check_timeout_sec),
     )
     movie_scene["camera_name"] = str(camera_selection.get("current") or movie_scene.get("camera_name") or "")
+    print(f"[prepare] camera selected: {camera_selection.get('current')}")
     # Restore render timer after View::SetSize + ABRAXAS are done
     cmctrl.enable_movie_updateview_timer(timeout_sec=5.0)
 
     # --- Step 9: Health check ---
+    print("[prepare] running Movie health check ...")
     health_classification: Optional[dict[str, Any]] = None
     if args.health_check_after_switch:
         health_summary = cmctrl.run_movie_send_health_check(
@@ -364,6 +388,7 @@ def _prepare_runtime_for_camera(
 
     # --- Install delete-trace on CheckViewPort for auto-re-guard on unknown re-registrations ---
     cmctrl.wrap_checkviewport()
+    print("[prepare] environment preparation complete.")
 
     return {
         "vehicle_path": str(vehicle_path),
@@ -653,7 +678,7 @@ def main() -> None:
                     cmctrl.restore_checkviewport()
 
             _emit_event(task_id, "task_finished", status="ready")
-            print("CM Prepare complete. Environment ready.")
+            print("Env Restart complete. Environment ready.")
 
             summary_payload = {
                 "task_id": task_id,

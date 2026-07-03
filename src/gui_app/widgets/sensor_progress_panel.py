@@ -25,6 +25,16 @@ _PANEL_STYLE = (
 )
 
 
+def _strip_status_for_display(status_text: str) -> str:
+    _strip_map = {
+        "failed": "fail",
+        "finished": "finish",
+        "stopped": "stop",
+        "prepared": "prepare",
+    }
+    return _strip_map.get(status_text, status_text)
+
+
 class SensorProgressPanel(QGroupBox):
     def __init__(self, parent: QWidget | None = None):
         super().__init__("Sensor Progress", parent)
@@ -163,7 +173,7 @@ class SensorProgressPanel(QGroupBox):
         best_score_text: str | None = None,
     ) -> None:
         item = self._ensure_sensor_progress_item(camera_name)
-        display_status = "fail" if status == "failed" else status
+        display_status = _strip_status_for_display(status)
         if display_status != item.text(1):
             item.setText(1, display_status)
         progress_bar = self._sensor_progress_bars[camera_name]

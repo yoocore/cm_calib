@@ -252,6 +252,17 @@ class _SectionGroup(QGroupBox):
         self.setStyleSheet(_SECTION_GROUP_STYLE)
 
 
+def _strip_status_suffix(status_text: str) -> str:
+    """Strip '-ed' suffix from status enum values for display."""
+    _strip_map = {
+        "failed": "fail",
+        "finished": "finish",
+        "stopped": "stop",
+        "prepared": "prepare",
+    }
+    return _strip_map.get(status_text, status_text)
+
+
 class CalibrationPanel(QGroupBox):
     estimated_time_changed = Signal()
 
@@ -306,7 +317,7 @@ class CalibrationPanel(QGroupBox):
         self.stop_button.setEnabled(False)
         self.stop_button.setStyleSheet(_DANGER_BUTTON_STYLE)
         self.stop_button.setMinimumHeight(36)
-        self.prepare_button = QPushButton("CM Prepare")
+        self.prepare_button = QPushButton("Env Restart")
         self.prepare_button.setStyleSheet(_SECONDARY_BUTTON_STYLE)
         self.prepare_button.setMinimumHeight(36)
 
@@ -445,7 +456,7 @@ class CalibrationPanel(QGroupBox):
     def set_status(self, text: str | None) -> None:
         status_text = (text or "").strip() or "idle"
         style_key = status_text
-        display_text = "fail" if status_text == "failed" else status_text
+        display_text = _strip_status_suffix(status_text)
         border_color, background_color = _STATUS_BADGE_STYLES.get(
             style_key, ("#455a64", "#eceff1")
         )

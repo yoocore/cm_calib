@@ -517,7 +517,7 @@ class MainWindow(QMainWindow):
             launch = self._build_launch_config()
         except Exception as exc:
             self._set_status_summary(str(exc))
-            QMessageBox.critical(self, "CM Prepare Failed", str(exc))
+            QMessageBox.critical(self, "Env Restart Failed", str(exc))
             return
 
         try:
@@ -538,12 +538,12 @@ class MainWindow(QMainWindow):
                 self.calibration_service.stop()
 
             self._apply_status(AppStatus.PREPARING)
-            self._set_status_summary("CM Prepare: restarting environment...")
+            self._set_status_summary("Env Restart: restarting environment...")
             self.output_panel.append_log("─" * 60, source="system")
             self.calibration_service.prepare(launch)
         except Exception as exc:
             self._set_status_summary(str(exc))
-            QMessageBox.critical(self, "CM Prepare Failed", str(exc))
+            QMessageBox.critical(self, "Env Restart Failed", str(exc))
             self._sync_control_states()
 
     def _apply_status(self, status: AppStatus) -> None:

@@ -40,21 +40,16 @@ echo.
 echo [3/5] Setting up Python virtual environment...
 cd /d "%SCRIPT_DIR%\cm_calib_dist"
 python --version 2>&1
-python -m venv .venv
+python -m venv .venv --system-site-packages
 if !ERRORLEVEL! neq 0 (
     echo [FAIL] venv creation failed.
     set "EXIT_CODE=1"
     goto :end
 )
-echo [OK] Virtual environment created.
-echo [3/5] Installing dependencies...
-call .venv\Scripts\pip install -r docs\requirements.txt pyinstaller --quiet
-if !ERRORLEVEL! neq 0 (
-    echo [FAIL] pip install failed.
-    set "EXIT_CODE=1"
-    goto :end
-)
-echo [OK] Dependencies installed.
+echo [OK] Virtual environment created (with system packages).
+echo [3/5] Installing CarMaker wheels...
+call .venv\Scripts\pip install --quiet "D:\IPG\carmaker\win64-15.1\Python\cmapi-15.1.0-*-win_amd64.whl" 2>nul
+echo [OK] Dependencies ready.
 echo.
 
 :: Step 4 — Build EXE

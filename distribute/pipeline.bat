@@ -84,7 +84,7 @@ echo.
 :: Step 5 - Calibration smoke test
 echo [5/5] Running calibration smoke test...
 cd /d "%PROJECT_DIR%"
-python diagnostics/tmp_tools/smoke_test.py
+"%SCRIPT_DIR%\cm_calib_dist\.venv\Scripts\python.exe" diagnostics/tmp_tools/smoke_test.py
 if !ERRORLEVEL! neq 0 (
     echo [FAIL] Smoke test failed.
     set "EXIT_CODE=1"

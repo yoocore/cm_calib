@@ -19,7 +19,7 @@ jobs:
 
       - name: Create GitHub Release
         if: success()
-        shell: pwsh
+        shell: powershell
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

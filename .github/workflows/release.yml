@@ -30,3 +30,4 @@ jobs:
           fail_on_unmatched_files: false
           files: |
             distribute/CameraCalibration_*.7z
+            distribute/CameraCalibration_*.zip

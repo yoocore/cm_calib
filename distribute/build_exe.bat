@@ -142,8 +142,17 @@ if !ERRORLEVEL! neq 0 echo [WARN] 7z compression failed, skipping.
 goto :archive_done
 
 :no_szip
-echo [WARN] 7-Zip not found, skip compression.
-echo       Install 7-Zip (https://7-zip.org) to enable auto-archive.
+echo [WARN] 7-Zip not found, trying PowerShell Compress-Archive...
+for /f %%t in ('powershell -NoProfile "Get-Date -Format yyyyMMdd"') do set "ARCHIVE_DATE=%%t"
+set "ARCHIVE=%DIST_DIR%\..\CameraCalibration_!ARCHIVE_DATE!.zip"
+del "!ARCHIVE!" 2>nul
+powershell -NoProfile -Command "Compress-Archive -Path '%DIST_DIR%\*' -DestinationPath '!ARCHIVE!'"
+if exist "!ARCHIVE!" (
+    echo [OK] Archive created via PowerShell: !ARCHIVE!
+) else (
+    echo [WARN] PowerShell compression also failed, skipping archive.
+)
+goto :archive_done
 
 :archive_done
 goto :end

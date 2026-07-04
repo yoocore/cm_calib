@@ -21,17 +21,45 @@ jobs:
         if: success()
         shell: powershell
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $tag = "${{ github.ref_name }}"
           $notes = "Camera Calibration $tag"
           try { $notes = Get-Content -Raw distribute\RELEASE_NOTES.md } catch {}
+
+          # Collect build artifacts
           $files = @()
-          if (Test-Path "distribute\cm_calib_dist") { $files += "distribute\cm_calib_dist\*" }
-          $archive = Get-Item "distribute\CameraCalibration_*.7z" -ErrorAction SilentlyContinue
+          $archivePath = "distribute\CameraCalibration_*.7z"
+          $archive = Get-Item $archivePath -ErrorAction SilentlyContinue
           if ($archive) { $files += $archive.FullName }
-          if ($files.Count -eq 0) {
-            gh release create $tag --title "Camera Calibration $tag" --notes "$notes"
-          } else {
-            gh release create $tag --title "Camera Calibration $tag" --notes "$notes" $files
+
+          # Create release via GitHub API (no gh CLI needed)
+          $body = @{
+            tag_name = $tag
+            name = "Camera Calibration $tag"
+            body = $notes
+          } | ConvertTo-Json
+
+          $created = Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases" `
+            -Method Post `
+            -Headers @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = "application/vnd.github+json" } `
+            -ContentType "application/json" `
+            -Body $body
+
+          Write-Output "Release created: $($created.html_url)"
+
+          # Upload artifacts if any
+          if ($files.Count -gt 0) {
+            $uploadUrl = $created.upload_url -replace '{.*}$', ''
+            foreach ($f in $files) {
+              $fileName = Split-Path $f -Leaf
+              $fileBytes = [System.IO.File]::ReadAllBytes((Resolve-Path $f))
+              $fileContent = [System.Text.Encoding]::Default.GetString($fileBytes)
+              Write-Output "Uploading $fileName..."
+              Invoke-RestMethod -Uri "$uploadUrl`?name=$fileName" `
+                -Method Post `
+                -Headers @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = "application/vnd.github+json" } `
+                -ContentType "application/x-7z-compressed" `
+                -Body $fileBytes | Out-Null
+            }
           }

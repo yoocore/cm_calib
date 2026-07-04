@@ -19,47 +19,11 @@ jobs:
 
       - name: Create GitHub Release
         if: success()
-        shell: powershell
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          $tag = "${{ github.ref_name }}"
-          $notes = "Camera Calibration $tag"
-          try { $notes = Get-Content -Raw distribute\RELEASE_NOTES.md } catch {}
-
-          # Collect build artifacts
-          $files = @()
-          $archivePath = "distribute\CameraCalibration_*.7z"
-          $archive = Get-Item $archivePath -ErrorAction SilentlyContinue
-          if ($archive) { $files += $archive.FullName }
-
-          # Create release via GitHub API (no gh CLI needed)
-          $body = @{
-            tag_name = $tag
-            name = "Camera Calibration $tag"
-            body = $notes
-          } | ConvertTo-Json
-
-          $created = Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases" `
-            -Method Post `
-            -Headers @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = "application/vnd.github+json" } `
-            -ContentType "application/json" `
-            -Body $body
-
-          Write-Output "Release created: $($created.html_url)"
-
-          # Upload artifacts if any
-          if ($files.Count -gt 0) {
-            $uploadUrl = $created.upload_url -replace '{.*}$', ''
-            foreach ($f in $files) {
-              $fileName = Split-Path $f -Leaf
-              $fileBytes = [System.IO.File]::ReadAllBytes((Resolve-Path $f))
-              $fileContent = [System.Text.Encoding]::Default.GetString($fileBytes)
-              Write-Output "Uploading $fileName..."
-              Invoke-RestMethod -Uri "$uploadUrl`?name=$fileName" `
-                -Method Post `
-                -Headers @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = "application/vnd.github+json" } `
-                -ContentType "application/x-7z-compressed" `
-                -Body $fileBytes | Out-Null
-            }
-          }
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Camera Calibration ${{ github.ref_name }}
+          body_path: distribute/RELEASE_NOTES.md
+          fail_on_unmatched_files: false
+          files: |
+            distribute/CameraCalibration_*.7z

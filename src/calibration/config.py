@@ -95,21 +95,6 @@ def _default_parameter_config() -> Dict[str, dict]:
     }
 
 
-def _default_parameter_order() -> List[str]:
-    return [
-        "pos_z",
-        "pitch",
-        "yaw",
-        "pos_x",
-        "roll",
-        "pos_y",
-        "lens_fov",
-        "lens_scale",
-        "lens_offset_x",
-        "lens_offset_y",
-    ]
-
-
 def _default_bootstrap_config() -> dict:
     calibration_root = Path(__file__).resolve().parent
     repo_root = Path(__file__).resolve().parents[2]
@@ -192,7 +177,6 @@ def _default_bootstrap_config() -> dict:
                 },
             ],
         },
-        "optimization_order": _default_parameter_order(),
         "parameters": _default_parameter_config(),
     }
 

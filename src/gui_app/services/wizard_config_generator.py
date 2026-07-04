@@ -14,19 +14,6 @@ from src.gui_app.services.board_auto_detector import (
 )
 
 
-_DEFAULT_OPTIMIZATION_ORDER = [
-    "yaw",
-    "pos_x",
-    "pitch",
-    "lens_fov",
-    "roll",
-    "pos_y",
-    "pos_z",
-    "lens_scale",
-    "lens_offset_x",
-    "lens_offset_y",
-]
-
 _DEFAULT_PARAMETERS = {
     "pos_x": {"step": 0.002, "min_step": 0.001, "decimals": 4},
     "pos_y": {"step": 0.001, "min_step": 0.001, "decimals": 4},
@@ -118,7 +105,6 @@ def generate_config(
     cfg.setdefault("min_improve", 5e-5)
     cfg.setdefault("step_decay", 0.7)
     cfg.setdefault("target_score", round(0.3 * max(1, len(boards)), 1))
-    cfg.setdefault("optimization_order", _DEFAULT_OPTIMIZATION_ORDER)
     cfg.setdefault("parameters", _DEFAULT_PARAMETERS)
     cfg["output_dir"] = str(output_dir)
 

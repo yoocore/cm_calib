@@ -413,7 +413,7 @@ class CameraCalibrator(DetectorMixin, ScoringMixin, AnnotationMixin, ScriptContr
         self.param_order_index = {param.name: index for index, param in enumerate(self.params)}
         self.preferred_directions = {param.name: 1.0 for param in self.params}
         strategy_cfg = cfg.get("strategy_adaptation", {})
-        self.strategy_adaptation_enabled = bool(strategy_cfg.get("enabled", False))
+        self.strategy_adaptation_enabled = bool(strategy_cfg.get("enabled", True))
         self.strategy_reorder_params = bool(strategy_cfg.get("reorder_params", True))
         self.strategy_adjust_step_scale = bool(strategy_cfg.get("adjust_step_scale", True))
         self.strategy_focus_on_joint_candidates = bool(

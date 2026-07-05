@@ -54,7 +54,6 @@ from src.calibration.config import (
     _build_boards_from_annotation_rectangles,
     _cluster_1d,
     _default_bootstrap_template_path,
-    _default_parameter_order,
     _extract_annotation_board_ids,
     _extract_annotation_rectangles,
     _group_annotation_rectangles,

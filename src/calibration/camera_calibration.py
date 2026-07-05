@@ -53,7 +53,6 @@ from src.calibration.utils import (
 from src.calibration.config import (
     _default_bootstrap_template_path,
     _default_parameter_config,
-    _default_parameter_order,
     _default_bootstrap_config,
     _resolved_bootstrap_config,
     _preprocess_auto_template_match_image,
